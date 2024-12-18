@@ -12,7 +12,7 @@ A Python script to download videos and audio from various websites using yt-dlp.
 1. Clone this repository:
 
 ```bash
-git clone https://github.com/yourusername/universal-downloader.git
+git clone https://github.com/Rashed-alothman/universal-downloader.git
 cd universal-downloader
 ```
 
