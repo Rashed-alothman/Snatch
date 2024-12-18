@@ -2,6 +2,20 @@
 
 A powerful Python script that can download videos and audio from hundreds of websites (YouTube, Vimeo, Twitter, TikTok, Instagram, Twitch, and more) using yt-dlp.
 
+
+## Features
+
+- 🎥 Download videos in any available resolution
+- 🎵 Extract audio in multiple formats (MP3, FLAC, WAV, M4A)
+- 📊 Real-time download progress with colorful interface
+- 🚀 Concurrent downloads support
+- ⚙️ Advanced FLAC conversion with metadata preservation
+- 💾 Customizable output directory
+- 🎯 Format-specific download options
+- 🔄 Batch download support
+
+
+
 ## Prerequisites
 
 - Python 3.7 or higher
