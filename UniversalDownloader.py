@@ -16,11 +16,14 @@ class CustomHelpFormatter(argparse.HelpFormatter):
 EXAMPLES = """
 Examples:
 ---------
-1. Download a video in best quality:
+1. Download a video from various platforms:
    python UniversalDownloader.py "https://youtube.com/watch?v=example"
+   python UniversalDownloader.py "https://vimeo.com/123456789"
+   python UniversalDownloader.py "https://dailymotion.com/video/x7tgd2g"
+   python UniversalDownloader.py "https://twitch.tv/videos/1234567890"
 
 2. Download audio only (MP3):
-   python UniversalDownloader.py "https://youtube.com/watch?v=example" --audio-only
+   python UniversalDownloader.py "https://soundcloud.com/artist/track" --audio-only
 
 3. Download video in specific resolution:
    python UniversalDownloader.py "https://youtube.com/watch?v=example" --resolution 1080
@@ -41,6 +44,9 @@ Advanced Usage:
 
 - Specify format ID (for advanced users):
   python UniversalDownloader.py "URL" --format-id 137+140
+
+- List all supported sites:
+  python UniversalDownloader.py --list-sites
 
 Common Issues:
 -------------
@@ -140,6 +146,14 @@ class DownloadManager:
             futures = [executor.submit(self.download, url, **kwargs) for url in urls]
             return [f.result() for f in futures]
 
+    def list_supported_sites(self):
+        with yt_dlp.YoutubeDL() as ydl:
+            print("Supported Sites:")
+            print("---------------")
+            for extractor in ydl._ies:
+                if extractor._VALID_URL:
+                    print(f"- {extractor.IE_NAME}")
+
 def load_config() -> Dict:
     try:
         with open(CONFIG_FILE, 'r') as f:
@@ -151,18 +165,33 @@ def load_config() -> Dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Enhanced Universal Downloader - Download videos and audio from various websites",
+        description="Universal Downloader - Download videos and audio from hundreds of websites including YouTube, Vimeo, Twitter, TikTok, Instagram, Twitch, and more!",
         formatter_class=CustomHelpFormatter,
         epilog=EXAMPLES,
+    )
+
+    # URL input group (mutually exclusive)
+    url_group = parser.add_mutually_exclusive_group(required=True)
+    url_group.add_argument(
+        '--url',
+        help="URL to download"
+    )
+    url_group.add_argument(
+        'urls',
+        nargs='*',
+        help="One or more URLs to download (space-separated)",
+        default=[]
+    )
+
+    # Add list-sites option
+    parser.add_argument(
+        '--list-sites',
+        action='store_true',
+        help="List all supported sites"
     )
     
     # Required arguments group
     required = parser.add_argument_group('Required Arguments')
-    required.add_argument(
-        'urls',
-        nargs='+',
-        help="One or more URLs to download (space-separated)"
-    )
 
     # Download options group
     download_opts = parser.add_argument_group('Download Options')
@@ -210,6 +239,11 @@ def main():
 
     args = parser.parse_args()
 
+    # Show supported sites if requested
+    if args.list_sites:
+        DownloadManager(load_config()).list_supported_sites()
+        sys.exit(0)
+
     # Show full help if no arguments provided
     if len(sys.argv) == 1:
         parser.print_help()
@@ -222,10 +256,13 @@ def main():
         config['audio_output'] = args.output_dir
 
     manager = DownloadManager(config)
+
+    # Combine --url and positional urls
+    all_urls = [args.url] if args.url else args.urls
     
-    if len(args.urls) == 1:
+    if len(all_urls) == 1:
         success = manager.download(
-            args.urls[0],
+            all_urls[0],
             audio_only=args.audio_only,
             resolution=args.resolution,
             format_id=args.format_id,
@@ -234,7 +271,7 @@ def main():
         )
     else:
         successes = manager.batch_download(
-            args.urls,
+            all_urls,
             audio_only=args.audio_only,
             resolution=args.resolution,
             format_id=args.format_id,
