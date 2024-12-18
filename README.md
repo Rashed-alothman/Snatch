@@ -190,3 +190,4 @@ python UniversalDownloader.py --help
 ## Command Line Help
 
 Get detailed help information by running:
+python UniversalDownloader.py --help
