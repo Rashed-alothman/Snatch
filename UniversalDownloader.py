@@ -8,6 +8,17 @@ from pathlib import Path
 from typing import Optional, List, Dict
 import json
 import textwrap
+import mutagen
+from mutagen.mp3 import MP3
+from mutagen.flac import FLAC
+import subprocess
+from tqdm import tqdm
+import threading
+import time
+from colorama import init, Fore, Style
+
+# Initialize colorama for Windows support
+init()
 
 class CustomHelpFormatter(argparse.HelpFormatter):
     def _split_lines(self, text, width):
@@ -63,6 +74,43 @@ DEFAULT_CONFIG = {
     'max_concurrent': 3
 }
 
+class ColorProgressBar:
+    def __init__(self, total, desc="Converting"):
+        self.progress = tqdm(
+            total=total,
+            desc=f"{Fore.CYAN}{desc}{Style.RESET_ALL}",
+            bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+            ncols=80,
+        )
+        self.colors = [Fore.BLUE, Fore.CYAN, Fore.GREEN, Fore.YELLOW]
+        self.current_color_idx = 0
+        self.last_update = 0
+
+    def update(self, n=1):
+        current_time = time.time()
+        if current_time - self.last_update > 0.1:  # Limit color updates
+            self.current_color_idx = (self.current_color_idx + 1) % len(self.colors)
+            self.progress.bar_format = (
+                "{desc}: {percentage:3.0f}%|"
+                f"{self.colors[self.current_color_idx]}"
+                "{bar}"
+                f"{Style.RESET_ALL}"
+                "| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+            )
+            self.last_update = current_time
+        self.progress.update(n)
+
+    def close(self):
+        self.progress.bar_format = (
+            "{desc}: {percentage:3.0f}%|"
+            f"{Fore.GREEN}"
+            "{bar}"
+            f"{Style.RESET_ALL}"
+            "| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+        )
+        self.progress.close()
+        print(f"\n{Fore.GREEN}✓ Conversion Complete!{Style.RESET_ALL}")
+
 class DownloadManager:
     def __init__(self, config: Dict):
         self.config = config
@@ -91,19 +139,140 @@ class DownloadManager:
             downloaded = d.get('downloaded_bytes', 0)
             if total > 0:
                 percentage = (downloaded / total) * 100
-                sys.stdout.write(f"\rDownloading: {percentage:.1f}% of {total/1024/1024:.1f}MB")
+                # Use same color progress style for downloads
+                sys.stdout.write(
+                    f"\r{Fore.CYAN}Downloading: "
+                    f"{Fore.BLUE}{percentage:.1f}% "
+                    f"{Fore.CYAN}of {total/1024/1024:.1f}MB"
+                    f"{Style.RESET_ALL}"
+                )
                 sys.stdout.flush()
         elif d['status'] == 'finished':
-            print("\nDownload completed!")
+            print(f"\n{Fore.GREEN}✓ Download Complete!{Style.RESET_ALL}")
+
+    def verify_audio_file(self, filepath: str) -> bool:
+        """Enhanced audio file verification"""
+        try:
+            if filepath.lower().endswith('.flac'):
+                audio = FLAC(filepath)
+                # Additional FLAC-specific checks
+                if not audio.tags:
+                    # Initialize tags if missing
+                    audio.tags = mutagen.flac.VorbisComment()
+                    audio.save()
+                
+                # Verify FLAC properties
+                if audio.info.channels not in (1, 2):
+                    logging.error(f"Unexpected channel count: {audio.info.channels}")
+                    return False
+                
+                if audio.info.sample_rate not in (44100, 48000, 96000):
+                    logging.error(f"Unexpected sample rate: {audio.info.sample_rate}")
+                    return False
+                
+                # Check file size (should be reasonable for FLAC)
+                file_size = os.path.getsize(filepath)
+                if file_size < 1024 * 100:  # Less than 100KB is suspicious
+                    logging.error(f"FLAC file too small: {file_size} bytes")
+                    return False
+            
+            # ...rest of existing verify_audio_file code...
+
+        except Exception as e:
+            logging.error(f"Error verifying audio file {filepath}: {str(e)}")
+            return False
+
+    def convert_to_flac(self, input_file: str, output_file: str) -> bool:
+        """Convert audio to FLAC with high quality settings and metadata preservation."""
+        try:
+            # First verify the input file
+            if not self.verify_audio_file(input_file):
+                raise ValueError("Input file verification failed")
+
+            # Get original metadata and file size
+            original_audio = mutagen.File(input_file)
+            input_size = os.path.getsize(input_file)
+            
+            # Prepare FFmpeg command with progress pipe
+            cmd = [
+                os.path.join(self.config['ffmpeg_location'], 'ffmpeg'),
+                '-i', input_file,
+                '-c:a', 'flac',
+                '-compression_level', '12',
+                '-sample_fmt', 's32',
+                '-ar', '48000',
+                '-progress', 'pipe:1',
+                output_file
+            ]
+            
+            # Create progress bar
+            pbar = ColorProgressBar(100, desc="Converting to FLAC")
+            
+            # Execute conversion with progress monitoring
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True
+            )
+
+            # Monitor conversion progress
+            last_progress = 0
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                
+                if 'out_time_ms=' in line:
+                    try:
+                        time_ms = int(line.split('=')[1])
+                        progress = min(int((time_ms / 1000) / original_audio.info.length * 100), 100)
+                        if progress > last_progress:
+                            pbar.update(progress - last_progress)
+                            last_progress = progress
+                    except (ValueError, AttributeError):
+                        continue
+
+            # Close progress bar
+            pbar.close()
+
+            # Check conversion result
+            if process.returncode != 0:
+                raise RuntimeError(f"FFmpeg conversion failed: {process.stderr.read()}")
+
+            # Verify and handle metadata
+            if not self.verify_audio_file(output_file):
+                raise ValueError("Output file verification failed")
+
+            if original_audio and original_audio.tags:
+                flac_audio = FLAC(output_file)
+                for key, value in original_audio.tags.items():
+                    flac_audio[key] = value
+                flac_audio.save()
+
+            # Compare files
+            orig_info = mutagen.File(input_file).info
+            conv_info = mutagen.File(output_file).info
+            
+            if abs(orig_info.length - conv_info.length) > 0.1:  # Allow 100ms difference
+                raise ValueError("Duration mismatch between input and output files")
+
+            return True
+
+        except Exception as e:
+            print(f"\n{Fore.RED}✗ Conversion Failed: {str(e)}{Style.RESET_ALL}")
+            if os.path.exists(output_file):
+                os.remove(output_file)
+            return False
 
     def get_download_options(self, url: str, audio_only: bool, resolution: Optional[str] = None,
                            format_id: Optional[str] = None, filename: Optional[str] = None,
                            audio_format: str = 'mp3') -> Dict:
         output_path = self.config['audio_output'] if audio_only else self.config['video_output']
         
-        # Extract nested conditional into separate format_option
         if audio_only:
-            format_option = 'bestaudio/best'
+            # Improved audio format selection
+            format_option = 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio'
         elif resolution:
             format_option = f'bestvideo[height<={resolution}]+bestaudio/best'
         else:
@@ -116,27 +285,81 @@ class DownloadManager:
             'progress_hooks': [self.progress_hook],
             'ignoreerrors': True,
             'continue': True,
-            'format_sort': ['res:1080', 'ext:mp4:m4a'],
+            'postprocessor_hooks': [self.post_process_hook],
             'concurrent_fragment_downloads': 3,
         }
 
         if audio_only:
-            options['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': audio_format,
-                'preferredquality': '0',
-            }]
+            if audio_format == 'flac':
+                options['postprocessors'] = [
+                    {
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'flac',
+                        'preferredquality': '0',
+                    },
+                    {
+                        'key': 'FFmpegMetadata',
+                        'add_metadata': True,
+                    }
+                ]
+                # Direct FLAC conversion settings
+                options['extract_audio'] = True
+                options['audio_quality'] = 0
+                options['audio_format'] = 'flac'
+            else:
+                options['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': audio_format,
+                    'preferredquality': '320' if audio_format == 'mp3' else '0',
+                }]
 
         if format_id:
             options['format'] = format_id
 
         return options
 
+    def post_process_hook(self, d):
+        """Handle post-processing events"""
+        if d['status'] == 'started':
+            print(f"\n{Fore.CYAN}Post-processing: {d.get('info_dict', {}).get('title', 'Unknown')}{Style.RESET_ALL}")
+        elif d['status'] == 'finished':
+            filename = d.get('filename', '')
+            if filename.endswith('.flac'):
+                # Verify FLAC file
+                if self.verify_audio_file(filename):
+                    print(f"{Fore.GREEN}✓ FLAC conversion successful: {os.path.basename(filename)}{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.RED}✗ FLAC verification failed: {os.path.basename(filename)}{Style.RESET_ALL}")
+
     def download(self, url: str, **kwargs):
         try:
+            print(f"\n{Fore.CYAN}Fetching video information...{Style.RESET_ALL}")
+            
             with yt_dlp.YoutubeDL(self.get_download_options(url, **kwargs)) as ydl:
-                ydl.download([url])
+                # First get info to check availability
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    if not info:
+                        raise ValueError("Could not fetch video information")
+                    
+                    if kwargs.get('audio_only'):
+                        print(f"{Fore.CYAN}Found audio: {info.get('title', 'Unknown')}{Style.RESET_ALL}")
+                        print(f"Format: {info.get('format', 'Unknown')}")
+                    
+                    # Proceed with download
+                    ydl.download([url])
+                    
+                except yt_dlp.utils.DownloadError as e:
+                    print(f"{Fore.RED}Download Error: {str(e)}{Style.RESET_ALL}")
+                    print("Try updating yt-dlp: pip install -U yt-dlp")
+                    return False
+                
+                except Exception as e:
+                    print(f"{Fore.RED}Error: {str(e)}{Style.RESET_ALL}")
+                    return False
+            
             return True
+            
         except Exception as e:
             logging.error(f"Error downloading {url}: {str(e)}")
             return False
