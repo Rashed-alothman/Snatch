@@ -1,3 +1,4 @@
-yt-dlp>=2023.7.6
-tqdm>=4.65.0
+yt-dlp>=2023.12.30
+mutagen>=1.47.0
 colorama>=0.4.6
+tqdm>=4.66.1
