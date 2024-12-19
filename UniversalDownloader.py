@@ -321,12 +321,13 @@ class DownloadManager:
         output_path = self.config['audio_output'] if audio_only else self.config['video_output']
         
         if audio_only:
-            # Improved audio format selection
             format_option = 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio'
         elif resolution:
-            format_option = f'bestvideo[height<={resolution}]+bestaudio/best'
+            # Only limit resolution if specifically requested
+            format_option = f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
         else:
-            format_option = 'best'
+            # Default to best available quality
+            format_option = 'bestvideo+bestaudio/best'
         
         options = {
             'format': format_option,
@@ -475,7 +476,7 @@ def main():
     download_opts = parser.add_argument_group('Download Options')
     download_opts.add_argument(
         '--resolution',
-        help="Video resolution (e.g., 720, 1080). Default: best available",
+        help="Maximum video resolution (e.g., 720, 1080). If not specified, downloads best quality available",
         metavar="RES"
     )
     download_opts.add_argument(
