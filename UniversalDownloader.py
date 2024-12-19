@@ -68,11 +68,50 @@ Common Issues:
 
 CONFIG_FILE = 'config.json'
 DEFAULT_CONFIG = {
-    'ffmpeg_location': r'C:\ffmpeg\ffmpeg-master-latest-win64-gpl\bin',
+    'ffmpeg_location': '',  # Will be auto-detected
     'video_output': str(Path.home() / 'Videos'),
     'audio_output': str(Path.home() / 'Music'),
     'max_concurrent': 3
 }
+
+def find_ffmpeg():
+    """Find FFmpeg in common locations or PATH"""
+    common_locations = [
+        r'C:\ffmpeg\bin',
+        r'C:\Program Files\ffmpeg\bin',
+        r'C:\ffmpeg\ffmpeg-master-latest-win64-gpl\bin',
+        r'.\ffmpeg\bin',  # Relative to script location
+    ]
+    
+    # Check if ffmpeg is in PATH
+    if os.system('ffmpeg -version > nul 2>&1') == 0:
+        return 'ffmpeg'
+    
+    # Check common locations
+    for location in common_locations:
+        ffmpeg_path = os.path.join(location, 'ffmpeg.exe')
+        if os.path.exists(ffmpeg_path):
+            return location
+    
+    return None
+
+def print_ffmpeg_instructions():
+    """Print instructions for installing FFmpeg"""
+    print(f"{Fore.YELLOW}FFmpeg not found! Please follow these steps to install FFmpeg:{Style.RESET_ALL}")
+    print("\n1. Download FFmpeg:")
+    print("   - Visit: https://github.com/BtbN/FFmpeg-Builds/releases")
+    print("   - Download: ffmpeg-master-latest-win64-gpl.zip")
+    print("\n2. Install FFmpeg:")
+    print("   - Extract the downloaded zip file")
+    print("   - Copy the extracted folder to C:\\ffmpeg")
+    print("   - Ensure ffmpeg.exe is in C:\\ffmpeg\\bin")
+    print("\nAlternatively:")
+    print("- Use chocolatey: choco install ffmpeg")
+    print("- Use winget: winget install ffmpeg")
+    print("\nAfter installation, either:")
+    print("1. Add FFmpeg to your system PATH, or")
+    print("2. Update config.json with the correct ffmpeg_location")
+    print("\nFor detailed instructions, visit: https://www.wikihow.com/Install-FFmpeg-on-Windows")
 
 class ColorProgressBar:
     def __init__(self, total, desc="Converting"):
@@ -114,6 +153,14 @@ class ColorProgressBar:
 class DownloadManager:
     def __init__(self, config: Dict):
         self.config = config
+        if not self.config['ffmpeg_location']:
+            ffmpeg_path = find_ffmpeg()
+            if ffmpeg_path:
+                self.config['ffmpeg_location'] = ffmpeg_path
+            else:
+                print_ffmpeg_instructions()
+                raise FileNotFoundError("FFmpeg is required but not found. Please install FFmpeg and try again.")
+        
         self.setup_logging()
         self.verify_paths()
 
