@@ -114,12 +114,13 @@ def print_ffmpeg_instructions():
     print("\nFor detailed instructions, visit: https://www.wikihow.com/Install-FFmpeg-on-Windows")
 
 class ColorProgressBar:
-    def __init__(self, total, desc="Converting"):
+    def __init__(self, total, desc="Processing"):
         self.progress = tqdm(
             total=total,
             desc=f"{Fore.CYAN}{desc}{Style.RESET_ALL}",
-            bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+            bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}",
             ncols=80,
+            unit="%"
         )
         self.colors = [Fore.BLUE, Fore.CYAN, Fore.GREEN, Fore.YELLOW]
         self.current_color_idx = 0
@@ -134,21 +135,14 @@ class ColorProgressBar:
                 f"{self.colors[self.current_color_idx]}"
                 "{bar}"
                 f"{Style.RESET_ALL}"
-                "| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
+                "| {n_fmt}/{total_fmt}"
             )
             self.last_update = current_time
         self.progress.update(n)
 
     def close(self):
-        self.progress.bar_format = (
-            "{desc}: {percentage:3.0f}%|"
-            f"{Fore.GREEN}"
-            "{bar}"
-            f"{Style.RESET_ALL}"
-            "| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]"
-        )
         self.progress.close()
-        print(f"\n{Fore.GREEN}✓ Conversion Complete!{Style.RESET_ALL}")
+        print(f"\n{Fore.GREEN}✓ Complete!{Style.RESET_ALL}")
 
 class DownloadManager:
     def __init__(self, config: Dict):
@@ -184,18 +178,27 @@ class DownloadManager:
         if d['status'] == 'downloading':
             total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
             downloaded = d.get('downloaded_bytes', 0)
+            
+            # Initialize progress bar if not exists
+            if not hasattr(self, 'pbar'):
+                self.pbar = ColorProgressBar(100, desc="Downloading")
+            
             if total > 0:
-                percentage = (downloaded / total) * 100
-                # Use same color progress style for downloads
-                sys.stdout.write(
-                    f"\r{Fore.CYAN}Downloading: "
-                    f"{Fore.BLUE}{percentage:.1f}% "
-                    f"{Fore.CYAN}of {total/1024/1024:.1f}MB"
-                    f"{Style.RESET_ALL}"
-                )
-                sys.stdout.flush()
+                percentage = min(int((downloaded / total) * 100), 100)
+                if hasattr(self, 'last_percentage'):
+                    if percentage > self.last_percentage:
+                        self.pbar.update(percentage - self.last_percentage)
+                        self.last_percentage = percentage
+                else:
+                    self.last_percentage = percentage
+                    self.pbar.update(percentage)
+                
         elif d['status'] == 'finished':
-            print(f"\n{Fore.GREEN}✓ Download Complete!{Style.RESET_ALL}")
+            if hasattr(self, 'pbar'):
+                self.pbar.close()
+                delattr(self, 'pbar')
+                delattr(self, 'last_percentage')
+            print(f"{Fore.GREEN}✓ Download Complete!{Style.RESET_ALL}")
 
     def verify_audio_file(self, filepath: str) -> bool:
         """Enhanced audio file verification"""
@@ -381,6 +384,11 @@ class DownloadManager:
     def download(self, url: str, **kwargs):
         try:
             print(f"\n{Fore.CYAN}Fetching video information...{Style.RESET_ALL}")
+            # Reset progress bar state
+            if hasattr(self, 'pbar'):
+                delattr(self, 'pbar')
+            if hasattr(self, 'last_percentage'):
+                delattr(self, 'last_percentage')
             
             with yt_dlp.YoutubeDL(self.get_download_options(url, **kwargs)) as ydl:
                 # First get info to check availability
