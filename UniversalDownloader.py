@@ -157,6 +157,7 @@ class DownloadManager:
         
         self.setup_logging()
         self.verify_paths()
+        self.last_percentage = 0  # Initialize last_percentage
 
     def setup_logging(self):
         logging.basicConfig(
@@ -185,19 +186,15 @@ class DownloadManager:
             
             if total > 0:
                 percentage = min(int((downloaded / total) * 100), 100)
-                if hasattr(self, 'last_percentage'):
-                    if percentage > self.last_percentage:
-                        self.pbar.update(percentage - self.last_percentage)
-                        self.last_percentage = percentage
-                else:
+                if percentage > self.last_percentage:
+                    self.pbar.update(percentage - self.last_percentage)
                     self.last_percentage = percentage
-                    self.pbar.update(percentage)
                 
         elif d['status'] == 'finished':
             if hasattr(self, 'pbar'):
                 self.pbar.close()
                 delattr(self, 'pbar')
-                delattr(self, 'last_percentage')
+            self.last_percentage = 0  # Reset last_percentage
             print(f"{Fore.GREEN}✓ Download Complete!{Style.RESET_ALL}")
 
     def verify_audio_file(self, filepath: str) -> bool:
@@ -320,13 +317,34 @@ class DownloadManager:
                            audio_format: str = 'mp3') -> Dict:
         output_path = self.config['audio_output'] if audio_only else self.config['video_output']
         
+        # Add TikTok-specific options
+        if 'tiktok.com' in url:
+            options = {
+                'format': 'best',  # Use best available format for TikTok
+                'outtmpl': os.path.join(output_path, f"{filename or '%(title)s'}.%(ext)s"),
+                'ffmpeg_location': self.config['ffmpeg_location'],
+                'progress_hooks': [self.progress_hook],
+                'ignoreerrors': True,
+                'continue': True,
+                'postprocessor_hooks': [self.post_process_hook],
+                'concurrent_fragment_downloads': 3,
+                'cookiefile': 'cookies.txt',  # Add cookie file support
+                'extractor_args': {
+                    'tiktok': {
+                        'download_timeout': 30,  # Increase timeout
+                        'extract_flat': False,
+                        'force_generic_extractor': False
+                    }
+                }
+            }
+            return options
+
+        # Original options for other platforms
         if audio_only:
             format_option = 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio'
         elif resolution:
-            # Only limit resolution if specifically requested
             format_option = f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
         else:
-            # Default to best available quality
             format_option = 'bestvideo+bestaudio/best'
         
         options = {
@@ -385,11 +403,20 @@ class DownloadManager:
     def download(self, url: str, **kwargs):
         try:
             print(f"\n{Fore.CYAN}Fetching video information...{Style.RESET_ALL}")
+            
+            # Add browser headers for TikTok
+            if 'tiktok.com' in url:
+                yt_dlp.utils.std_headers.update({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-us,en;q=0.5',
+                    'Sec-Fetch-Mode': 'navigate',
+                })
+            
             # Reset progress bar state
             if hasattr(self, 'pbar'):
                 delattr(self, 'pbar')
-            if hasattr(self, 'last_percentage'):
-                delattr(self, 'last_percentage')
+            self.last_percentage = 0
             
             with yt_dlp.YoutubeDL(self.get_download_options(url, **kwargs)) as ydl:
                 # First get info to check availability
