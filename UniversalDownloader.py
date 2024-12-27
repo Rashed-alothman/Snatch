@@ -404,6 +404,14 @@ class DownloadManager:
         try:
             print(f"\n{Fore.CYAN}Fetching video information...{Style.RESET_ALL}")
             
+            # Show download type and format
+            if kwargs.get('audio_only'):
+                format_name = kwargs.get('audio_format', 'mp3').upper()
+                print(f"{Fore.YELLOW}Mode: Audio Only ({format_name}){Style.RESET_ALL}")
+            else:
+                resolution = kwargs.get('resolution', 'best')
+                print(f"{Fore.YELLOW}Mode: Video (Quality: {resolution}){Style.RESET_ALL}")
+
             # Add browser headers for TikTok
             if 'tiktok.com' in url:
                 yt_dlp.utils.std_headers.update({
@@ -460,6 +468,84 @@ class DownloadManager:
                 if extractor._VALID_URL:
                     print(f"- {extractor.IE_NAME}")
 
+    def show_menu(self):
+        """Display available options menu"""
+        print(f"\n{Fore.CYAN}Available Options:{Style.RESET_ALL}")
+        print("1. Just paste URL to download in highest quality")
+        print("\n2. Audio Options:")
+        print(f"   {Fore.YELLOW}--audio-only{Style.RESET_ALL}                    Download audio only")
+        print(f"   {Fore.YELLOW}--audio-format [format]{Style.RESET_ALL}         Choose audio format:")
+        print("      Available formats:")
+        print(f"      {Fore.GREEN}mp3{Style.RESET_ALL}  - Standard MP3 format (320kbps)")
+        print(f"      {Fore.GREEN}flac{Style.RESET_ALL} - Lossless audio format")
+        print(f"      {Fore.GREEN}wav{Style.RESET_ALL}  - Uncompressed audio")
+        print(f"      {Fore.GREEN}m4a{Style.RESET_ALL}  - AAC audio format")
+        
+        print("\n3. Video Options:")
+        print(f"   {Fore.YELLOW}--resolution [quality]{Style.RESET_ALL}          Set video quality (e.g., 720, 1080, 2160)")
+
+        print("\nExamples:")
+        print("- Download video: just paste the URL")
+        print("- MP3 audio: URL --audio-only")
+        print("- FLAC audio: URL --audio-only --audio-format flac")
+        print("- HD video: URL --resolution 1080")
+        print(f"\nType {Fore.CYAN}--help{Style.RESET_ALL} to show this menu")
+        print(f"Type {Fore.RED}--Q{Style.RESET_ALL} to quit\n")
+
+    def interactive_mode(self):
+        print(f"\n{Fore.CYAN}Welcome to Universal Downloader!{Style.RESET_ALL}")
+        self.show_menu()
+        
+        while True:
+            try:
+                user_input = input(f"\n{Fore.GREEN}Enter URL and options:{Style.RESET_ALL} ").strip()
+                
+                if user_input.lower() == '--q':
+                    print(f"{Fore.YELLOW}Exiting...{Style.RESET_ALL}")
+                    break
+                
+                if not user_input:
+                    continue
+                
+                if user_input.lower() == '--help':
+                    self.show_menu()
+                    continue
+
+                # Parse user input
+                args = user_input.split()
+                url = args[0]
+                options = {
+                    'audio_only': '--audio-only' in args,
+                    'resolution': None,
+                    'audio_format': 'mp3'
+                }
+
+                # Parse resolution
+                if '--resolution' in args:
+                    try:
+                        res_index = args.index('--resolution')
+                        options['resolution'] = args[res_index + 1]
+                    except (ValueError, IndexError):
+                        pass
+
+                # Parse audio format
+                if '--audio-format' in args:
+                    try:
+                        format_index = args.index('--audio-format')
+                        options['audio_format'] = args[format_index + 1]
+                    except (ValueError, IndexError):
+                        pass
+
+                # Download with options
+                self.download(url, **options)
+                
+            except KeyboardInterrupt:
+                print(f"\n{Fore.YELLOW}Exiting...{Style.RESET_ALL}")
+                break
+            except Exception as e:
+                print(f"{Fore.RED}Error: {str(e)}{Style.RESET_ALL}")
+                print("Type --help to see available options")
+
 def load_config() -> Dict:
     try:
         with open(CONFIG_FILE, 'r') as f:
@@ -470,6 +556,14 @@ def load_config() -> Dict:
         return DEFAULT_CONFIG
 
 def main():
+    # If no arguments provided, run in interactive mode directly
+    if len(sys.argv) == 1:
+        config = load_config()
+        manager = DownloadManager(config)
+        manager.interactive_mode()
+        sys.exit(0)
+        
+    # Rest of argument parsing for advanced usage
     parser = argparse.ArgumentParser(
         description="Universal Downloader - Download videos and audio from hundreds of websites including YouTube, Vimeo, Twitter, TikTok, Instagram, Twitch, and more!",
         formatter_class=CustomHelpFormatter,
@@ -543,6 +637,13 @@ def main():
         version='Universal Downloader v1.0.0'
     )
 
+    # Add interactive mode option
+    parser.add_argument(
+        '--interactive',
+        action='store_true',
+        help="Run in interactive mode (enter URLs one by one, --Q to quit)"
+    )
+
     args = parser.parse_args()
 
     # Show supported sites if requested
@@ -562,6 +663,11 @@ def main():
         config['audio_output'] = args.output_dir
 
     manager = DownloadManager(config)
+
+    # Handle interactive mode
+    if args.interactive:
+        manager.interactive_mode()
+        sys.exit(0)
 
     # Combine --url and positional urls
     all_urls = [args.url] if args.url else args.urls
