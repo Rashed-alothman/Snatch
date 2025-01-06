@@ -16,6 +16,9 @@ from tqdm import tqdm
 import threading
 import time
 from colorama import init, Fore, Style
+from difflib import get_close_matches
+import shutil
+import re
 
 # Initialize colorama for Windows support
 init()
@@ -60,7 +63,7 @@ Advanced Usage:
   python UniversalDownloader.py --list-sites
 
 Common Issues:
--------------
+--------------
 1. FFMPEG not found: Install FFMPEG and update config.json
 2. SSL Error: Update Python and yt-dlp
 3. Permission Error: Run with admin privileges
@@ -144,6 +147,69 @@ class ColorProgressBar:
         self.progress.close()
         print(f"\n{Fore.GREEN}✓ Complete!{Style.RESET_ALL}")
 
+def print_banner():
+    """Display an enhanced colorful welcome banner"""
+    terminal_width = shutil.get_terminal_size().columns
+    banner = f"""
+{Fore.CYAN}╔{'═' * 68}╗
+║  {Fore.YELLOW}██╗   ██╗{Fore.GREEN}███╗   ██╗{Fore.RED}██╗{Fore.BLUE}██╗   ██╗{Fore.MAGENTA}███████╗{Fore.WHITE}██████╗   {Fore.CYAN}║
+║  {Fore.YELLOW}██║   ██║{Fore.GREEN}████╗  ██║{Fore.RED}██║{Fore.BLUE}██║   ██║{Fore.MAGENTA}██╔════╝{Fore.WHITE}██╔══██╗  {Fore.CYAN}║
+║  {Fore.YELLOW}██║   ██║{Fore.GREEN}██╔██╗ ██║{Fore.RED}██║{Fore.BLUE}██║   ██║{Fore.MAGENTA}█████╗  {Fore.WHITE}██████╔╝  {Fore.CYAN}║
+║  {Fore.YELLOW}██║   ██║{Fore.GREEN}██║╚██╗██║{Fore.RED}██║{Fore.BLUE}╚██╗ ██╔╝{Fore.MAGENTA}██╔══╝  {Fore.WHITE}██╔══██╗  {Fore.CYAN}║
+║  {Fore.YELLOW}╚██████╔╝{Fore.GREEN}██║ ╚████║{Fore.RED}██║{Fore.BLUE} ╚████╔╝ {Fore.MAGENTA}███████╗{Fore.WHITE}██║  ██║  {Fore.CYAN}║
+║   {Fore.YELLOW}╚═════╝ {Fore.GREEN}╚═╝  ╚═══╝{Fore.RED}╚═╝{Fore.BLUE}  ╚═══╝  {Fore.MAGENTA}╚══════╝{Fore.WHITE}╚═╝  ╚═╝  {Fore.CYAN}║
+╠{'═' * 68}╣
+║     {Fore.GREEN}■ {Fore.WHITE}Version: {Fore.YELLOW}1.1.0{Fore.WHITE}                                               {Fore.CYAN}║
+║     {Fore.GREEN}■ {Fore.WHITE}Author : {Fore.YELLOW}Rashed Alothman{Fore.WHITE}                                       {Fore.CYAN}║
+║     {Fore.GREEN}■ {Fore.WHITE}GitHub : {Fore.YELLOW}github.com/Rashed-alothman/Universal-downloader{Fore.WHITE}      {Fore.CYAN}║
+╠{'═' * 68}╣
+║  {Fore.YELLOW}Type {Fore.GREEN}help{Fore.YELLOW} or {Fore.GREEN}?{Fore.YELLOW} for commands  {Fore.WHITE}|  {Fore.YELLOW}Press {Fore.GREEN}Ctrl+C{Fore.YELLOW} to cancel{Fore.CYAN}  ║
+╚{'═' * 68}╝{Style.RESET_ALL}"""
+
+    # Calculate padding for centering
+    lines = banner.split('\n')
+    max_content_width = max(len(re.sub(r'\033\[[0-9;]+m', '', line)) for line in lines if line)
+    padding = max(0, (terminal_width - max_content_width) // 2)
+    
+    # Print banner with padding
+    print('\n' * 2)  # Add some space above banner
+    for line in banner.split('\n'):
+        if line:
+            print(' ' * padding + line)
+    print('\n')  # Add space below banner
+
+class SpinnerAnimation:
+    """Animated spinner for loading states"""
+    def __init__(self, message="Processing"):
+        self.spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        self.message = message
+        self.running = False
+        self.thread = None
+
+    def spin(self):
+        while self.running:
+            for char in self.spinner:
+                if not self.running:
+                    break
+                print(f"\r{Fore.CYAN}{char} {self.message}...{Style.RESET_ALL}", end='')
+                time.sleep(0.1)
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self.spin)
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join()
+        print('\r' + ' ' * (len(self.message) + 20) + '\r', end='')
+
+def fuzzy_match_command(input_cmd: str, valid_commands: list) -> str:
+    """Find the closest matching command"""
+    matches = get_close_matches(input_cmd.lower(), valid_commands, n=1, cutoff=0.6)
+    return matches[0] if matches else None
+
 class DownloadManager:
     def __init__(self, config: Dict):
         self.config = config
@@ -158,6 +224,10 @@ class DownloadManager:
         self.setup_logging()
         self.verify_paths()
         self.last_percentage = 0  # Initialize last_percentage
+        self.valid_commands = [
+            'download', 'dl', 'audio', 'video', 'help', '?', 'exit', 'quit', 'q',
+            'flac', 'mp3', 'wav', 'm4a', 'list', 'sites', 'clear', 'cls'
+        ]
 
     def setup_logging(self):
         logging.basicConfig(
@@ -198,35 +268,53 @@ class DownloadManager:
             print(f"{Fore.GREEN}✓ Download Complete!{Style.RESET_ALL}")
 
     def verify_audio_file(self, filepath: str) -> bool:
-        """Enhanced audio file verification"""
+        """Enhanced audio file verification with comprehensive FLAC checks"""
         try:
             if filepath.lower().endswith('.flac'):
                 audio = FLAC(filepath)
-                # Additional FLAC-specific checks
-                if not audio.tags:
-                    # Initialize tags if missing
-                    audio.tags = mutagen.flac.VorbisComment()
-                    audio.save()
                 
-                # Verify FLAC properties
-                if audio.info.channels not in (1, 2):
-                    logging.error(f"Unexpected channel count: {audio.info.channels}")
+                # Strict FLAC verification
+                if not audio.verify():
+                    logging.error("FLAC integrity check failed")
+                    return False
+
+                # Verify format-specific properties
+                bit_depth = getattr(audio.info, 'bits_per_sample', 0)
+                if bit_depth not in [16, 24, 32]:
+                    logging.error(f"Invalid bit depth: {bit_depth}")
                     return False
                 
-                if audio.info.sample_rate not in (44100, 48000, 96000):
-                    logging.error(f"Unexpected sample rate: {audio.info.sample_rate}")
+                if audio.info.channels not in [1, 2]:
+                    logging.error(f"Invalid channel count: {audio.info.channels}")
                     return False
                 
-                # Check file size (should be reasonable for FLAC)
-                file_size = os.path.getsize(filepath)
-                if file_size < 1024 * 100:  # Less than 100KB is suspicious
-                    logging.error(f"FLAC file too small: {file_size} bytes")
+                if audio.info.sample_rate not in [44100, 48000, 88200, 96000, 192000]:
+                    logging.error(f"Invalid sample rate: {audio.info.sample_rate}")
                     return False
-            
-            # ...rest of existing verify_audio_file code...
+
+                # Additional quality checks
+                minimum_bitrate = 400000  # 400kbps minimum for FLAC
+                if audio.info.bits_per_sample * audio.info.sample_rate * audio.info.channels < minimum_bitrate:
+                    logging.error("FLAC quality too low")
+                    return False
+
+                # Check STREAMINFO block
+                if not audio.info.total_samples or not audio.info.length:
+                    logging.error("Invalid FLAC stream info")
+                    return False
+
+                # Verify FLAC stream markers
+                with open(filepath, 'rb') as f:
+                    header = f.read(4)
+                    if header != b'fLaC':
+                        logging.error("Invalid FLAC signature")
+                        return False
+
+                return True
+            return True  # Non-FLAC files pass
 
         except Exception as e:
-            logging.error(f"Error verifying audio file {filepath}: {str(e)}")
+            logging.error(f"FLAC verification error: {str(e)}")
             return False
 
     def convert_to_flac(self, input_file: str, output_file: str) -> bool:
@@ -317,38 +405,7 @@ class DownloadManager:
                            audio_format: str = 'mp3') -> Dict:
         output_path = self.config['audio_output'] if audio_only else self.config['video_output']
         
-        # Add TikTok-specific options
-        if 'tiktok.com' in url:
-            options = {
-                'format': 'best',  # Use best available format for TikTok
-                'outtmpl': os.path.join(output_path, f"{filename or '%(title)s'}.%(ext)s"),
-                'ffmpeg_location': self.config['ffmpeg_location'],
-                'progress_hooks': [self.progress_hook],
-                'ignoreerrors': True,
-                'continue': True,
-                'postprocessor_hooks': [self.post_process_hook],
-                'concurrent_fragment_downloads': 3,
-                'cookiefile': 'cookies.txt',  # Add cookie file support
-                'extractor_args': {
-                    'tiktok': {
-                        'download_timeout': 30,  # Increase timeout
-                        'extract_flat': False,
-                        'force_generic_extractor': False
-                    }
-                }
-            }
-            return options
-
-        # Original options for other platforms
-        if audio_only:
-            format_option = 'bestaudio[ext=webm]/bestaudio[ext=m4a]/bestaudio'
-        elif resolution:
-            format_option = f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
-        else:
-            format_option = 'bestvideo+bestaudio/best'
-        
         options = {
-            'format': format_option,
             'outtmpl': os.path.join(output_path, f"{filename or '%(title)s'}.%(ext)s"),
             'ffmpeg_location': self.config['ffmpeg_location'],
             'progress_hooks': [self.progress_hook],
@@ -356,55 +413,121 @@ class DownloadManager:
             'continue': True,
             'postprocessor_hooks': [self.post_process_hook],
             'concurrent_fragment_downloads': 3,
+            'no_url_cleanup': True,     # Prevent URL normalization
+            'clean_infojson': False,    # Keep original URL in info JSON
+            'prefer_insecure': True,    # Keep original URL scheme
         }
 
         if audio_only:
+            options['format'] = 'bestaudio/best'
+            options['extract_audio'] = True
+            
             if audio_format == 'flac':
+                # Two-stage conversion for highest quality FLAC
+                temp_format = '%(title)s.temp.wav'
                 options['postprocessors'] = [
                     {
                         'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'flac',
+                        'preferredcodec': 'wav',  # First convert to WAV
                         'preferredquality': '0',
                     },
                     {
                         'key': 'FFmpegMetadata',
                         'add_metadata': True,
+                    },
+                    # Convert WAV to high-quality FLAC
+                    {
+                        'key': 'ExecAfterDownload',
+                        'exec_cmd': (
+                            f'"{os.path.join(self.config["ffmpeg_location"], "ffmpeg")}" -i "{{}}" '
+                            '-c:a flac -compression_level 12 -sample_fmt s32p '
+                            '-ar 96000 -bits_per_raw_sample 24 -vn '
+                            '-af "aresample=resampler=soxr:precision=28:dither_method=triangular" '
+                            '-metadata encoded_by="UniversalDownloader" '
+                            '"{{}}".flac && del "{{}}"'
+                        )
                     }
                 ]
-                # Direct FLAC conversion settings
-                options['extract_audio'] = True
-                options['audio_quality'] = 0
-                options['audio_format'] = 'flac'
+                options['postprocessor_args'] = [
+                    '-acodec', 'pcm_s32le',  # 32-bit WAV
+                    '-ar', '96000',          # 96kHz sampling
+                    '-bits_per_raw_sample', '32'
+                ]
             else:
-                options['postprocessors'] = [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': audio_format,
-                    'preferredquality': '320' if audio_format == 'mp3' else '0',
-                }]
+                # ...existing non-FLAC options...
+                pass
 
-        if format_id:
-            options['format'] = format_id
-
+        # ...rest of existing options...
         return options
 
     def post_process_hook(self, d):
-        """Handle post-processing events"""
+        """Enhanced post-processing handler with detailed FLAC verification"""
         if d['status'] == 'started':
             print(f"\n{Fore.CYAN}Post-processing: {d.get('info_dict', {}).get('title', 'Unknown')}{Style.RESET_ALL}")
         elif d['status'] == 'finished':
             filename = d.get('filename', '')
             if filename.endswith('.flac'):
-                # Verify FLAC file
-                if self.verify_audio_file(filename):
-                    print(f"{Fore.GREEN}✓ FLAC conversion successful: {os.path.basename(filename)}{Style.RESET_ALL}")
-                else:
-                    print(f"{Fore.RED}✗ FLAC verification failed: {os.path.basename(filename)}{Style.RESET_ALL}")
+                print(f"\n{Fore.CYAN}Verifying FLAC conversion...{Style.RESET_ALL}")
+                try:
+                    if self.verify_audio_file(filename):
+                        audio = FLAC(filename)
+                        filesize = os.path.getsize(filename)
+                        bitrate = (filesize * 8) / (audio.info.length * 1000)  # kbps
+                        
+                        print(f"\n{Fore.GREEN}✓ FLAC conversion successful:{Style.RESET_ALL}")
+                        print(f"   - Sample Rate: {audio.info.sample_rate} Hz")
+                        print(f"   - Bit Depth: {audio.info.bits_per_sample} bit")
+                        print(f"   - Channels: {audio.info.channels}")
+                        print(f"   - Duration: {int(audio.info.length // 60)}:{int(audio.info.length % 60):02d}")
+                        print(f"   - Average Bitrate: {int(bitrate)} kbps")
+                        print(f"   - File Size: {filesize // 1024 // 1024} MB")
+                        print(f"   - Compression Level: Maximum (12)")
+                        print(f"   - Format: {audio.info.pprint()}")
+                    else:
+                        print(f"{Fore.RED}✗ FLAC verification failed - attempting recovery...{Style.RESET_ALL}")
+                        # Try to recover by reconverting
+                        temp_wav = filename.replace('.flac', '.temp.wav')
+                        if os.path.exists(temp_wav):
+                            self.convert_to_flac(temp_wav, filename)
+                except Exception as e:
+                    print(f"{Fore.RED}✗ Error during FLAC verification: {str(e)}{Style.RESET_ALL}")
 
     def download(self, url: str, **kwargs):
         try:
             print(f"\n{Fore.CYAN}Fetching video information...{Style.RESET_ALL}")
             
-            # Show download type and format
+            ydl_opts = {
+                'outtmpl': os.path.join(
+                    self.config['audio_output'] if kwargs.get('audio_only') else self.config['video_output'],
+                    f"{kwargs.get('filename') or '%(title)s'}.%(ext)s"
+                ),
+                'ffmpeg_location': self.config['ffmpeg_location'],
+                'progress_hooks': [self.progress_hook],
+                'ignoreerrors': True,
+                'continue': True,
+                'postprocessor_hooks': [self.post_process_hook],
+                'concurrent_fragment_downloads': 3,
+                'no_url_cleanup': True,     # Prevent URL modification
+                'clean_infojson': False,    # Keep original URL in info JSON
+                'no_clean_urls': True,      # Prevent URL cleaning
+                'no_check_certificate': True,
+                'prefer_insecure': True,    # Keep original URL scheme
+                'retries': 5,
+                'fragment_retries': 5,
+                'no_sanitize_url': True,    # Prevent URL sanitization
+                'extract_flat': False,      # Prevent URL flattening
+                'match_filter': lambda info: None if not info.get('original_url', '').lower() == url.lower() else None,  # Force exact URL matching
+                'keepvideo': False,  # Remove the original webm after conversion
+            }
+
+            if kwargs.get('audio_only'):
+                ydl_opts.update({
+                    'format': 'bestaudio/best',
+                    'extract_audio': True,
+                    'audio_format': kwargs.get('audio_format', 'mp3')
+                })
+
+            # Show mode
             if kwargs.get('audio_only'):
                 format_name = kwargs.get('audio_format', 'mp3').upper()
                 print(f"{Fore.YELLOW}Mode: Audio Only ({format_name}){Style.RESET_ALL}")
@@ -412,45 +535,42 @@ class DownloadManager:
                 resolution = kwargs.get('resolution', 'best')
                 print(f"{Fore.YELLOW}Mode: Video (Quality: {resolution}){Style.RESET_ALL}")
 
-            # Add browser headers for TikTok
-            if 'tiktok.com' in url:
-                yt_dlp.utils.std_headers.update({
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'en-us,en;q=0.5',
-                    'Sec-Fetch-Mode': 'navigate',
-                })
-            
             # Reset progress bar state
             if hasattr(self, 'pbar'):
                 delattr(self, 'pbar')
             self.last_percentage = 0
-            
-            with yt_dlp.YoutubeDL(self.get_download_options(url, **kwargs)) as ydl:
-                # First get info to check availability
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 try:
-                    info = ydl.extract_info(url, download=False)
+                    # Store original URL
+                    original_url = url
+                    
+                    # Create custom info extractor to preserve URL
+                    class PreserveURLIE(yt_dlp.extractor.common.InfoExtractor):
+                        def _extract_webpage_url(self, *args, **kwargs):
+                            return original_url
+
+                    ydl.add_info_extractor(PreserveURLIE())
+                    
+                    # Extract info using exact URL
+                    info = ydl.extract_info(original_url, download=False)
                     if not info:
                         raise ValueError("Could not fetch video information")
                     
-                    if kwargs.get('audio_only'):
-                        print(f"{Fore.CYAN}Found audio: {info.get('title', 'Unknown')}{Style.RESET_ALL}")
-                        print(f"Format: {info.get('format', 'Unknown')}")
+                    # Show video information
+                    print(f"{Fore.CYAN}Title: {info.get('title', 'Unknown')}{Style.RESET_ALL}")
+                    print(f"Channel: {info.get('channel', 'Unknown')}")
+                    print(f"Duration: {int(info.get('duration', 0) // 60)}:{int(info.get('duration', 0) % 60):02d}")
                     
-                    # Proceed with download
-                    ydl.download([url])
+                    # Download using exact URL
+                    ydl._download_retcode = 0
+                    ydl.download([original_url])
+                    return True
                     
                 except yt_dlp.utils.DownloadError as e:
                     print(f"{Fore.RED}Download Error: {str(e)}{Style.RESET_ALL}")
-                    print("Try updating yt-dlp: pip install -U yt-dlp")
                     return False
-                
-                except Exception as e:
-                    print(f"{Fore.RED}Error: {str(e)}{Style.RESET_ALL}")
-                    return False
-            
-            return True
-            
+
         except Exception as e:
             logging.error(f"Error downloading {url}: {str(e)}")
             return False
@@ -469,82 +589,130 @@ class DownloadManager:
                     print(f"- {extractor.IE_NAME}")
 
     def show_menu(self):
-        """Display available options menu"""
-        print(f"\n{Fore.CYAN}Available Options:{Style.RESET_ALL}")
-        print("1. Just paste URL to download in highest quality")
-        print("\n2. Audio Options:")
-        print(f"   {Fore.YELLOW}--audio-only{Style.RESET_ALL}                    Download audio only")
-        print(f"   {Fore.YELLOW}--audio-format [format]{Style.RESET_ALL}         Choose audio format:")
-        print("      Available formats:")
-        print(f"      {Fore.GREEN}mp3{Style.RESET_ALL}  - Standard MP3 format (320kbps)")
-        print(f"      {Fore.GREEN}flac{Style.RESET_ALL} - Lossless audio format")
-        print(f"      {Fore.GREEN}wav{Style.RESET_ALL}  - Uncompressed audio")
-        print(f"      {Fore.GREEN}m4a{Style.RESET_ALL}  - AAC audio format")
+        """Display improved menu layout"""
+        print(f"\n{Fore.CYAN}╔══ Available Commands ══╗{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}")
         
-        print("\n3. Video Options:")
-        print(f"   {Fore.YELLOW}--resolution [quality]{Style.RESET_ALL}          Set video quality (e.g., 720, 1080, 2160)")
+        # Quick Commands
+        print(f"{Fore.CYAN}║ {Fore.GREEN}Quick Commands:{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}   {Fore.YELLOW}Just paste URL{Style.RESET_ALL}     → Download in best quality")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}   {Fore.YELLOW}URL mp3{Style.RESET_ALL}           → Download as MP3")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}   {Fore.YELLOW}URL flac{Style.RESET_ALL}          → Download as FLAC")
+        
+        # Audio Options
+        print(f"\n{Fore.CYAN}║ {Fore.GREEN}Audio Options:{Style.RESET_ALL}")
+        for fmt in ['mp3', 'flac', 'wav', 'm4a']:
+            print(f"{Fore.CYAN}║{Style.RESET_ALL}   {Fore.YELLOW}{fmt:4}{Style.RESET_ALL} → {self._get_format_description(fmt)}")
+        
+        # Video Options
+        print(f"\n{Fore.CYAN}║ {Fore.GREEN}Video Quality:{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}   {Fore.YELLOW}720{Style.RESET_ALL}  → HD Ready")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}   {Fore.YELLOW}1080{Style.RESET_ALL} → Full HD")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}   {Fore.YELLOW}2160{Style.RESET_ALL} → 4K")
+        
+        # Help & Exit
+        print(f"\n{Fore.CYAN}║ {Fore.GREEN}Other Commands:{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}   {Fore.YELLOW}help{Style.RESET_ALL} or {Fore.YELLOW}?{Style.RESET_ALL}  → Show this menu")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}   {Fore.YELLOW}clear{Style.RESET_ALL}      → Clear screen")
+        print(f"{Fore.CYAN}║{Style.RESET_ALL}   {Fore.YELLOW}exit{Style.RESET_ALL}       → Exit program")
+        print(f"{Fore.CYAN}╚{'═' * 22}╝{Style.RESET_ALL}\n")
 
-        print("\nExamples:")
-        print("- Download video: just paste the URL")
-        print("- MP3 audio: URL --audio-only")
-        print("- FLAC audio: URL --audio-only --audio-format flac")
-        print("- HD video: URL --resolution 1080")
-        print(f"\nType {Fore.CYAN}--help{Style.RESET_ALL} to show this menu")
-        print(f"Type {Fore.RED}--Q{Style.RESET_ALL} to quit\n")
+    def _get_format_description(self, fmt):
+        descriptions = {
+            'mp3': 'High quality MP3 (320kbps)',
+            'flac': 'Lossless audio (best quality)',
+            'wav': 'Uncompressed audio',
+            'm4a': 'AAC audio (good quality)'
+        }
+        return descriptions.get(fmt, '')
 
     def interactive_mode(self):
-        print(f"\n{Fore.CYAN}Welcome to Universal Downloader!{Style.RESET_ALL}")
+        print_banner()
         self.show_menu()
         
         while True:
             try:
-                user_input = input(f"\n{Fore.GREEN}Enter URL and options:{Style.RESET_ALL} ").strip()
-                
-                if user_input.lower() == '--q':
-                    print(f"{Fore.YELLOW}Exiting...{Style.RESET_ALL}")
-                    break
-                
-                if not user_input:
+                user_input = input(f"\n{Fore.GREEN}→ {Style.RESET_ALL}").strip()
+                # Split without forcing lowercase
+                raw_args = user_input.split()
+                if not raw_args:
                     continue
                 
-                if user_input.lower() == '--help':
+                # Lowercase only the first token (command) to detect help/exit/etc.
+                cmd = raw_args[0].lower()
+
+                if cmd in ['clear', 'cls']:
+                    os.system('cls' if os.name == 'nt' else 'clear')
+                    print_banner()
+                    continue
+
+                if cmd in ['help', '?', 'h']:
                     self.show_menu()
                     continue
 
-                # Parse user input
-                args = user_input.split()
-                url = args[0]
-                options = {
-                    'audio_only': '--audio-only' in args,
-                    'resolution': None,
-                    'audio_format': 'mp3'
-                }
+                if cmd in ['exit', 'quit', 'q']:
+                    print(f"\n{Fore.YELLOW}Thanks for using Universal Downloader!{Style.RESET_ALL}")
+                    break
 
-                # Parse resolution
-                if '--resolution' in args:
+                # If the first token looks like a URL
+                if '://' in raw_args[0]:
+                    url = raw_args[0]  # Preserve exact case
+                    options = self._parse_smart_options(raw_args[1:])
+                    
+                    # Show spinner during download
+                    spinner = SpinnerAnimation("Downloading")
+                    spinner.start()
                     try:
-                        res_index = args.index('--resolution')
-                        options['resolution'] = args[res_index + 1]
-                    except (ValueError, IndexError):
-                        pass
+                        success = self.download(url, **options)
+                    finally:
+                        spinner.stop()
+                    
+                    if success:
+                        print(f"\n{Fore.GREEN}✓ Download complete!{Style.RESET_ALL}")
+                else:
+                    # Try to find similar command
+                    matched_cmd = fuzzy_match_command(cmd, self.valid_commands)
+                    if matched_cmd:
+                        print(f"{Fore.YELLOW}Did you mean '{matched_cmd}'?{Style.RESET_ALL}")
+                    self.show_menu()
 
-                # Parse audio format
-                if '--audio-format' in args:
-                    try:
-                        format_index = args.index('--audio-format')
-                        options['audio_format'] = args[format_index + 1]
-                    except (ValueError, IndexError):
-                        pass
-
-                # Download with options
-                self.download(url, **options)
-                
             except KeyboardInterrupt:
-                print(f"\n{Fore.YELLOW}Exiting...{Style.RESET_ALL}")
-                break
+                print(f"\n{Fore.YELLOW}Operation cancelled{Style.RESET_ALL}")
             except Exception as e:
-                print(f"{Fore.RED}Error: {str(e)}{Style.RESET_ALL}")
-                print("Type --help to see available options")
+                print(f"\n{Fore.RED}Error: {str(e)}{Style.RESET_ALL}")
+
+    def _parse_smart_options(self, args):
+        """Enhanced smart option parsing"""
+        # Convert each argument to lowercase only for format checks
+        args_lower = [a.lower() for a in args]
+        options = {
+            'audio_only': False,
+            'resolution': None,
+            'audio_format': 'mp3',  # Default format
+            'preserve_url': True  # Add this option
+        }
+
+        # Parse audio format first
+        if 'mp3' in args_lower:
+            options['audio_format'] = 'mp3'
+            options['audio_only'] = True
+        elif 'flac' in args_lower:
+            options['audio_format'] = 'flac'
+            options['audio_only'] = True
+        elif 'wav' in args_lower:
+            options['audio_format'] = 'wav'
+            options['audio_only'] = True
+        elif 'm4a' in args_lower:
+            options['audio_format'] = 'm4a'
+            options['audio_only'] = True
+
+        # Parse resolution
+        for res in ['720', '1080', '2160']:
+            if res in args_lower:
+                options['resolution'] = res
+                break
+
+        return options
 
 def load_config() -> Dict:
     try:
@@ -613,7 +781,6 @@ def main():
     )
 
     # Advanced options group
-    advanced = parser.add_argument_group('Advanced Options')
     advanced.add_argument(
         '--format-id',
         help="Specific format ID for download (advanced users)",
@@ -634,7 +801,7 @@ def main():
     parser.add_argument(
         '--version',
         action='version',
-        version='Universal Downloader v1.0.0'
+        version='Universal Downloader v1.1.0'
     )
 
     # Add interactive mode option

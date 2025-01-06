@@ -1,6 +1,8 @@
 # Universal Downloader
 
-A powerful and user-friendly tool to download videos and audio from various platforms including YouTube, Vimeo, Twitter, TikTok, Instagram, Twitch, and more!
+## Overview
+
+Universal Downloader is a cross-platform tool that helps you download and convert both videos and audio from multiple sites, such as YouTube, Vimeo, Twitter, TikTok, Instagram, Twitch, and more. It supports features like concurrent downloads, high-quality audio extraction, and flexible output formats to streamline your media workflow.
 
 ## Features
 
@@ -11,6 +13,14 @@ A powerful and user-friendly tool to download videos and audio from various plat
 - 🚀 Concurrent downloads
 - 🎨 Beautiful progress bars
 - 🛠 Built-in FFmpeg setup
+
+## Version
+
+1.1.0
+
+## Changelog
+
+- 22 incremental updates improving stability, FLAC downloads, and more.
 
 ## Installation Guide
 
@@ -88,6 +98,20 @@ python UniversalDownloader.py --version
 
 ### Quick Start Guide
 
+Run the app in interactive mode:
+
+```bash
+python UniversalDownloader.py
+```
+
+Then follow on-screen prompts to download videos or audio.
+
+Alternatively, you can pass a URL directly:
+
+```bash
+python UniversalDownloader.py "https://youtube.com/watch?v=example"
+```
+
 Download your first video:
 
 ```bash
@@ -140,42 +164,167 @@ If you see "FFmpeg not found" error:
 
 ### Basic Examples
 
-1. Download a video:
+1. Start the app and enter URLs interactively (Recommended):
 
 ```bash
-python UniversalDownloader.py "https://youtube.com/watch?v=example"
+python UniversalDownloader.py
 ```
 
-2. Download audio only (MP3):
+After starting, you can:
 
-```bash
-python UniversalDownloader.py "https://youtube.com/watch?v=example" --audio-only
+- Simply paste any URL and press Enter for default video download
+- Type "URL mp3" for MP3 audio download
+- Type "URL flac" for high-quality FLAC audio
+- Type "URL 1080" for 1080p video quality
+- Type "help" or "?" to see all commands
+
+Example interactive session:
+
+```
+→ https://youtube.com/watch?v=example
+Downloading video in best quality...
+
+→ https://youtube.com/watch?v=example mp3
+Downloading as MP3...
+
+→ https://youtube.com/watch?v=example flac
+Downloading as FLAC...
 ```
 
-3. Download in specific resolution:
+2. Quick Commands in Interactive Mode:
 
 ```bash
-python UniversalDownloader.py "https://youtube.com/watch?v=example" --resolution 1080
+# Just paste URL → Downloads in best quality
+→ https://youtube.com/watch?v=example
+
+# Add 'mp3' after URL → Downloads audio as MP3
+→ https://youtube.com/watch?v=example mp3
+
+# Add 'flac' → Downloads high-quality FLAC audio
+→ https://youtube.com/watch?v=example flac
+
+# Add resolution → Downloads specific quality
+→ https://youtube.com/watch?v=example 1080
 ```
 
 ### Advanced Usage
 
-- Download multiple videos:
+1. Audio Features:
 
 ```bash
-python UniversalDownloader.py "URL1" "URL2" "URL3"
+# Start interactive mode and use these commands:
+
+# High-quality FLAC audio
+→ https://example.com/video flac
+
+# Multiple audio formats supported
+→ https://example.com/video mp3    # MP3 format
+→ https://example.com/video wav    # WAV format
+→ https://example.com/video m4a    # M4A format
 ```
 
-- Download audio in FLAC format:
+2. Video Quality Options:
 
 ```bash
-python UniversalDownloader.py "URL" --audio-only --audio-format flac
+# In interactive mode:
+
+# Specific resolutions
+→ https://example.com/video 720    # HD Ready
+→ https://example.com/video 1080   # Full HD
+→ https://example.com/video 2160   # 4K
+
+# Best quality (default)
+→ https://example.com/video best
 ```
 
-- Custom output directory:
+3. Platform-Specific Features:
 
 ```bash
-python UniversalDownloader.py "URL" --output-dir "path/to/directory"
+# Works with multiple platforms:
+→ https://youtube.com/watch?v=...    # YouTube videos
+→ https://vimeo.com/...             # Vimeo content
+→ https://twitter.com/.../status/... # Twitter videos
+→ https://www.tiktok.com/@user/...   # TikTok videos
+→ https://www.instagram.com/p/...    # Instagram posts
+→ https://clips.twitch.tv/...        # Twitch clips
+```
+
+4. Batch Operations:
+
+```bash
+# Download multiple URLs (paste multiple lines):
+→ https://youtube.com/watch?v=example1
+→ https://youtube.com/watch?v=example2
+→ https://vimeo.com/example3
+
+# Mix formats in batch:
+→ https://example.com/video1 mp3
+→ https://example.com/video2 flac
+→ https://example.com/video3 1080
+```
+
+5. Utility Commands:
+
+```bash
+# While in interactive mode:
+→ help    # Show all commands
+→ clear   # Clear screen
+→ exit    # Exit program
+```
+
+### Batch Download Examples
+
+1. Multiple Videos at Once:
+
+```bash
+# Start interactive mode and paste multiple URLs:
+→ https://youtube.com/watch?v=example1
+→ https://youtube.com/watch?v=example2
+→ https://youtube.com/watch?v=example3
+```
+
+2. Mixed Format Batch Downloads:
+
+```bash
+# Download multiple items with different formats:
+→ https://youtube.com/watch?v=example1 mp3
+→ https://youtube.com/watch?v=example2 flac
+→ https://youtube.com/watch?v=example3 1080
+→ https://youtube.com/watch?v=example4 720
+```
+
+3. Playlist Downloads:
+
+```bash
+# Download entire playlist in specific format:
+→ https://youtube.com/playlist?list=example mp3    # All as MP3
+→ https://youtube.com/playlist?list=example flac   # All as FLAC
+→ https://youtube.com/playlist?list=example 1080   # All in 1080p
+```
+
+4. Quick Batch Commands:
+
+```bash
+# Download multiple videos in best quality
+→ https://youtube.com/watch?v=ex1 + https://youtube.com/watch?v=ex2
+
+# Download multiple audio files
+→ https://youtube.com/watch?v=ex1 mp3 + https://youtube.com/watch?v=ex2 flac
+
+# Mix video and audio downloads
+→ https://youtube.com/watch?v=ex1 1080 + https://youtube.com/watch?v=ex2 mp3
+```
+
+5. Using Text File Input:
+
+```bash
+# Create urls.txt with URLs and formats:
+→ load urls.txt
+
+# Example urls.txt content:
+https://youtube.com/watch?v=example1 mp3
+https://youtube.com/watch?v=example2 flac
+https://youtube.com/watch?v=example3 1080
 ```
 
 ## Configuration
