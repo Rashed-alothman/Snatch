@@ -93,8 +93,14 @@ pip install -r requirements.txt
 
 ```bash
 # Test if everything works
-python UniversalDownloader.py --version
+python UniversalDownloader.py --test
 ```
+
+### to see the version of the application
+
+Run this command to see the version of the application:
+
+1. Command Prompt: python UniversalDownloader.py --version
 
 ### Quick Start Guide
 

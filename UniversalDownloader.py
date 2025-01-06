@@ -580,14 +580,6 @@ class DownloadManager:
             futures = [executor.submit(self.download, url, **kwargs) for url in urls]
             return [f.result() for f in futures]
 
-    def list_supported_sites(self):
-        with yt_dlp.YoutubeDL() as ydl:
-            print("Supported Sites:")
-            print("---------------")
-            for extractor in ydl._ies:
-                if extractor._VALID_URL:
-                    print(f"- {extractor.IE_NAME}")
-
     def show_menu(self):
         """Display improved menu layout"""
         print(f"\n{Fore.CYAN}╔══ Available Commands ══╗{Style.RESET_ALL}")
@@ -723,15 +715,135 @@ def load_config() -> Dict:
             json.dump(DEFAULT_CONFIG, f, indent=4)
         return DEFAULT_CONFIG
 
+def test_functionality():
+    """Comprehensive testing of core functionalities"""
+    tests_passed = 0
+    total_tests = 5
+    print(f"\n{Fore.CYAN}Running functionality tests...{Style.RESET_ALL}\n")
+
+    try:
+        # 1. Test version command
+        print(f"{Fore.YELLOW}[1/5] Testing version command...{Style.RESET_ALL}")
+        version_process = subprocess.run(
+            ['python', 'UniversalDownloader.py', '--version'],
+            capture_output=True,
+            text=True
+        )
+        if 'Universal Downloader v1.1.0' in version_process.stdout:
+            print(f"{Fore.GREEN}✓ Version command test passed{Style.RESET_ALL}")
+            tests_passed += 1
+        else:
+            print(f"{Fore.RED}✗ Version command test failed{Style.RESET_ALL}")
+
+        # 2. Test FFmpeg detection
+        print(f"\n{Fore.YELLOW}[2/5] Testing FFmpeg detection...{Style.RESET_ALL}")
+        ffmpeg_path = find_ffmpeg()
+        if ffmpeg_path:
+            print(f"{Fore.GREEN}✓ FFmpeg found at: {ffmpeg_path}{Style.RESET_ALL}")
+            tests_passed += 1
+        else:
+            print(f"{Fore.RED}✗ FFmpeg not found{Style.RESET_ALL}")
+
+        # 3. Test config file
+        print(f"\n{Fore.YELLOW}[3/5] Testing config file...{Style.RESET_ALL}")
+        config = load_config()
+        if all(key in config for key in DEFAULT_CONFIG):
+            print(f"{Fore.GREEN}✓ Config file test passed{Style.RESET_ALL}")
+            tests_passed += 1
+        else:
+            print(f"{Fore.RED}✗ Config file test failed{Style.RESET_ALL}")
+
+        # 4. Test yt-dlp functionality
+        print(f"\n{Fore.YELLOW}[4/5] Testing yt-dlp functionality...{Style.RESET_ALL}")
+        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+            try:
+                ydl.extract_info("https://www.youtube.com/watch?v=dQw4w9WgXcQ", download=False)
+                print(f"{Fore.GREEN}✓ yt-dlp functionality test passed{Style.RESET_ALL}")
+                tests_passed += 1
+            except Exception as e:
+                print(f"{Fore.RED}✗ yt-dlp functionality test failed: {str(e)}{Style.RESET_ALL}")
+
+        # 5. Test output directories
+        print(f"\n{Fore.YELLOW}[5/5] Testing output directories...{Style.RESET_ALL}")
+        video_dir = Path(config['video_output'])
+        audio_dir = Path(config['audio_output'])
+        
+        if video_dir.exists() and audio_dir.exists():
+            print(f"{Fore.GREEN}✓ Output directories test passed{Style.RESET_ALL}")
+            print(f"  Video dir: {video_dir}")
+            print(f"  Audio dir: {audio_dir}")
+            tests_passed += 1
+        else:
+            print(f"{Fore.RED}✗ Output directories test failed{Style.RESET_ALL}")
+
+        # Print summary
+        print(f"\n{Fore.CYAN}Test Summary:{Style.RESET_ALL}")
+        print(f"Tests passed: {tests_passed}/{total_tests}")
+        
+        if tests_passed == total_tests:
+            print(f"\n{Fore.GREEN}✓ All functionality tests passed!{Style.RESET_ALL}")
+            return True
+        else:
+            print(f"\n{Fore.YELLOW}! Some tests failed. The program may still work but with limited functionality.{Style.RESET_ALL}")
+            return False
+
+    except Exception as e:
+        print(f"\n{Fore.RED}✗ Test execution failed: {str(e)}{Style.RESET_ALL}")
+        return False
+
+def list_supported_sites():
+    """List all supported sites in a formatted way"""
+    try:
+        with yt_dlp.YoutubeDL() as ydl:
+            print(f"\n{Fore.CYAN}=== Supported Sites ==={Style.RESET_ALL}\n")
+            
+            # Get all extractors and filter out non-valid ones
+            extractors = [ie for ie in ydl.extractor_classes() if hasattr(ie, '_VALID_URL') and ie._VALID_URL]
+            # Sort extractors by name
+            extractors.sort(key=lambda x: x.IE_NAME.lower())
+            
+            # Group extractors by category
+            categories = {}
+            for ie in extractors:
+                category = ie.IE_NAME.split(':')[0] if ':' in ie.IE_NAME else 'Others'
+                if category not in categories:
+                    categories[category] = []
+                categories[category].append(ie.IE_NAME)
+            
+            # Print extractors by category
+            for category in sorted(categories.keys()):
+                print(f"{Fore.YELLOW}► {category}{Style.RESET_ALL}")
+                for site in sorted(categories[category]):
+                    print(f"  {Fore.GREEN}• {site}{Style.RESET_ALL}")
+                print()
+            
+            print(f"{Fore.CYAN}Total supported sites: {len(extractors)}{Style.RESET_ALL}\n")
+            
+    except Exception as e:
+        print(f"{Fore.RED}Error listing sites: {str(e)}{Style.RESET_ALL}")
+        return False
+    return True
+
 def main():
+    # Add test functionality with more visible output
+    if '--test' in sys.argv:
+        print(f"\n{Fore.CYAN}╔{'═' * 40}╗")
+        print(f"║      Universal Downloader Test Suite      ║")
+        print(f"╚{'═' * 40}╝{Style.RESET_ALL}")
+        sys.exit(0 if test_functionality() else 1)
+
+    # If --list-sites is the only argument, handle it immediately
+    if len(sys.argv) == 2 and sys.argv[1] == '--list-sites':
+        list_supported_sites()
+        sys.exit(0)
+
     # If no arguments provided, run in interactive mode directly
     if len(sys.argv) == 1:
         config = load_config()
         manager = DownloadManager(config)
         manager.interactive_mode()
         sys.exit(0)
-        
-    # Rest of argument parsing for advanced usage
+
     parser = argparse.ArgumentParser(
         description="Universal Downloader - Download videos and audio from hundreds of websites including YouTube, Vimeo, Twitter, TikTok, Instagram, Twitch, and more!",
         formatter_class=CustomHelpFormatter,
@@ -781,6 +893,7 @@ def main():
     )
 
     # Advanced options group
+    advanced = parser.add_argument_group('Advanced Options')
     advanced.add_argument(
         '--format-id',
         help="Specific format ID for download (advanced users)",
@@ -811,11 +924,29 @@ def main():
         help="Run in interactive mode (enter URLs one by one, --Q to quit)"
     )
 
+    # Add test option
+    parser.add_argument(
+        '--test',
+        action='store_true',
+        help="Test if everything is working properly"
+    )
+
+    # Version argument should exit immediately
+    if '--version' in sys.argv:
+        print('Universal Downloader v1.1.0')
+        sys.exit(0)
+
+    # List-sites argument should exit immediately
+    if '--list-sites' in sys.argv:
+        config = load_config()
+        manager = DownloadManager(config)
+        manager.list_supported_sites()
+        sys.exit(0)
+
     args = parser.parse_args()
 
-    # Show supported sites if requested
     if args.list_sites:
-        DownloadManager(load_config()).list_supported_sites()
+        list_supported_sites()
         sys.exit(0)
 
     # Show full help if no arguments provided
