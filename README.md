@@ -34,6 +34,11 @@ Snatch is a powerful and user-friendly tool for downloading media content from v
 python --version
 ```
 
+making sure the pip is installed 
+```bash
+python -m ensurepip --upgrade
+```
+
 ### Step 2: Get Snatch
 
 1. Download ZIP: [Snatch Latest Release]()
@@ -97,9 +102,9 @@ python Snatch.py --test
 ### to see the version of the application
 
 Run this command to see the version of the application:
-
-1. Command Prompt: python Snatch.py --version
-
+```bash
+ python Snatch.py --version
+```
 ### Quick Start Guide
 
 Run Snatch in interactive mode:
