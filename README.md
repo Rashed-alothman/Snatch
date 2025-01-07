@@ -1,8 +1,8 @@
-# Universal Downloader
+# Snatch
 
 ## Overview
 
-Universal Downloader is a cross-platform tool that helps you download and convert both videos and audio from multiple sites, such as YouTube, Vimeo, Twitter, TikTok, Instagram, Twitch, and more. It supports features like concurrent downloads, high-quality audio extraction, and flexible output formats to streamline your media workflow.
+Snatch is a powerful and user-friendly tool for downloading media content from various online platforms. With support for multiple sites, high-quality audio extraction, and flexible output formats, Snatch makes it easy to download videos and audio from your favorite websites.
 
 ## Features
 
@@ -24,7 +24,39 @@ Universal Downloader is a cross-platform tool that helps you download and conver
 
 ## Installation Guide
 
-### Step 1: Download FFmpeg (Required)
+### Step 1: Install Python
+
+1. Download Python (3.7 or later): [https://www.python.org/downloads/](https://www.python.org/downloads/)
+2. During installation, ✅ CHECK "Add Python to PATH"
+3. Verify installation:
+
+```bash
+python --version
+```
+
+### Step 2: Get Snatch
+
+1. Download ZIP: [Snatch Latest Release]()
+2. Extract the ZIP file
+3. Open Command Prompt in the extracted folder
+
+### Step 3: Setup Environment
+
+Run these commands in order:
+
+```bash
+# 1. Create virtual environment
+python -m venv venv
+
+# 2. Activate it (choose one):
+venv\Scripts\activate        # For CMD
+.\venv\Scripts\Activate.ps1  # For PowerShell
+
+# 3. Install requirements
+pip install -r requirements.txt
+```
+
+### Step 4: Download FFmpeg (Required)
 
 **Automatic Installation (Recommended)**
 
@@ -55,59 +87,25 @@ choco install ffmpeg
 winget install ffmpeg
 ```
 
-### Step 2: Install Python
-
-1. Download Python (3.7 or later): [https://www.python.org/downloads/](https://www.python.org/downloads/)
-2. During installation, ✅ CHECK "Add Python to PATH"
-3. Verify installation:
-
-```bash
-python --version
-```
-
-### Step 3: Get Universal Downloader
-
-**Quick Download**
-
-1. Download ZIP: [Universal-downloader Latest Release]()
-2. Extract the ZIP file
-3. Open Command Prompt in the extracted folder
-
-### Step 4: Setup Environment
-
-Run these commands in order:
-
-```bash
-# 1. Create virtual environment
-python -m venv venv
-
-# 2. Activate it (choose one):
-venv\Scripts\activate        # For CMD
-.\venv\Scripts\Activate.ps1  # For PowerShell
-
-# 3. Install requirements
-pip install -r requirements.txt
-```
-
 ### Step 5: Test Installation
 
 ```bash
 # Test if everything works
-python UniversalDownloader.py --test
+python Snatch.py --test
 ```
 
 ### to see the version of the application
 
 Run this command to see the version of the application:
 
-1. Command Prompt: python UniversalDownloader.py --version
+1. Command Prompt: python Snatch.py --version
 
 ### Quick Start Guide
 
-Run the app in interactive mode:
+Run Snatch in interactive mode:
 
 ```bash
-python UniversalDownloader.py
+python Snatch.py
 ```
 
 Then follow on-screen prompts to download videos or audio.
@@ -115,17 +113,17 @@ Then follow on-screen prompts to download videos or audio.
 Alternatively, you can pass a URL directly:
 
 ```bash
-python UniversalDownloader.py "https://youtube.com/watch?v=example"
+python Snatch.py "https://youtube.com/watch?v=example"
 ```
 
 Download your first video:
 
 ```bash
 # Download video
-python UniversalDownloader.py "https://youtube.com/watch?v=example"
+python Snatch.py "https://youtube.com/watch?v=example"
 
 # Download audio only
-python UniversalDownloader.py "https://youtube.com/watch?v=example" --audio-only
+python Snatch.py "https://youtube.com/watch?v=example" --audio-only
 ```
 
 ### Need Help?
@@ -173,7 +171,7 @@ If you see "FFmpeg not found" error:
 1. Start the app and enter URLs interactively (Recommended):
 
 ```bash
-python UniversalDownloader.py
+python Snatch.py
 ```
 
 After starting, you can:
@@ -355,7 +353,7 @@ The config.json file contains settings for:
 To see all supported sites:
 
 ```bash
-python UniversalDownloader.py --list-sites
+python Snatch.py --list-sites
 ```
 
 ## Troubleshooting
