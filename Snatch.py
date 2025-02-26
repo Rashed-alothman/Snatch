@@ -70,6 +70,8 @@ Common Issues:
 """
 
 CONFIG_FILE = 'config.json'
+# Audio format extensions
+FLAC_EXT = '.flac'
 DEFAULT_CONFIG = {
     'ffmpeg_location': '',  # Will be auto-detected
     'video_output': str(Path.home() / 'Videos'),
@@ -117,35 +119,102 @@ def print_ffmpeg_instructions():
     print("\nFor detailed instructions, visit: https://www.wikihow.com/Install-FFmpeg-on-Windows")
 
 class ColorProgressBar:
-    def __init__(self, total, desc="Processing"):
+    def __init__(self, total, desc="Processing", unit="%", color_scheme="gradient"):
+        """
+        Initialize a color progress bar with enhanced features.
+        
+        Args:
+            total (int): Total number of steps
+            desc (str): Description text for the progress bar
+            unit (str): Unit of measurement
+            color_scheme (str): Either "gradient" (color based on progress) or "rotating" (cycling colors)
+        """
+        # Get terminal width for adaptive sizing
+        terminal_width = shutil.get_terminal_size().columns
+        bar_width = min(terminal_width - 30, 80)  # Ensure reasonable size
+        
+        # Available color schemes
+        self.color_schemes = {
+            "gradient": [Fore.RED, Fore.YELLOW, Fore.GREEN],
+            "rotating": [Fore.BLUE, Fore.CYAN, Fore.GREEN, Fore.YELLOW, Fore.MAGENTA],
+            "blue": [Fore.BLUE, Fore.CYAN, Fore.LIGHTBLUE_EX],
+            "simple": [Fore.CYAN]
+        }
+        
+        # Set scheme and prepare variables
+        self.colors = self.color_schemes.get(color_scheme, self.color_schemes["gradient"])
+        self.current_color_idx = 0
+        self.last_update = 0
+        self.color_scheme = color_scheme
+        self.completed = False
+        
+        # Create the tqdm progress bar
         self.progress = tqdm(
             total=total,
             desc=f"{Fore.CYAN}{desc}{Style.RESET_ALL}",
-            bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}",
-            ncols=80,
-            unit="%"
+            bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+            ncols=bar_width,
+            unit=unit,
+            dynamic_ncols=True  # Allow resizing with terminal
         )
-        self.colors = [Fore.BLUE, Fore.CYAN, Fore.GREEN, Fore.YELLOW]
-        self.current_color_idx = 0
-        self.last_update = 0
 
     def update(self, n=1):
-        current_time = time.time()
-        if current_time - self.last_update > 0.1:  # Limit color updates
-            self.current_color_idx = (self.current_color_idx + 1) % len(self.colors)
+        """Update the progress bar with color based on progress or time"""
+        try:
+            current_progress = self.progress.n + n
+            current_time = time.time()
+            
+            # Update color based on scheme
+            if self.color_scheme == "gradient":
+                # Color based on percentage complete
+                percent_complete = min(100, int((current_progress / self.progress.total) * 100))
+                color_idx = min(len(self.colors) - 1, int(percent_complete / (100 / len(self.colors))))
+                current_color = self.colors[color_idx]
+            elif current_time - self.last_update > 0.2:  # Limit updates for rotating scheme
+                # Rotating colors
+                self.current_color_idx = (self.current_color_idx + 1) % len(self.colors)
+                current_color = self.colors[self.current_color_idx]
+                self.last_update = current_time
+            else:
+                current_color = self.colors[self.current_color_idx]
+                
+            # Update the bar format with the selected color
             self.progress.bar_format = (
                 "{desc}: {percentage:3.0f}%|"
-                f"{self.colors[self.current_color_idx]}"
+                f"{current_color}"
                 "{bar}"
                 f"{Style.RESET_ALL}"
-                "| {n_fmt}/{total_fmt}"
+                "| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
             )
-            self.last_update = current_time
-        self.progress.update(n)
+            
+            # Update the progress bar
+            self.progress.update(n)
+            
+            # Check if completed
+            if current_progress >= self.progress.total:
+                self.completed = True
+                # Ensure final bar is green
+                self.progress.bar_format = (
+                    "{desc}: {percentage:3.0f}%|"
+                    f"{Fore.GREEN}"
+                    "{bar}"
+                    f"{Style.RESET_ALL}"
+                    "| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
+                )
+                self.progress.refresh()
+                
+        except Exception as e:
+            # Fallback to normal update in case of issues with color or formatting
+            self.progress.update(n)
 
-    def close(self):
-        self.progress.close()
-        print(f"\n{Fore.GREEN}✓ Complete!{Style.RESET_ALL}")
+    def close(self, message=None):
+        """Close the progress bar with optional completion message"""
+        if not self.progress.disable:
+            self.progress.close()
+            if message:
+                print(f"\n{Fore.GREEN}✓ {message}{Style.RESET_ALL}")
+            elif not self.completed:  # Don't print twice if already completed
+                print(f"\n{Fore.GREEN}✓ Complete!{Style.RESET_ALL}")
 
 def print_banner():
     """Display an enhanced colorful welcome banner with snake logo"""
@@ -173,7 +242,7 @@ def print_banner():
 
     # Calculate padding for centering
     lines = banner.split('\n')
-    max_content_width = max((len(re.sub(r'\033\[[0-9;]+m', '', line)) for line in lines if line), default=0)
+    max_content_width = max((len(re.sub(r'\x1b\[[0-9;]+m', '', line)) for line in lines if line), default=0)
     padding = max(0, (terminal_width - max_content_width) // 2)
     
     # Print banner with padding
@@ -272,55 +341,115 @@ class DownloadManager:
             self.last_percentage = 0  # Reset last_percentage
             print(f"{Fore.GREEN}✓ Download Complete!{Style.RESET_ALL}")
 
+    def _verify_flac_properties(self, audio):
+        """Verify FLAC format-specific properties"""
+        bit_depth = getattr(audio.info, 'bits_per_sample', 0)
+        if bit_depth not in [16, 24, 32]:
+            logging.error(f"Invalid bit depth: {bit_depth}")
+            return False
+        
+        if audio.info.channels not in [1, 2]:
+            logging.error(f"Invalid channel count: {audio.info.channels}")
+            return False
+        
+        if audio.info.sample_rate not in [44100, 48000, 88200, 96000, 192000]:
+            logging.error(f"Invalid sample rate: {audio.info.sample_rate}")
+            return False
+        
+        return True
+    
+    def _verify_flac_quality(self, audio):
+        """Verify FLAC quality and metadata"""
+        # Additional quality checks
+        minimum_bitrate = 400000  # 400kbps minimum for FLAC
+        if audio.info.bits_per_sample * audio.info.sample_rate * audio.info.channels < minimum_bitrate:
+            logging.error("FLAC quality too low")
+            return False
+
+        # Check STREAMINFO block
+        if not audio.info.total_samples or not audio.info.length:
+            logging.error("Invalid FLAC stream info")
+            return False
+        
     def verify_audio_file(self, filepath: str) -> bool:
         """Enhanced audio file verification with comprehensive FLAC checks"""
         try:
-            if filepath.lower().endswith('.flac'):
-                audio = FLAC(filepath)
+            if not filepath.lower().endswith(FLAC_EXT):
+                return True  # Non-FLAC files pass
                 
-                # Strict FLAC verification
-                if not audio.verify():
-                    logging.error("FLAC integrity check failed")
-                    return False
-
-                # Verify format-specific properties
-                bit_depth = getattr(audio.info, 'bits_per_sample', 0)
-                if bit_depth not in [16, 24, 32]:
-                    logging.error(f"Invalid bit depth: {bit_depth}")
-                    return False
+            audio = FLAC(filepath)
                 
-                if audio.info.channels not in [1, 2]:
-                    logging.error(f"Invalid channel count: {audio.info.channels}")
-                    return False
-                
-                if audio.info.sample_rate not in [44100, 48000, 88200, 96000, 192000]:
-                    logging.error(f"Invalid sample rate: {audio.info.sample_rate}")
+            audio = FLAC(filepath)
+            
+            # Strict FLAC verification
+            if not audio.verify():
+                logging.error("FLAC integrity check failed")
+                return False
+
+            # Verify format and quality
+            if not self._verify_flac_properties(audio) or not self._verify_flac_quality(audio):
+                return False
+
+            # Verify FLAC stream markers
+            with open(filepath, 'rb') as f:
+                header = f.read(4)
+                if header != b'fLaC':
+                    logging.error("Invalid FLAC signature")
                     return False
 
-                # Additional quality checks
-                minimum_bitrate = 400000  # 400kbps minimum for FLAC
-                if audio.info.bits_per_sample * audio.info.sample_rate * audio.info.channels < minimum_bitrate:
-                    logging.error("FLAC quality too low")
-                    return False
-
-                # Check STREAMINFO block
-                if not audio.info.total_samples or not audio.info.length:
-                    logging.error("Invalid FLAC stream info")
-                    return False
-
-                # Verify FLAC stream markers
-                with open(filepath, 'rb') as f:
-                    header = f.read(4)
-                    if header != b'fLaC':
-                        logging.error("Invalid FLAC signature")
-                        return False
-
-                return True
-            return True  # Non-FLAC files pass
+            return True
 
         except Exception as e:
             logging.error(f"FLAC verification error: {str(e)}")
             return False
+
+    def _prepare_ffmpeg_command(self, input_file: str, output_file: str) -> list:
+        """Prepare FFmpeg command for FLAC conversion."""
+        return [
+            os.path.join(self.config['ffmpeg_location'], 'ffmpeg'),
+            '-i', input_file,
+            '-c:a', 'flac',
+            '-compression_level', '12',
+            '-sample_fmt', 's32',
+            '-ar', '48000',
+            '-progress', 'pipe:1',
+            output_file
+        ]
+
+    def _monitor_conversion_progress(self, process, duration, pbar):
+        """Monitor conversion progress and update progress bar."""
+        last_progress = 0
+        while process.poll() is None:
+            line = process.stdout.readline()
+            if not line:
+                continue
+            
+            if 'out_time_ms=' in line:
+                try:
+                    time_ms = int(line.split('=')[1])
+                    progress = min(int((time_ms / 1000) / duration * 100), 100)
+                    if progress > last_progress:
+                        pbar.update(progress - last_progress)
+                        last_progress = progress
+                except (ValueError, AttributeError):
+                    pass
+        return process.returncode
+
+    def _copy_metadata(self, original_audio, output_file):
+        """Copy metadata from original audio to the new FLAC file."""
+        if original_audio and original_audio.tags:
+            flac_audio = FLAC(output_file)
+            for key, value in original_audio.tags.items():
+                flac_audio[key] = value
+            flac_audio.save()
+
+    def _verify_conversion(self, input_file, output_file):
+        """Verify the converted file matches the original."""
+        orig_info = mutagen.File(input_file).info
+        conv_info = mutagen.File(output_file).info
+        
+        if abs(orig_info.length - conv_info.length) > 0.1:  # Allow 100ms difference
+            raise ValueError("Duration mismatch between input and output files")
 
     def convert_to_flac(self, input_file: str, output_file: str) -> bool:
         """Convert audio to FLAC with high quality settings and metadata preservation."""
@@ -329,26 +458,14 @@ class DownloadManager:
             if not self.verify_audio_file(input_file):
                 raise ValueError("Input file verification failed")
 
-            # Get original metadata and file size
+            # Get original metadata and info
             original_audio = mutagen.File(input_file)
-            input_size = os.path.getsize(input_file)
-            
-            # Prepare FFmpeg command with progress pipe
-            cmd = [
-                os.path.join(self.config['ffmpeg_location'], 'ffmpeg'),
-                '-i', input_file,
-                '-c:a', 'flac',
-                '-compression_level', '12',
-                '-sample_fmt', 's32',
-                '-ar', '48000',
-                '-progress', 'pipe:1',
-                output_file
-            ]
             
             # Create progress bar
             pbar = ColorProgressBar(100, desc="Converting to FLAC")
             
             # Execute conversion with progress monitoring
+            cmd = self._prepare_ffmpeg_command(input_file, output_file)
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -357,45 +474,25 @@ class DownloadManager:
             )
 
             # Monitor conversion progress
-            last_progress = 0
-            while True:
-                line = process.stdout.readline()
-                if not line and process.poll() is not None:
-                    break
-                
-                if 'out_time_ms=' in line:
-                    try:
-                        time_ms = int(line.split('=')[1])
-                        progress = min(int((time_ms / 1000) / original_audio.info.length * 100), 100)
-                        if progress > last_progress:
-                            pbar.update(progress - last_progress)
-                            last_progress = progress
-                    except (ValueError, AttributeError):
-                        continue
-
+            returncode = self._monitor_conversion_progress(
+                process, 
+                original_audio.info.length, 
+                pbar
+            )
+            
             # Close progress bar
             pbar.close()
 
             # Check conversion result
-            if process.returncode != 0:
+            if returncode != 0:
                 raise RuntimeError(f"FFmpeg conversion failed: {process.stderr.read()}")
 
-            # Verify and handle metadata
+            # Verify output file and handle metadata
             if not self.verify_audio_file(output_file):
                 raise ValueError("Output file verification failed")
-
-            if original_audio and original_audio.tags:
-                flac_audio = FLAC(output_file)
-                for key, value in original_audio.tags.items():
-                    flac_audio[key] = value
-                flac_audio.save()
-
-            # Compare files
-            orig_info = mutagen.File(input_file).info
-            conv_info = mutagen.File(output_file).info
-            
-            if abs(orig_info.length - conv_info.length) > 0.1:  # Allow 100ms difference
-                raise ValueError("Duration mismatch between input and output files")
+                
+            self._copy_metadata(original_audio, output_file)
+            self._verify_conversion(input_file, output_file)
 
             return True
 
@@ -468,9 +565,9 @@ class DownloadManager:
     def post_process_hook(self, d):
         """Enhanced post-processing handler with detailed FLAC verification"""
         if d['status'] == 'started':
-            print(f"\n{Fore.CYAN}Post-processing: {d.get('info_dict', {}).get('title', 'Unknown')}{Style.RESET_ALL}")
-        elif d['status'] == 'finished':
             filename = d.get('filename', '')
+            if filename.endswith(FLAC_EXT):
+                print(f"\n{Fore.CYAN}Verifying FLAC conversion...{Style.RESET_ALL}")
             if filename.endswith('.flac'):
                 print(f"\n{Fore.CYAN}Verifying FLAC conversion...{Style.RESET_ALL}")
                 try:
@@ -486,10 +583,10 @@ class DownloadManager:
                         print(f"   - Duration: {int(audio.info.length // 60)}:{int(audio.info.length % 60):02d}")
                         print(f"   - Average Bitrate: {int(bitrate)} kbps")
                         print(f"   - File Size: {filesize // 1024 // 1024} MB")
-                        print(f"   - Compression Level: Maximum (12)")
+                        print("   - Compression Level: Maximum (12)")
                         print(f"   - Format: {audio.info.pprint()}")
                     else:
-                        print(f"{Fore.RED}✗ FLAC verification failed - attempting recovery...{Style.RESET_ALL}")
+                        temp_wav = filename.replace(FLAC_EXT, '.temp.wav')
                         # Try to recover by reconverting
                         temp_wav = filename.replace('.flac', '.temp.wav')
                         if os.path.exists(temp_wav):
@@ -623,56 +720,72 @@ class DownloadManager:
         }
         return descriptions.get(fmt, '')
 
+    def _handle_utility_command(self, cmd):
+        """Handle utility commands like clear, help, exit"""
+        if cmd in ['clear', 'cls']:
+            os.system('cls' if os.name == 'nt' else 'clear')
+            print_banner()
+            return True
+        
+        if cmd in ['help', '?', 'h']:
+            self.show_menu()
+            return True
+            
+        if cmd in ['exit', 'quit', 'q']:
+            print(f"\n{Fore.YELLOW}Thanks for using Snatch!{Style.RESET_ALL}")
+            return 'exit'
+            
+        return False
+    
+    def _handle_url_download(self, url, raw_args):
+        """Handle downloading from a URL with options"""
+        options = self._parse_smart_options(raw_args[1:])
+        
+        # Show spinner during download
+        spinner = SpinnerAnimation("Downloading")
+        spinner.start()
+        try:
+            success = self.download(url, **options)
+        finally:
+            spinner.stop()
+        
+        if success:
+            print(f"\n{Fore.GREEN}✓ Download complete!{Style.RESET_ALL}")
+            
+    def _handle_unknown_command(self, cmd):
+        """Handle unknown commands"""
+        matched_cmd = fuzzy_match_command(cmd, self.valid_commands)
+        if matched_cmd:
+            print(f"{Fore.YELLOW}Did you mean '{matched_cmd}'?{Style.RESET_ALL}")
+        self.show_menu()
+    
     def interactive_mode(self):
+        """Interactive command mode with reduced cognitive complexity"""
         print_banner()
         self.show_menu()
         
         while True:
             try:
                 user_input = input(f"\n{Fore.GREEN}→ {Style.RESET_ALL}").strip()
-                # Split without forcing lowercase
                 raw_args = user_input.split()
                 if not raw_args:
                     continue
                 
-                # Lowercase only the first token (command) to detect help/exit/etc.
                 cmd = raw_args[0].lower()
-
-                if cmd in ['clear', 'cls']:
-                    os.system('cls' if os.name == 'nt' else 'clear')
-                    print_banner()
-                    continue
-
-                if cmd in ['help', '?', 'h']:
-                    self.show_menu()
-                    continue
-
-                if cmd in ['exit', 'quit', 'q']:
-                    print(f"\n{Fore.YELLOW}Thanks for using Snatch!{Style.RESET_ALL}")
+                
+                # Handle utility commands
+                result = self._handle_utility_command(cmd)
+                if result == 'exit':
                     break
-
-                # If the first token looks like a URL
+                if result:
+                    continue
+                
+                # Handle URL or unknown command
                 if '://' in raw_args[0]:
-                    url = raw_args[0]  # Preserve exact case
-                    options = self._parse_smart_options(raw_args[1:])
-                    
-                    # Show spinner during download
-                    spinner = SpinnerAnimation("Downloading")
-                    spinner.start()
-                    try:
-                        success = self.download(url, **options)
-                    finally:
-                        spinner.stop()
-                    
-                    if success:
-                        print(f"\n{Fore.GREEN}✓ Download complete!{Style.RESET_ALL}")
+                    self._handle_url_download(raw_args[0], raw_args)
                 else:
-                    # Try to find similar command
-                    matched_cmd = fuzzy_match_command(cmd, self.valid_commands)
-                    if matched_cmd:
-                        print(f"{Fore.YELLOW}Did you mean '{matched_cmd}'?{Style.RESET_ALL}")
-                    self.show_menu()
-
+                    self._handle_unknown_command(cmd)
+                    
             except KeyboardInterrupt:
                 print(f"\n{Fore.YELLOW}Operation cancelled{Style.RESET_ALL}")
             except Exception as e:
@@ -833,7 +946,7 @@ def main():
     # Add test functionality with more visible output
     if '--test' in sys.argv:
         print(f"\n{Fore.CYAN}╔{'═' * 40}╗")
-        print(f"║          Snatch Test Suite              ║")
+        print("║          Snatch Test Suite              ║")
         print(f"╚{'═' * 40}╝{Style.RESET_ALL}")
         sys.exit(0 if test_functionality() else 1)
 
