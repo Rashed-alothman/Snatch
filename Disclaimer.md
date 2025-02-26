@@ -1,8 +1,8 @@
-# Universal Downloader - Legal Disclaimer
+# Snatch - Legal Disclaimer
 
 ## Important Notice to Users
 
-By downloading, installing, or using the Universal Downloader application ("the Software"), you acknowledge that you have read, understood, and agree to the following terms:
+By downloading, installing, or using the Snatch application ("the Software"), you acknowledge that you have read, understood, and agree to the following terms:
 
 1. LEGAL USE ONLY
 The Software is designed and intended for downloading content that you have legal rights to access and download. Users are solely responsible for ensuring they have the necessary rights, licenses, or permissions to download any content.
@@ -18,7 +18,7 @@ This Software may not be used to:
 The user assumes all responsibility and risk for the use of this Software. Any consequences arising from illegal, unauthorized, or prohibited use of the Software are solely the user's responsibility.
 
 4. DISCLAIMER OF LIABILITY
-The developer(s) of Universal Downloader:
+The developer(s) of Snatch:
 - Make no warranties regarding the legality of how users may employ the Software
 - Accept no responsibility for user violations of copyright laws, DRM restrictions, or other applicable regulations
 - Are not liable for any direct, indirect, incidental, special, exemplary, or consequential damages
