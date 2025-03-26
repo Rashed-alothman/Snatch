@@ -910,37 +910,49 @@ def test_functionality():
         return False
 
 def list_supported_sites():
-    """List all supported sites in a formatted way"""
+    """List supported sites by reading from Supported-sites.txt with enhanced formatting"""
     try:
-        with yt_dlp.YoutubeDL() as ydl:
-            print(f"\n{Fore.CYAN}=== Supported Sites ==={Style.RESET_ALL}\n")
-            
-            # Get all extractors and filter out non-valid ones
-            extractors = [ie for ie in ydl.extractor_classes() if hasattr(ie, '_VALID_URL') and ie._VALID_URL]
-            # Sort extractors by name
-            extractors.sort(key=lambda x: x.IE_NAME.lower())
-            
-            # Group extractors by category
-            categories = {}
-            for ie in extractors:
-                category = ie.IE_NAME.split(':')[0] if ':' in ie.IE_NAME else 'Others'
-                if category not in categories:
-                    categories[category] = []
-                categories[category].append(ie.IE_NAME)
-            
-            # Print extractors by category
-            for category in sorted(categories.keys()):
-                print(f"{Fore.YELLOW}► {category}{Style.RESET_ALL}")
-                for site in sorted(categories[category]):
-                    print(f"  {Fore.GREEN}• {site}{Style.RESET_ALL}")
-                print()
-            
-            print(f"{Fore.CYAN}Total supported sites: {len(extractors)}{Style.RESET_ALL}\n")
-            
+        with open("Supported-sites.txt", "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        entries = [line.strip() for line in lines if line.strip()]
+        
+        # Group entries by category
+        categories = {}
+        for entry in entries:
+            if ':' in entry:
+                parts = entry.split(":", 1)
+                category = parts[0].strip()
+                site = parts[1].strip()
+            else:
+                category = "Others"
+                site = entry
+            categories.setdefault(category, []).append(site)
+        
+        total_sites = sum(len(sites) for sites in categories.values())
+        
+        # Print decorative header
+        header_width = 60
+        header = (
+            f"{Fore.CYAN}{'=' * header_width}\n"
+            f"{'SUPPORTED SITES':^{header_width}}\n"
+            f"{'=' * header_width}{Style.RESET_ALL}\n"
+        )
+        print(header)
+        
+        # Print sites grouped by category
+        for category in sorted(categories.keys()):
+            category_title = f" {category.upper()} "
+            print(f"{Fore.YELLOW}{category_title:^{header_width}}{Style.RESET_ALL}")
+            for site in sorted(categories[category]):
+                print(f"{Fore.GREEN} • {site}{Style.RESET_ALL}")
+            print(f"{'-' * header_width}\n")
+        
+        print(f"{Fore.CYAN}Total supported sites: {total_sites}{Style.RESET_ALL}\n")
+        return True
+
     except Exception as e:
-        print(f"{Fore.RED}Error listing sites: {str(e)}{Style.RESET_ALL}")
+        print(f"{Fore.RED}Error reading supported sites: {str(e)}{Style.RESET_ALL}")
         return False
-    return True
 
 def main():
     # Add test functionality with more visible output
@@ -1111,3 +1123,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
