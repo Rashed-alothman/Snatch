@@ -16,11 +16,11 @@ Snatch is a powerful and user-friendly tool for downloading media content from v
 
 ## Version
 
-1.1.0
+1.2.0
 
 ## Changelog
 
-- 22 incremental updates improving stability, FLAC downloads, and more.
+- 31 incremental updates improving stability, FLAC downloads, and more.
 
 ## Installation Guide
 
