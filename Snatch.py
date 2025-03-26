@@ -1063,7 +1063,7 @@ def main():
 
     # Version argument should exit immediately
     if '--version' in sys.argv:
-        print('Snatch v1.1.0')
+        print('Snatch v1.2.0')
         sys.exit(0)
 
     # List-sites argument should exit immediately

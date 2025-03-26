@@ -30,13 +30,8 @@ Snatch is a powerful and user-friendly tool for downloading media content from v
 2. During installation, ✅ CHECK "Add Python to PATH"
 3. Verify installation:
 
-```bash
-python --version
 ```
-
-making sure the pip is installed 
-```bash
-python -m ensurepip --upgrade
+python --version
 ```
 
 ### Step 2: Get Snatch
@@ -49,7 +44,7 @@ python -m ensurepip --upgrade
 
 Run these commands in order:
 
-```bash
+```
 # 1. Create virtual environment
 python -m venv venv
 
@@ -67,7 +62,7 @@ pip install -r requirements.txt
 
 1. After downloading this tool, just run:
 
-```bash
+```
 python setup_ffmpeg.py
 ```
 
@@ -82,19 +77,19 @@ python setup_ffmpeg.py
 
 - Windows Chocolatey:
 
-```bash
+```
 choco install ffmpeg
 ```
 
 - Windows Winget:
 
-```bash
+```
 winget install ffmpeg
 ```
 
 ### Step 5: Test Installation
 
-```bash
+```
 # Test if everything works
 python Snatch.py --test
 ```
@@ -102,14 +97,14 @@ python Snatch.py --test
 ### to see the version of the application
 
 Run this command to see the version of the application:
-```bash
- python Snatch.py --version
-```
+
+1. Command Prompt: python Snatch.py --version
+
 ### Quick Start Guide
 
 Run Snatch in interactive mode:
 
-```bash
+```
 python Snatch.py
 ```
 
@@ -117,13 +112,13 @@ Then follow on-screen prompts to download videos or audio.
 
 Alternatively, you can pass a URL directly:
 
-```bash
+```
 python Snatch.py "https://youtube.com/watch?v=example"
 ```
 
 Download your first video:
 
-```bash
+```
 # Download video
 python Snatch.py "https://youtube.com/watch?v=example"
 
@@ -173,119 +168,50 @@ If you see "FFmpeg not found" error:
 
 ### Basic Examples
 
-1. Start the app and enter URLs interactively (Recommended):
+1. Start the App and Enter URLs Interactively:
 
-```bash
-python Snatch.py
-```
+   - Launch using:
+     ```
+     python Snatch.py
+     ```
+   - [Insert your interactive mode banner image here]
+   - In interactive mode, simply paste a URL to download in best quality.
 
-After starting, you can:
-
-- Simply paste any URL and press Enter for default video download
-- Type "URL mp3" for MP3 audio download
-- Type "URL flac" for high-quality FLAC audio
-- Type "URL 1080" for 1080p video quality
-- Type "help" or "?" to see all commands
-
-Example interactive session:
-
-```
-→ https://youtube.com/watch?v=example
-Downloading video in best quality...
-
-→ https://youtube.com/watch?v=example mp3
-Downloading as MP3...
-
-→ https://youtube.com/watch?v=example flac
-Downloading as FLAC...
-```
-
-2. Quick Commands in Interactive Mode:
-
-```bash
-# Just paste URL → Downloads in best quality
-→ https://youtube.com/watch?v=example
-
-# Add 'mp3' after URL → Downloads audio as MP3
-→ https://youtube.com/watch?v=example mp3
-
-# Add 'flac' → Downloads high-quality FLAC audio
-→ https://youtube.com/watch?v=example flac
-
-# Add resolution → Downloads specific quality
-→ https://youtube.com/watch?v=example 1080
-```
+2. Quick Commands (Direct Execution):
+   - You can also download without entering interactive mode. Just run:
+     ```
+     python Snatch.py "https://youtube.com/watch?v=example"
+     ```
+   - To download in a specific format or video quality, append the keyword or number:
+     - For audio as MP3:
+       ```
+       python Snatch.py "https://youtube.com/watch?v=example" mp3
+       ```
+     - For high-quality FLAC audio:
+       ```
+       python Snatch.py "https://youtube.com/watch?v=example" flac
+       ```
+     - For a specific video resolution (e.g., 1080p):
+       ```
+       python Snatch.py "https://youtube.com/watch?v=example" 1080
+       ```
 
 ### Advanced Usage
 
-1. Audio Features:
-
-```bash
-# Start interactive mode and use these commands:
-
-# High-quality FLAC audio
-→ https://example.com/video flac
-
-# Multiple audio formats supported
-→ https://example.com/video mp3    # MP3 format
-→ https://example.com/video wav    # WAV format
-→ https://example.com/video m4a    # M4A format
-```
-
-2. Video Quality Options:
-
-```bash
-# In interactive mode:
-
-# Specific resolutions
-→ https://example.com/video 720    # HD Ready
-→ https://example.com/video 1080   # Full HD
-→ https://example.com/video 2160   # 4K
-
-# Best quality (default)
-→ https://example.com/video best
-```
-
-3. Platform-Specific Features:
-
-```bash
-# Works with multiple platforms:
-→ https://youtube.com/watch?v=...    # YouTube videos
-→ https://vimeo.com/...             # Vimeo content
-→ https://twitter.com/.../status/... # Twitter videos
-→ https://www.tiktok.com/@user/...   # TikTok videos
-→ https://www.instagram.com/p/...    # Instagram posts
-→ https://clips.twitch.tv/...        # Twitch clips
-```
-
-4. Batch Operations:
-
-```bash
-# Download multiple URLs (paste multiple lines):
-→ https://youtube.com/watch?v=example1
-→ https://youtube.com/watch?v=example2
-→ https://vimeo.com/example3
-
-# Mix formats in batch:
-→ https://example.com/video1 mp3
-→ https://example.com/video2 flac
-→ https://example.com/video3 1080
-```
-
-5. Utility Commands:
-
-```bash
-# While in interactive mode:
-→ help    # Show all commands
-→ clear   # Clear screen
-→ exit    # Exit program
-```
-
-### Batch Download Examples
+- In interactive mode, you have the flexibility to control downloads by simply typing commands:
+  - Just the URL → Downloads the media in best quality.
+  - URL followed by an audio format (mp3, flac, wav, or m4a) → Downloads audio in the specified format.
+  - URL followed by a resolution (720, 1080, 2160) → Downloads video in that quality.
+- You can use these Quick Commands directly from the terminal without entering interactive mode:
+  ```
+  python Snatch.py "https://vimeo.com/example" flac
+  python Snatch.py "https://youtube.com/watch?v=example" 1080
+  ```
+- This approach lets users download the video or audio in the desired format or quality with a single command line call.
 
 1. Multiple Videos at Once:
 
-```bash
+```
 # Start interactive mode and paste multiple URLs:
 → https://youtube.com/watch?v=example1
 → https://youtube.com/watch?v=example2
@@ -294,46 +220,57 @@ Downloading as FLAC...
 
 2. Mixed Format Batch Downloads:
 
-```bash
+```
 # Download multiple items with different formats:
-→ https://youtube.com/watch?v=example1 mp3
-→ https://youtube.com/watch?v=example2 flac
-→ https://youtube.com/watch?v=example3 1080
-→ https://youtube.com/watch?v=example4 720
+ → python Snatch.py https://youtube.com/watch?v=example1 mp3 + https://youtube.com/watch?v=example2 flac + https://youtube.com/watch?v=example3 1080 + https://youtube.com/watch?v=example4 720
 ```
 
 3. Playlist Downloads:
 
-```bash
 # Download entire playlist in specific format:
-→ https://youtube.com/playlist?list=example mp3    # All as MP3
-→ https://youtube.com/playlist?list=example flac   # All as FLAC
-→ https://youtube.com/playlist?list=example 1080   # All in 1080p
+
+→ https://youtube.com/playlist?list=example mp3 # All as MP3
+→ https://youtube.com/playlist?list=example flac # All as FLAC
+→ https://youtube.com/playlist?list=example 1080 # All in 1080p
+
 ```
 
 4. Quick Batch Commands:
 
-```bash
+```
+
 # Download multiple videos in best quality
+
 → https://youtube.com/watch?v=ex1 + https://youtube.com/watch?v=ex2
 
 # Download multiple audio files
+
 → https://youtube.com/watch?v=ex1 mp3 + https://youtube.com/watch?v=ex2 flac
 
 # Mix video and audio downloads
-→ https://youtube.com/watch?v=ex1 1080 + https://youtube.com/watch?v=ex2 mp3
-```
 
-5. Using Text File Input:
+→ https://youtube.com/watch?v=ex1 1080 + https://youtube.com/watch?v=ex2 mp3
+
+````
+5. Utility Commands:
 
 ```bash
+# While in interactive mode:
+→ help    # Show all commands
+→ clear   # Clear screen
+→ exit    # Exit program
+````
+
 # Create urls.txt with URLs and formats:
+
 → load urls.txt
 
 # Example urls.txt content:
+
 https://youtube.com/watch?v=example1 mp3
 https://youtube.com/watch?v=example2 flac
 https://youtube.com/watch?v=example3 1080
+
 ```
 
 ## Configuration
@@ -357,8 +294,10 @@ The config.json file contains settings for:
 
 To see all supported sites:
 
-```bash
+```
+
 python Snatch.py --list-sites
+
 ```
 
 ## Troubleshooting
@@ -398,3 +337,4 @@ MIT License - Feel free to use and modify!
 
 - Built with [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 - Uses [FFmpeg](https://ffmpeg.org/) for media processing
+```
