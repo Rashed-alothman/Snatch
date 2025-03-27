@@ -34,7 +34,7 @@ init(autoreset=True)
 
 class CustomHelpFormatter(argparse.HelpFormatter):
     def _split_lines(self, text, width):
-        return [line for line in textwrap.wrap(text, width)]
+        return [line in textwrap.wrap(text, width)]
 
 # Constants moved to top for better organization and maintainability
 CONFIG_FILE = 'config.json'
@@ -634,7 +634,7 @@ class DownloadManager:
         # FFmpeg validation with better error handling
         if not self.config.get('ffmpeg_location'):
             ffmpeg_path = find_ffmpeg()
-            if ffmpeg_path:
+            if (ffmpeg_path):
                 self.config['ffmpeg_location'] = ffmpeg_path
             else:
                 print_ffmpeg_instructions()
@@ -969,16 +969,17 @@ class DownloadManager:
                         'key': 'FFmpegMetadata',
                         'add_metadata': True,
                     },
-                    # Convert WAV to high-quality FLAC
+                    # Fix FLAC conversion command for safe Windows path handling
                     {
                         'key': 'ExecAfterDownload',
                         'exec_cmd': (
-                            f'"{os.path.join(self.config["ffmpeg_location"], "ffmpeg")}" -i "{{}}" '
+                            f'"{os.path.join(self.config["ffmpeg_location"], "ffmpeg")}" '
+                            '-i "$" '  # Use the $ placeholder which is properly escaped
                             '-c:a flac -compression_level 12 -sample_fmt s32p '
                             '-ar 96000 -bits_per_raw_sample 24 -vn '
                             '-af "aresample=resampler=soxr:precision=28:dither_method=triangular" '
                             '-metadata encoded_by="Snatch" '
-                            '"{{}}".flac && del "{{}}"'
+                            '"$.flac" && del "$"'
                         )
                     }
                 ]
@@ -1408,7 +1409,7 @@ class DownloadManager:
         
         while True:
             try:
-                command = input(f"\n{Fore.GREEN}snatch> {Style.RESET_ALL}").strip().lower()
+                command = input(f"\n{Fore.GREEN}snatch> {Style.RESET_ALL}").strip()
                 
                 if not command:
                     continue
@@ -1421,11 +1422,33 @@ class DownloadManager:
                     print(EXAMPLES)
                     continue
                 
+                # Check if the input is a URL first (before fuzzy matching commands)
+                if '://' in command:
+                    # Extract URL and potential options
+                    parts = command.split(maxsplit=1)
+                    url = parts[0]
+                    
+                    # Extract format options if provided
+                    options = {}
+                    if len(parts) > 1:
+                        option_text = parts[1].lower()
+                        if option_text in ['mp3', 'wav', 'flac', 'm4a']:
+                            options['audio_only'] = True
+                            options['audio_format'] = option_text
+                        # Handle resolution options
+                        elif option_text in ['720', '1080', '2160', '4k', '480', '360']:
+                            options['resolution'] = '2160' if option_text == '4k' else option_text
+                    
+                    print(f"{Fore.CYAN}Downloading from URL: {url}{Style.RESET_ALL}")
+                    self.download(url, **options)
+                    continue
+                
                 # Fuzzy match for common commands
                 matched_command = fuzzy_match_command(command, self.valid_commands)
                 if matched_command:
                     command = matched_command
                 
+                # Process standard commands
                 if command.startswith('download') or command.startswith('dl'):
                     url = input(f"{Fore.GREEN}Enter URL: {Style.RESET_ALL}").strip()
                     self.download(url)
@@ -1455,6 +1478,7 @@ class DownloadManager:
                 else:
                     print(f"{Fore.RED}Unknown command: {command}{Style.RESET_ALL}")
                     print(f"{Fore.YELLOW}Type 'help' or '?' for a list of commands.{Style.RESET_ALL}")
+                    print(f"{Fore.YELLOW}If you're trying to download, make sure the URL includes 'http://' or 'https://'{Style.RESET_ALL}")
             
             except KeyboardInterrupt:
                 print(f"\n{Fore.YELLOW}Operation cancelled by user. Exiting interactive mode...{Style.RESET_ALL}")
