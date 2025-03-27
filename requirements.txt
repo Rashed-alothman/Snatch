@@ -3,3 +3,4 @@ mutagen>=1.47.0
 colorama>=0.4.6
 tqdm>=4.66.1
 requests>=2.31.0
+psutil>=5.9.0

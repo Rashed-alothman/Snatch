@@ -1,340 +1,235 @@
-# Snatch
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Rashed-alothman/Snatch/main/assets/logo.png" alt="Snatch Logo" width="200" />
+</p>
 
-## Overview
+<h1 align="center">🐍 Snatch 🎬</h1>
+<h3 align="center">Download Anything, Anywhere, Anytime</h3>
 
-Snatch is a powerful and user-friendly tool for downloading media content from various online platforms. With support for multiple sites, high-quality audio extraction, and flexible output formats, Snatch makes it easy to download videos and audio from your favorite websites.
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#usage">Usage</a> •
+  <a href="#supported-sites">Supported Sites</a> •
+  <a href="#troubleshooting">Troubleshooting</a>
+</p>
 
-## Features
+<p align="center">
+  <img src="https://img.shields.io/badge/version-1.2.0-blue" alt="Version 1.2.0" />
+  <img src="https://img.shields.io/badge/python-3.7+-yellow" alt="Python 3.7+" />
+  <img src="https://img.shields.io/badge/platforms-Windows%20|%20macOS%20|%20Linux-green" alt="Platforms" />
+  <img src="https://img.shields.io/badge/license-MIT-orange" alt="License" />
+</p>
 
-- 🎥 Download videos from multiple platforms
-- 🎵 Extract audio in MP3/FLAC/WAV formats
-- 📱 Support for various video qualities
-- 📂 Custom output directory support
-- 🚀 Concurrent downloads
-- 🎨 Beautiful progress bars
-- 🛠 Built-in FFmpeg setup
+## 🚀 Overview
 
-## Version
+**Snatch** is a powerful and user-friendly media downloader that lets you grab videos, audio, and more from hundreds of websites in various formats and qualities. With its sleek interface and powerful features, downloading media has never been easier or more satisfying!
 
-1.2.0
+## ✨ Features
 
-## Changelog
+- 🌈 **Beautiful Interactive Mode** - Easy-to-use interface with colorful progress bars
+- 🎭 **Dynamic Resource Management** - Adaptive chunk sizes based on your system's resources
+- 📋 **Site Explorer** - Browse and search through 1000+ supported sites
+- 🔄 **Smart Conversion** - High-quality audio extraction with format options
+- 🚄 **Concurrent Downloads** - Download multiple files simultaneously
+- 🎚️ **Quality Selection** - Choose specific video resolutions
+- 📦 **Playlist Support** - Download entire playlists with options to select specific videos
+- 🔎 **Cache System** - Optimized repeat downloads with smart caching
+- 🛡️ **Error Recovery** - Robust error handling and helpful suggestions
+- 🧩 **Format Flexibility** - Video, MP3, FLAC, WAV, and more
+- 🌐 **Universal Compatibility** - Works on Windows, macOS, and Linux
 
-- 31 incremental updates improving stability, FLAC downloads, and more.
+## 🔧 Installation
 
-## Installation Guide
+### One-Click Setup (Recommended)
 
-### Step 1: Install Python
+Run this single command to set up everything automatically:
 
-1. Download Python (3.7 or later): [https://www.python.org/downloads/](https://www.python.org/downloads/)
-2. During installation, ✅ CHECK "Add Python to PATH"
-3. Verify installation:
-
+```bash
+python setup.py
 ```
-python --version
-```
 
-### Step 2: Get Snatch
+This will:
 
-1. Download ZIP: [Snatch Latest Release]()
-2. Extract the ZIP file
-3. Open Command Prompt in the extracted folder
+1. Install all dependencies
+2. Set up FFmpeg automatically
+3. Create convenient launcher files
+4. Verify your installation
 
-### Step 3: Setup Environment
+### Manual Installation
 
-Run these commands in order:
+#### Step 1: Requirements
 
-```
-# 1. Create virtual environment
-python -m venv venv
+- Python 3.7 or newer
+- FFmpeg (auto-installed by setup script)
 
-# 2. Activate it (choose one):
-venv\Scripts\activate        # For CMD
-.\venv\Scripts\Activate.ps1  # For PowerShell
+#### Step 2: Install Dependencies
 
-# 3. Install requirements
+```bash
 pip install -r requirements.txt
 ```
 
-### Step 4: Download FFmpeg (Required)
+#### Step 3: FFmpeg Setup (if needed)
 
-**Automatic Installation (Recommended)**
-
-1. After downloading this tool, just run:
-
-```
+```bash
 python setup_ffmpeg.py
 ```
 
-**Manual Installation (Alternative)**
+## 🏃‍♀️ Quick Start
 
-1. Visit FFmpeg Builds: [https://github.com/BtbN/FFmpeg-Builds/releases/latest](https://github.com/BtbN/FFmpeg-Builds/releases/latest)
-2. Download: `ffmpeg-master-latest-win64-gpl.zip`
-3. Extract the ZIP file to `C:\ffmpeg`
-4. The final path should look like: `C:\ffmpeg\ffmpeg-master-latest-win64-gpl\bin`
+### Using the Interactive Mode (Easiest)
 
-**Using Package Managers**
-
-- Windows Chocolatey:
-
-```
-choco install ffmpeg
-```
-
-- Windows Winget:
-
-```
-winget install ffmpeg
-```
-
-### Step 5: Test Installation
-
-```
-# Test if everything works
-python Snatch.py --test
-```
-
-### to see the version of the application
-
-Run this command to see the version of the application:
-
-1. Command Prompt: python Snatch.py --version
-
-### Quick Start Guide
-
-Run Snatch in interactive mode:
-
-```
-python Snatch.py
-```
-
-Then follow on-screen prompts to download videos or audio.
-
-Alternatively, you can pass a URL directly:
-
-```
-python Snatch.py "https://youtube.com/watch?v=example"
-```
-
-Download your first video:
-
-```
-# Download video
-python Snatch.py "https://youtube.com/watch?v=example"
-
-# Download audio only
-python Snatch.py "https://youtube.com/watch?v=example" --audio-only
-```
-
-### Need Help?
-
-If you see "FFmpeg not found" error:
-
-1. Run `python setup_ffmpeg.py` (recommended)
-2. Or follow the manual FFmpeg installation steps above
-3. Still having issues? Check the Troubleshooting section below
-
-### Common Installation Issues
-
-1. **Python Not Found**
-
-   - Make sure Python is added to PATH during installation
-   - Download Python from [python.org](https://python.org)
-
-2. **pip Not Found**
-
-   - Run: `python -m ensurepip --upgrade`
-   - Or download: `get-pip.py` from [pip documentation](https://pip.pypa.io)
-
-3. **Permission Errors**
-
-   - Run Command Prompt as Administrator
-   - Check antivirus settings
-   - Ensure write permissions in installation directory
-
-4. **FFmpeg Setup Fails**
-
-   - Try manual FFmpeg installation:
-     1. Download from [FFmpeg official site](https://ffmpeg.org/download.html)
-     2. Extract to C:\ffmpeg
-     3. Add C:\ffmpeg\bin to system PATH
-     4. Update config.json with correct path
-
-5. **SSL Errors**
-   - Update Python to latest version
-   - Install required certificates: `pip install --upgrade certifi`
-
-## Usage
-
-### Basic Examples
-
-1. Start the App and Enter URLs Interactively:
-
-   - Launch using:
-     ```
-     python Snatch.py
-     ```
-   - [Insert your interactive mode banner image here]
-   - In interactive mode, simply paste a URL to download in best quality.
-
-2. Quick Commands (Direct Execution):
-   - You can also download without entering interactive mode. Just run:
-     ```
-     python Snatch.py "https://youtube.com/watch?v=example"
-     ```
-   - To download in a specific format or video quality, append the keyword or number:
-     - For audio as MP3:
-       ```
-       python Snatch.py "https://youtube.com/watch?v=example" mp3
-       ```
-     - For high-quality FLAC audio:
-       ```
-       python Snatch.py "https://youtube.com/watch?v=example" flac
-       ```
-     - For a specific video resolution (e.g., 1080p):
-       ```
-       python Snatch.py "https://youtube.com/watch?v=example" 1080
-       ```
-
-### Advanced Usage
-
-- In interactive mode, you have the flexibility to control downloads by simply typing commands:
-  - Just the URL → Downloads the media in best quality.
-  - URL followed by an audio format (mp3, flac, wav, or m4a) → Downloads audio in the specified format.
-  - URL followed by a resolution (720, 1080, 2160) → Downloads video in that quality.
-- You can use these Quick Commands directly from the terminal without entering interactive mode:
-  ```
-  python Snatch.py "https://vimeo.com/example" flac
-  python Snatch.py "https://youtube.com/watch?v=example" 1080
-  ```
-- This approach lets users download the video or audio in the desired format or quality with a single command line call.
-
-1. Multiple Videos at Once:
-
-```
-# Start interactive mode and paste multiple URLs:
-→ https://youtube.com/watch?v=example1
-→ https://youtube.com/watch?v=example2
-→ https://youtube.com/watch?v=example3
-```
-
-2. Mixed Format Batch Downloads:
-
-```
-# Download multiple items with different formats:
- → python Snatch.py https://youtube.com/watch?v=example1 mp3 + https://youtube.com/watch?v=example2 flac + https://youtube.com/watch?v=example3 1080 + https://youtube.com/watch?v=example4 720
-```
-
-3. Playlist Downloads:
-
-# Download entire playlist in specific format:
-
-→ https://youtube.com/playlist?list=example mp3 # All as MP3
-→ https://youtube.com/playlist?list=example flac # All as FLAC
-→ https://youtube.com/playlist?list=example 1080 # All in 1080p
-
-```
-
-4. Quick Batch Commands:
-
-```
-
-# Download multiple videos in best quality
-
-→ https://youtube.com/watch?v=ex1 + https://youtube.com/watch?v=ex2
-
-# Download multiple audio files
-
-→ https://youtube.com/watch?v=ex1 mp3 + https://youtube.com/watch?v=ex2 flac
-
-# Mix video and audio downloads
-
-→ https://youtube.com/watch?v=ex1 1080 + https://youtube.com/watch?v=ex2 mp3
-
-````
-5. Utility Commands:
+Launch Snatch in interactive mode:
 
 ```bash
-# While in interactive mode:
-→ help    # Show all commands
-→ clear   # Clear screen
-→ exit    # Exit program
-````
-
-# Create urls.txt with URLs and formats:
-
-→ load urls.txt
-
-# Example urls.txt content:
-
-https://youtube.com/watch?v=example1 mp3
-https://youtube.com/watch?v=example2 flac
-https://youtube.com/watch?v=example3 1080
-
+python Snatch.py --interactive
 ```
 
-## Configuration
+Or simply double-click **Snatch.bat** (Windows) / **snatch.sh** (macOS/Linux)
 
-The config.json file contains settings for:
+### Direct Command Examples
 
-- FFmpeg location
-- Default output directories
-- Maximum concurrent downloads
+```bash
+# Download video in best quality
+python Snatch.py "https://youtube.com/watch?v=example"
 
-## Supported Sites
+# Download audio only (MP3)
+python Snatch.py "https://youtube.com/watch?v=example" --audio-only
+
+# Download in specific resolution
+python Snatch.py "https://youtube.com/watch?v=example" --resolution 1080
+
+# Download audio in FLAC format
+python Snatch.py "https://youtube.com/watch?v=example" --audio-only --audio-format flac
+```
+
+## 💻 Usage
+
+### Interactive Mode Commands
+
+When in interactive mode, you can use these commands:
+
+| Command                 | Description                           |
+| ----------------------- | ------------------------------------- |
+| `help` or `?`           | Show help and all available commands  |
+| `URL`                   | Download media in best quality        |
+| `URL mp3`               | Download audio in MP3 format          |
+| `URL flac`              | Download audio in FLAC format         |
+| `URL 720` or `URL 1080` | Download video in specific resolution |
+| `list` or `sites`       | Show all supported sites              |
+| `clear`                 | Clear the screen                      |
+| `exit` or `quit`        | Exit the application                  |
+
+### Advanced Features
+
+#### 1. Playlist Downloads
+
+When downloading a playlist, Snatch will present options to:
+
+- Download the entire playlist
+- Download only the first few videos
+- Select specific videos to download
+
+#### 2. Batch Downloads
+
+Download multiple URLs at once:
+
+```bash
+python Snatch.py "URL1" "URL2" "URL3"
+```
+
+#### 3. Custom Output Directory
+
+```bash
+python Snatch.py "URL" --output-dir "path/to/directory"
+```
+
+#### 4. Format Specification
+
+```bash
+python Snatch.py "URL" --format-id 137+140  # For advanced users
+```
+
+## 🌎 Supported Sites
+
+Snatch supports over 1000 websites including:
 
 - YouTube
 - Vimeo
-- Twitter
-- TikTok
+- Twitter/X
 - Instagram
+- TikTok
+- Facebook
 - Twitch
 - SoundCloud
-- And hundreds more!
+- Reddit
+- Daily Motion
+- And many more!
 
-To see all supported sites:
+To see the full list of supported sites:
 
-```
-
+```bash
 python Snatch.py --list-sites
-
 ```
 
-## Troubleshooting
+## 🔍 Troubleshooting
 
-1. FFmpeg not found:
+### Common Issues
 
-   - Run `python setup_ffmpeg.py` to automatically install FFmpeg
-   - Or manually install FFmpeg and update config.json
+1. **FFmpeg not found**
 
-2. SSL Errors:
+   ```bash
+   python setup_ffmpeg.py  # Run this to fix automatically
+   ```
 
-   - Update Python and yt-dlp: `pip install -U yt-dlp`
+2. **SSL Errors**
 
-3. Permission Errors:
-   - Run with administrator privileges
-   - Check folder permissions
+   - Update Python and dependencies:
 
-## Requirements
+   ```bash
+   pip install -U yt-dlp requests
+   ```
 
-- Python 3.7+
-- FFmpeg
-- See requirements.txt for Python packages
+3. **Permission Errors**
 
-## License
+   - Run as administrator (Windows)
+   - Use sudo (Linux/macOS)
 
-MIT License - Feel free to use and modify!
+4. **Slow Downloads**
+   - Check your internet connection
+   - Try with `--http-chunk-size 10485760` for larger chunks
 
-## Contributing
+### Need Help?
 
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+If you're still having issues:
 
-## Credits
+- Check the logs in download_log.txt
+- Run with `--verbose` for detailed output
 
-- Built with [yt-dlp](https://github.com/yt-dlp/yt-dlp)
+## 🤝 Contributing
+
+Contributions are welcome! Feel free to:
+
+- Report bugs
+- Suggest new features
+- Submit pull requests
+
+## 📜 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 📊 System Requirements
+
+- **Minimum**: 2GB RAM, 1GHz CPU, 100MB free space
+- **Recommended**: 4GB RAM, 2GHz dual-core CPU, 500MB free space
+
+## 🙏 Acknowledgements
+
+- Built with [yt-dlp](https://github.com/yt-dlp)
 - Uses [FFmpeg](https://ffmpeg.org/) for media processing
-```
+
+---
+
+<p align="center">
+Made with ❤️ by <a href="https://github.com/Rashed-alothman">Rashed Alothman</a>
+</p>
