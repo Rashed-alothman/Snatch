@@ -151,6 +151,41 @@ python Snatch.py "URL" --output-dir "path/to/directory"
 python Snatch.py "URL" --format-id 137+140  # For advanced users
 ```
 
+#### 5. Automatic File Organization
+
+Snatch can automatically organize your downloaded files based on metadata extracted from the media. This creates a clean folder structure for your library.
+
+Enable organization with:
+
+```bash
+python Snatch.py --organize URL
+```
+
+Or set it permanently in the configuration:
+
+```bash
+python setup_ffmpeg.py
+```
+
+#### Organization Templates
+
+You can customize how files are organized using templates in the config:
+
+- Audio: `{uploader}/{album}/{title}`
+- Video: `{uploader}/{year}/{title}`
+- Podcast: `Podcasts/{uploader}/{year}-{month}/{title}`
+- Audiobook: `Audiobooks/{uploader}/{title}`
+
+Available variables include:
+
+- `{title}` - Media title
+- `{uploader}` - Channel or uploader name
+- `{album}` - Album name (for music)
+- `{artist}` - Artist name
+- `{year}` - Release year
+- `{month}` - Release month
+- `{day}` - Release day
+- `{track_number}` - Track number
 ## 🌎 Supported Sites
 <h2 id="Supported Sites">🌎 Supported Sites</h2>
 Snatch supports over 1000 websites including:
