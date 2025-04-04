@@ -25,7 +25,7 @@
 
 **Snatch** is a powerful and user-friendly media downloader that lets you grab videos, audio, and more from hundreds of websites in various formats and qualities. With its sleek interface and powerful features, downloading media has never been easier or more satisfying!
 
-## ✨ Features
+<h2 id="features">✨ Features</h2>
 
 - 🌈 **Beautiful Interactive Mode** - Easy-to-use interface with colorful progress bars
 - 🎭 **Dynamic Resource Management** - Adaptive chunk sizes based on your system's resources
