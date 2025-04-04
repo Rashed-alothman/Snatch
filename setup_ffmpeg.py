@@ -30,7 +30,14 @@ DEFAULT_CONFIG = {
     'ffmpeg_location': '',  # Will be auto-detected
     'video_output': str(Path.home() / 'Videos'),
     'audio_output': str(Path.home() / 'Music'),
-    'max_concurrent': 3
+    'max_concurrent': 3,
+    'organize': False,
+    'organization_templates': {
+        'audio': '{uploader}/{album}/{title}',
+        'video': '{uploader}/{year}/{title}',
+        'podcast': 'Podcasts/{uploader}/{year}-{month}/{title}',
+        'audiobook': 'Audiobooks/{uploader}/{title}'
+    }
 }
 
 def print_banner():
@@ -202,6 +209,12 @@ def load_config():
                 for key, value in DEFAULT_CONFIG.items():
                     if key not in config:
                         config[key] = value
+                # Ensure organization templates are complete
+                if 'organization_templates' in config:
+                    for key, value in DEFAULT_CONFIG['organization_templates'].items():
+                        config['organization_templates'].setdefault(key, value)
+                else:
+                    config['organization_templates'] = DEFAULT_CONFIG['organization_templates'].copy()
                 return config
         else:
             return DEFAULT_CONFIG.copy()
@@ -344,6 +357,38 @@ def copy_relevant_files_to_script_directory():
     except Exception as e:
         print(f"{Fore.RED}Error creating local FFmpeg copy: {str(e)}{Style.RESET_ALL}")
         return False
+
+def setup_organization_preferences(config):
+    """Setup file organization preferences"""
+    print("\n=== File Organization Setup ===")
+    print("Snatch can automatically organize your downloaded files based on metadata.")
+    
+    enable = input("Enable automatic file organization? (y/n): ").lower().startswith('y')
+    config['organize'] = enable
+    
+    if enable:
+        print("\nOrganization Templates:")
+        print("These templates determine how files are organized in folders.")
+        print("Available variables: {title}, {uploader}, {album}, {artist}, {year}, {month}, etc.")
+        
+        templates = config['organization_templates']
+        
+        print("\nCurrent templates:")
+        for key, template in templates.items():
+            print(f"  {key}: {template}")
+        
+        customize = input("\nWould you like to customize these templates? (y/n): ").lower().startswith('y')
+        
+        if customize:
+            templates['audio'] = input(f"Audio template [{templates['audio']}]: ") or templates['audio']
+            templates['video'] = input(f"Video template [{templates['video']}]: ") or templates['video']
+            templates['podcast'] = input(f"Podcast template [{templates['podcast']}]: ") or templates['podcast']
+            templates['audiobook'] = input(f"Audiobook template [{templates['audiobook']}]: ") or templates['audiobook']
+            
+            config['organization_templates'] = templates
+            print("\nTemplates updated!")
+    
+    return config
 
 if __name__ == "__main__":
     try:

@@ -50,7 +50,8 @@ def install_dependencies():
         "colorama>=0.4.6",
         "tqdm>=4.66.1",
         "requests>=2.31.0",
-        "psutil>=5.9.0"
+        "psutil>=5.9.0",
+        "requests>=2.31.0"
     ]
     
     # Write to requirements.txt

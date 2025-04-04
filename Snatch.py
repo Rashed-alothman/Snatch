@@ -28,25 +28,70 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from contextlib import contextmanager
 from typing import Optional, List, Dict, Any, Union, Tuple, Callable, Generator, Iterator
+from collections import OrderedDict  # New import
+import requests  # New import
+# Import additional libraries for metadata handling
+from mutagen.id3 import ID3
+from mutagen.mp4 import MP4
+from mutagen.oggvorbis import OggVorbis
+from datetime import datetime
+import unicodedata
 
 # Initialize colorama for Windows support with autoreset for cleaner code
 init(autoreset=True)
 
+# Set up logging configuration with color support
+class ColoramaFormatter(logging.Formatter):
+    """Custom formatter to color log levels using Colorama"""
+    def format(self, record):
+        color_map = {
+            logging.DEBUG: Fore.CYAN,
+            logging.INFO: Fore.GREEN,
+            logging.WARNING: Fore.YELLOW,
+            logging.ERROR: Fore.RED,
+            logging.CRITICAL: Fore.RED + Style.BRIGHT
+        }
+        level_color = color_map.get(record.levelno, Fore.WHITE)
+        message = super().format(record)
+        return f"{level_color}{message}{Style.RESET_ALL}"
+    
 class CustomHelpFormatter(argparse.HelpFormatter):
     def _split_lines(self, text, width):
-        return [line in textwrap.wrap(text, width)]
+        return textwrap.wrap(text, width)
 
 # Constants moved to top for better organization and maintainability
 CONFIG_FILE = 'config.json'
 FLAC_EXT = '.flac'
-VERSION = "1.2.0"  # Centralized version definition
+VERSION = "1.3.0"  # Centralized version definition
 LOG_FILE = 'download_log.txt'
 SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+# Default throttling and retry constants
+DEFAULT_THROTTLE_RATE = 0  # 0 means no throttling (bytes/second)
+MAX_RETRIES = 10  # Maximum number of retry attempts
+RETRY_SLEEP_BASE = 5  # Base seconds to wait before retry (used in exponential backoff)
+MAX_CONCURRENT_FRAGMENTS = 10  # Maximum number of parallel fragment downloads
+DEFAULT_TIMEOUT = 60  # Default connection timeout in seconds
+DOWNLOAD_SESSIONS_FILE = "download_sessions.json"  # New session data file
+
+# File organization templates
+DEFAULT_ORGANIZATION_TEMPLATES = {
+    'audio': '{uploader}/{album}/{title}',
+    'video': '{uploader}/{year}/{title}',
+    'podcast': 'Podcasts/{uploader}/{year}-{month}/{title}',
+    'audiobook': 'Audiobooks/{uploader}/{title}'
+}
+
+# Safe filename characters regex pattern
+SAFE_FILENAME_CHARS = re.compile(r'[^\w\-. ]')
+
 DEFAULT_CONFIG = {
     'ffmpeg_location': '',  # Will be auto-detected
     'video_output': str(Path.home() / 'Videos'),
     'audio_output': str(Path.home() / 'Music'),
-    'max_concurrent': 3
+    'max_concurrent': 3,
+    # Add organization configs
+    'organize': False,
+    'organization_templates': DEFAULT_ORGANIZATION_TEMPLATES.copy()
 }
 
 # Enhanced spinner characters for better visual appearance
@@ -83,45 +128,53 @@ signal.signal(signal.SIGINT, signal_handler)
 
 # Examples text unchanged
 EXAMPLES = """
-Examples:
----------
-1. Download a video from various platforms:
-   python Snatch.py "https://youtube.com/watch?v=example"
-   python Snatch.py "https://vimeo.com/123456789"
-   python Snatch.py "https://dailymotion.com/video/x7tgd2g"
-   python Snatch.py "https://twitch.tv/videos/1234567890"
-
-2. Download audio only (MP3):
-   python Snatch.py "https://soundcloud.com/artist/track" --audio-only
-
-3. Download video in specific resolution:
-   python Snatch.py "https://youtube.com/watch?v=example" --resolution 1080
-
-4. Download multiple videos:
-   python Snatch.py "URL1" "URL2" "URL3"
-
-5. Download with custom filename:
-   python Snatch.py "URL" --filename "my_video"
-
-6. Download audio in FLAC format:
-   python Snatch.py "URL" --audio-only --audio-format flac
-
-Advanced Usage:
---------------
-- Custom output directory:
-  python Snatch.py "URL" --output-dir "path/to/directory"
-
-- Specify format ID (for advanced users):
-  python Snatch.py "URL" --format-id 137+140
-
-- List all supported sites:
-  python Snatch.py --list-sites
-
-Common Issues:
---------------
-1. FFMPEG not found: Install FFMPEG and update config.json
-2. SSL Error: Update Python and yt-dlp
-3. Permission Error: Run with admin privileges
+╔════════════════════════════════════════════════════════════════╗
+║                     SNATCH HELP MENU                           ║
+╠════════════════════════════════════════════════════════════════╣
+║                                                                ║
+║  BASIC COMMANDS:                                               ║
+║    download, dl <URL>       Download media in best quality     ║
+║    audio <URL>              Download audio only (MP3)          ║
+║    video <URL>              Download video                     ║
+║    flac <URL>               Download audio in FLAC format      ║
+║    mp3 <URL>                Download audio in MP3 format       ║
+║    wav <URL>                Download audio in WAV format       ║
+║    m4a <URL>                Download audio in M4A format       ║
+║    URL                      Direct URL input downloads media   ║
+║    URL mp3|flac|wav         Direct URL with format specified   ║
+║    URL 720|1080|2160|4k     Direct URL with resolution         ║
+║                                                                ║
+║  DOWNLOAD OPTIONS:                                             ║
+║    --audio-only             Download only audio track          ║
+║    --resolution <res>       Specify video resolution           ║
+║    --filename <name>        Set custom output filename         ║
+║    --audio-format <format>  Set audio format (mp3,flac,etc)    ║
+║    --output-dir <path>      Specify output directory           ║
+║                                                                ║
+║  UTILITY COMMANDS:                                             ║
+║    help, ?                  Show this help menu                ║
+║    clear, cls               Clear the screen                   ║
+║    exit, quit, q            Exit the application               ║
+║    list, sites              List supported sites               ║
+║    version                  Show Snatch version                ║
+║                                                                ║
+║  USAGE EXAMPLES:                                               ║
+║    snatch> https://youtube.com/watch?v=example                 ║
+║    snatch> https://soundcloud.com/artist/track flac            ║
+║    snatch> download                                            ║
+║    snatch> audio https://youtube.com/watch?v=example           ║
+║                                                                ║
+║  BATCH OPERATIONS:                                             ║
+║    Multiple URLs can be provided on the command line           ║
+║    python Snatch.py "URL1" "URL2" "URL3"                       ║
+║                                                                ║
+║  TROUBLESHOOTING:                                              ║
+║    1. FFmpeg issues - Run with --test to check installation    ║
+║    2. Network errors - Check your internet connection          ║
+║    3. Format errors - Try different format or resolution       ║
+║    4. For more help, visit: github.com/Rashed-alothman/Snatch  ║
+║                                                                ║
+╚════════════════════════════════════════════════════════════════╝
 """
 
 @lru_cache(maxsize=None)
@@ -203,7 +256,6 @@ class ColorProgressBar:
             bar_width = min(terminal_width - 30, 80)  # Ensure reasonable size
         except (AttributeError, OSError):
             bar_width = 80  # Fallback width if terminal size cannot be determined
-        
         # Pre-define color schemes to avoid repetitive calculations
         self.color_schemes = {
             "gradient": [Fore.RED, Fore.YELLOW, Fore.GREEN],
@@ -284,13 +336,14 @@ class ColorProgressBar:
                     "| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]"
                 )
                 self.progress.refresh()
-                
-        except Exception as e:
+        except Exception:
             # Fallback to normal update in case of issues with color or formatting
             try:
                 self.progress.update(n)
-            except:
+            except Exception:
                 pass  # Last resort if everything fails
+    def set_description(self, description: str) -> None:
+        self.progress.set_description_str(description)
 
     def close(self, message: Optional[str] = None) -> None:
         """Close the progress bar with optional completion message"""
@@ -301,7 +354,7 @@ class ColorProgressBar:
                     print(f"\n{Fore.GREEN}✓ {message}{Style.RESET_ALL}")
                 elif not self.completed:  # Don't print twice if already completed
                     print(f"\n{Fore.GREEN}✓ Complete!{Style.RESET_ALL}")
-            except:
+            except Exception:
                 pass  # Ensure we don't crash on close
 
 def print_banner():
@@ -321,8 +374,7 @@ def print_banner():
 ║  {Fore.GREEN}   /    |         {Fore.YELLOW}                                {Fore.CYAN}      ║
 ║  {Fore.GREEN}  *___/||         {Fore.YELLOW}                                {Fore.CYAN}      ║
 ╠{'═' * 58}╣
-║     {Fore.GREEN}■ {Fore.WHITE}Version: {Fore.YELLOW}1.2.0{Fore.WHITE}                                   {Fore.CYAN}  ║
-║     {Fore.GREEN}■ {Fore.WHITE}Author : {Fore.YELLOW}Rashed Alothman{Fore.WHITE}                           {Fore.CYAN}║
+║     {Fore.GREEN}■ {Fore.WHITE}Version: {Fore.YELLOW}1.3.0{Fore.WHITE}                                   {Fore.CYAN}  ║
 ║     {Fore.GREEN}■ {Fore.WHITE}GitHub : {Fore.YELLOW}github.com/Rashed-alothman/Snatch{Fore.WHITE}        {Fore.CYAN} ║
 ╠{'═' * 58}╣
 ║  {Fore.YELLOW}Type {Fore.GREEN}help{Fore.YELLOW} or {Fore.GREEN}?{Fore.YELLOW} for commands  {Fore.WHITE}|  {Fore.YELLOW}Press {Fore.GREEN}Ctrl+C{Fore.YELLOW} to cancel  {Fore.CYAN}║
@@ -336,7 +388,7 @@ def print_banner():
     # Print banner with padding
     print('\n' * 2)  # Add some space above banner
     for line in banner.split('\n'):
-        if line:
+        if (line):
             print(' ' * padding + line)
     print('\n')  # Add space below banner
 
@@ -420,6 +472,23 @@ def estimate_download_size(info: Dict[str, Any]) -> int:
         
         # Return a conservative estimate based on duration (3MB per minute)
         return int(duration * 50000)  # ~3MB/minute
+
+def measure_network_speed() -> float:
+    """Measure network speed in Mbps by downloading a small data chunk."""
+    url = "https://httpbin.org/bytes/100000"  # 100KB sample
+    try:
+        start = time.time()
+        response = requests.get(url, stream=True, timeout=5)
+        total_bytes = 0
+        for chunk in response.iter_content(chunk_size=10240):
+            total_bytes += len(chunk)
+            if total_bytes >= 100000:
+                break
+        elapsed = time.time() - start
+        speed_mbps = (total_bytes * 8) / (elapsed * 1024 * 1024)  # Mbps
+        return speed_mbps
+    except Exception:
+        return 2.0  # Fallback speed in Mbps
 
 class EnhancedSpinnerAnimation:
     """Advanced animated spinner with customization and message updates"""
@@ -568,11 +637,17 @@ class EnhancedSpinnerAnimation:
                 print(f"\r{self.color}• {formatted_msg}{Style.RESET_ALL}")
 
 class DownloadCache:
-    """Cache for optimizing repeated downloads"""
+    """Cache for optimizing repeated downloads with LRU eviction"""
     def __init__(self, cache_dir: Path = CACHE_DIR, max_size_mb: int = 100):
         self.cache_dir = cache_dir
         self.max_size_bytes = max_size_mb * 1024 * 1024
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # New LRU dictionary mapping cache key to last access time
+        self.lru = OrderedDict()
+        # Initialize LRU from existing cache files
+        for file in self.cache_dir.glob('*.info.json'):
+            key = file.stem
+            self.lru[key] = file.stat().st_mtime
         self._cleanup_if_needed()
         
     def _get_cache_key(self, url: str) -> str:
@@ -587,7 +662,11 @@ class DownloadCache:
         if info_path.exists() and time.time() - info_path.stat().st_mtime < 3600:  # 1 hour cache
             try:
                 with open(info_path, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                # Update LRU ordering
+                self.lru.pop(key, None)
+                self.lru[key] = time.time()
+                return data
             except (json.JSONDecodeError, IOError):
                 return None
         return None
@@ -600,28 +679,513 @@ class DownloadCache:
         try:
             with open(info_path, 'w') as f:
                 json.dump(info, f)
+            # Update LRU ordering
+            self.lru.pop(key, None)
+            self.lru[key] = time.time()
+            self._cleanup_if_needed()  # Evict if capacity exceeded
         except IOError:
             pass
             
     def _cleanup_if_needed(self) -> None:
-        """Clean up cache if it exceeds size limit"""
+        """Clean up cache if it exceeds size limit using LRU eviction"""
         try:
-            cache_size = sum(f.stat().st_size for f in self.cache_dir.glob('*') if f.is_file())
-            
-            if cache_size > self.max_size_bytes:
-                # Delete oldest files first
-                files = [(f, f.stat().st_mtime) for f in self.cache_dir.glob('*') if f.is_file()]
-                files.sort(key=lambda x: x[1])  # Sort by modification time
-                
-                # Delete files until we're under the size limit
-                for file, _ in files:
-                    file.unlink(missing_ok=True)
-                    cache_size = sum(f.stat().st_size for f in self.cache_dir.glob('*') if f.is_file())
-                    if cache_size < self.max_size_bytes * 0.8:  # Clean up to 80% of max
-                        break
+            cache_files = list(self.cache_dir.glob('*'))
+            cache_size = sum(f.stat().st_size for f in cache_files if f.is_file())
+            # Evict least recently used entries until under capacity
+            while cache_size > self.max_size_bytes and self.lru:
+                lru_key, _ = self.lru.popitem(last=False)
+                file_path = self.cache_dir / f"{lru_key}.info.json"
+                if file_path.exists():
+                    file_size = file_path.stat().st_size
+                    file_path.unlink(missing_ok=True)
+                    cache_size -= file_size
         except Exception:
-            # Ignore cleanup errors
             pass
+
+# New Session Manager to track download progress
+class SessionManager:
+    def __init__(self, session_file: str = DOWNLOAD_SESSIONS_FILE):
+        self.session_file = session_file
+        self.sessions = self.load_sessions()
+
+    def load_sessions(self) -> dict:
+        if os.path.exists(self.session_file):
+            try:
+                with open(self.session_file, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                return {}
+        return {}
+
+    def save_sessions(self):
+        try:
+            with open(self.session_file, 'w') as f:
+                json.dump(self.sessions, f, indent=4)
+        except Exception as e:
+            print(f"{Fore.RED}Error saving session data: {e}{Style.RESET_ALL}")
+
+    def update_session(self, url: str, progress: float):
+        self.sessions[url] = {'progress': progress, 'timestamp': time.time()}
+        self.save_sessions()
+
+    def remove_session(self, url: str):
+        if url in self.sessions:
+            del self.sessions[url]
+            self.save_sessions()
+
+    def get_session(self, url: str) -> Optional[dict]:
+        return self.sessions.get(url)
+
+def calculate_speed(downloaded_bytes: int, start_time: float) -> float:
+    """Calculate bytes per second."""
+    elapsed = time.time() - start_time
+    return downloaded_bytes / elapsed if elapsed > 0 else 0
+
+def format_speed(speed: float) -> str:
+    """Return a human-friendly speed string."""
+    if speed < 1024:
+        return f"{speed:.2f} B/s"
+    elif speed < 1024 * 1024:
+        return f"{speed/1024:.2f} KB/s"
+    else:
+        return f"{speed/(1024*1024):.2f} MB/s"
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Create a sanitized version of a filename that works across platforms.
+    Removes illegal characters and limits length.
+    """
+    # Normalize unicode characters
+    filename = unicodedata.normalize('NFKD', filename)
+    
+    # Replace characters that aren't allowed in filenames
+    filename = re.sub(SAFE_FILENAME_CHARS, '_', filename)
+    
+    # Replace multiple spaces and underscores with a single one
+    filename = re.sub(r'[_ ]+', ' ', filename).strip()
+    
+    # Limit filename length (255 is max on most filesystems)
+    # Leave some room for extensions and path
+    max_length = 200
+    if len(filename) > max_length:
+        filename = filename[:max_length]
+    
+    return filename
+
+class MetadataExtractor:
+    """Extract and organize metadata from media files."""
+    
+    def __init__(self):
+        self.audio_extensions = {'.mp3', '.flac', '.m4a', '.ogg', '.opus', '.wav', '.aac'}
+        self.video_extensions = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv'}
+    
+    def extract(self, filepath: str, info: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Extract metadata from a media file and combine with info-dict if provided.
+        Returns organized metadata dictionary.
+        """
+        metadata = {}
+        
+        # Start with info-dict metadata if available
+        if info:
+            metadata = self._extract_from_info_dict(info)
+        
+        # Extract from file if it exists
+        if os.path.exists(filepath):
+            file_metadata = self._extract_from_file(filepath)
+            # Merge file metadata, prioritizing file metadata over info-dict
+            metadata.update(file_metadata)
+            
+        # Add file information
+        metadata.update(self._get_file_info(filepath))
+        
+        # Ensure we have basic fields with defaults
+        metadata.setdefault('title', os.path.splitext(os.path.basename(filepath))[0])
+        metadata.setdefault('uploader', 'Unknown')
+        metadata.setdefault('album', 'Unknown')
+        metadata.setdefault('year', datetime.now().year)
+        metadata.setdefault('month', datetime.now().month)
+        metadata.setdefault('day', datetime.now().day)
+        
+        # Sanitize metadata that will be used in filenames
+        for key in ['title', 'uploader', 'album']:
+            if key in metadata:
+                metadata[key] = sanitize_filename(str(metadata[key]))
+        
+        return metadata
+    
+    def _extract_from_info_dict(self, info: Dict) -> Dict[str, Any]:
+        """Extract metadata from yt-dlp info dictionary."""
+        metadata = {}
+        
+        # Basic fields
+        metadata['title'] = info.get('title', '')
+        metadata['uploader'] = info.get('uploader', info.get('channel', ''))
+        metadata['description'] = info.get('description', '')
+        
+        # Date information
+        upload_date = info.get('upload_date', '')
+        if upload_date and len(upload_date) == 8:  # YYYYMMDD format
+            metadata['year'] = int(upload_date[0:4])
+            metadata['month'] = int(upload_date[4:6])
+            metadata['day'] = int(upload_date[6:8])
+            metadata['date'] = f"{metadata['year']}-{metadata['month']:02d}-{metadata['day']:02d}"
+        
+        # Album/playlist information
+        metadata['album'] = info.get('album', '')
+        if not metadata['album'] and info.get('playlist'):
+            metadata['album'] = info['playlist']
+        
+        # Track information
+        metadata['track'] = info.get('track', '')
+        metadata['track_number'] = info.get('track_number', 0)
+        metadata['artist'] = info.get('artist', info.get('creator', info.get('uploader', '')))
+        
+        # Media information
+        metadata['duration'] = info.get('duration', 0)
+        metadata['format'] = info.get('format', '')
+        metadata['format_id'] = info.get('format_id', '')
+        metadata['ext'] = info.get('ext', '')
+        metadata['width'] = info.get('width', 0)
+        metadata['height'] = info.get('height', 0)
+        metadata['fps'] = info.get('fps', 0)
+        metadata['view_count'] = info.get('view_count', 0)
+        
+        # Content type detection (attempt to classify content type)
+        if info.get('album') or info.get('track'):
+            metadata['content_type'] = 'audio'
+        elif info.get('season_number') or info.get('episode_number'):
+            metadata['content_type'] = 'tv_show'
+        elif info.get('is_podcast') or 'podcast' in str(info.get('tags', '')).lower():
+            metadata['content_type'] = 'podcast'
+        elif info.get('height', 0) > 0:
+            metadata['content_type'] = 'video'
+        else:
+            metadata['content_type'] = 'audio' if info.get('acodec') and not info.get('vcodec') else 'video'
+            
+        # Categories and tags
+        metadata['category'] = info.get('category', '')
+        metadata['categories'] = info.get('categories', [])
+        metadata['tags'] = info.get('tags', [])
+        
+        return metadata
+    
+    def _extract_from_file(self, filepath: str) -> Dict[str, Any]:
+        """Extract metadata from media file based on file format."""
+        metadata = {}
+        ext = os.path.splitext(filepath)[1].lower()
+        
+        try:
+            if ext == '.mp3':
+                metadata = self._extract_from_mp3(filepath)
+            elif ext == '.flac':
+                metadata = self._extract_from_flac(filepath)
+            elif ext == '.m4a' or ext == '.mp4':
+                metadata = self._extract_from_mp4(filepath)
+            elif ext == '.ogg' or ext == '.opus':
+                metadata = self._extract_from_ogg(filepath)
+            else:
+                # Generic extraction using mutagen
+                try:
+                    audio = mutagen.File(filepath)
+                    if audio and hasattr(audio, 'tags') and audio.tags:
+                        for key, value in audio.tags.items():
+                            metadata[key.lower()] = value
+                except Exception:
+                    pass
+        except Exception as e:
+            logging.debug(f"Error extracting metadata from {filepath}: {str(e)}")
+        
+        return metadata
+    
+    def _extract_from_mp3(self, filepath: str) -> Dict[str, Any]:
+        """Extract metadata from MP3 file."""
+        metadata = {}
+        try:
+            audio = MP3(filepath)
+            id3 = ID3(filepath)
+            
+            # Extract common ID3 tags
+            if 'TIT2' in id3:  # Title
+                metadata['title'] = str(id3['TIT2'])
+            if 'TPE1' in id3:  # Artist
+                metadata['artist'] = str(id3['TPE1'])
+                metadata['uploader'] = str(id3['TPE1'])
+            if 'TALB' in id3:  # Album
+                metadata['album'] = str(id3['TALB'])
+            if 'TDRC' in id3:  # Recording date
+                date_str = str(id3['TDRC'])
+                try:
+                    metadata['year'] = int(date_str[:4])
+                    metadata['date'] = date_str
+                except (ValueError, IndexError):
+                    pass
+            if 'TRCK' in id3:  # Track number
+                track_info = str(id3['TRCK'])
+                try:
+                    if '/' in track_info:
+                        track_num, total = track_info.split('/')
+                        metadata['track_number'] = int(track_num)
+                        metadata['total_tracks'] = int(total)
+                    else:
+                        metadata['track_number'] = int(track_info)
+                except (ValueError, IndexError):
+                    pass
+                    
+            # Technical info
+            metadata['duration'] = audio.info.length
+            metadata['bitrate'] = audio.info.bitrate
+            metadata['sample_rate'] = audio.info.sample_rate
+            metadata['channels'] = audio.info.channels
+            metadata['content_type'] = 'audio'
+        except Exception as e:
+            logging.debug(f"MP3 metadata extraction error: {str(e)}")
+            
+        return metadata
+    
+    def _extract_from_flac(self, filepath: str) -> Dict[str, Any]:
+        """Extract metadata from FLAC file."""
+        metadata = {}
+        try:
+            audio = FLAC(filepath)
+            
+            # Extract FLAC tags
+            if 'title' in audio:
+                metadata['title'] = str(audio['title'][0])
+            if 'artist' in audio:
+                metadata['artist'] = str(audio['artist'][0])
+                metadata['uploader'] = str(audio['artist'][0])
+            if 'album' in audio:
+                metadata['album'] = str(audio['album'][0])
+            if 'date' in audio:
+                date_str = str(audio['date'][0])
+                try:
+                    metadata['year'] = int(date_str[:4])
+                    metadata['date'] = date_str
+                except (ValueError, IndexError):
+                    pass
+            if 'tracknumber' in audio:
+                try:
+                    metadata['track_number'] = int(audio['tracknumber'][0])
+                except (ValueError, IndexError):
+                    pass
+                    
+            # Technical info
+            metadata['duration'] = audio.info.length
+            metadata['sample_rate'] = audio.info.sample_rate
+            metadata['channels'] = audio.info.channels
+            metadata['bits_per_sample'] = audio.info.bits_per_sample
+            metadata['content_type'] = 'audio'
+        except Exception as e:
+            logging.debug(f"FLAC metadata extraction error: {str(e)}")
+            
+        return metadata
+    
+    def _extract_from_mp4(self, filepath: str) -> Dict[str, Any]:
+        """Extract metadata from M4A/MP4 file."""
+        metadata = {}
+        try:
+            audio = MP4(filepath)
+            
+            # Extract MP4 tags
+            if '\xa9nam' in audio:  # Title
+                metadata['title'] = str(audio['\xa9nam'][0])
+            if '\xa9ART' in audio:  # Artist
+                metadata['artist'] = str(audio['\xa9ART'][0])
+                metadata['uploader'] = str(audio['\xa9ART'][0])
+            if '\xa9alb' in audio:  # Album
+                metadata['album'] = str(audio['\xa9alb'][0])
+            if '\xa9day' in audio:  # Date
+                date_str = str(audio['\xa9day'][0])
+                try:
+                    metadata['year'] = int(date_str[:4])
+                    metadata['date'] = date_str
+                except (ValueError, IndexError):
+                    pass
+            if 'trkn' in audio:  # Track number
+                try:
+                    track_info = audio['trkn'][0]
+                    metadata['track_number'] = track_info[0]
+                    if len(track_info) > 1:
+                        metadata['total_tracks'] = track_info[1]
+                except (IndexError, ValueError):
+                    pass
+                    
+            # Technical info
+            metadata['duration'] = audio.info.length
+            metadata['bitrate'] = audio.info.bitrate
+            metadata['sample_rate'] = audio.info.sample_rate
+            metadata['channels'] = audio.info.channels
+            metadata['content_type'] = 'audio' if filepath.lower().endswith('.m4a') else 'video'
+        except Exception as e:
+            logging.debug(f"MP4 metadata extraction error: {str(e)}")
+            
+        return metadata
+    
+    def _extract_from_ogg(self, filepath: str) -> Dict[str, Any]:
+        """Extract metadata from OGG/OPUS file."""
+        metadata = {}
+        try:
+            audio = OggVorbis(filepath)
+            
+            # Extract Ogg Vorbis tags
+            if 'title' in audio:
+                metadata['title'] = str(audio['title'][0])
+            if 'artist' in audio:
+                metadata['artist'] = str(audio['artist'][0])
+                metadata['uploader'] = str(audio['artist'][0])
+            if 'album' in audio:
+                metadata['album'] = str(audio['album'][0])
+            if 'date' in audio:
+                date_str = str(audio['date'][0])
+                try:
+                    metadata['year'] = int(date_str[:4])
+                    metadata['date'] = date_str
+                except (ValueError, IndexError):
+                    pass
+            if 'tracknumber' in audio:
+                try:
+                    metadata['track_number'] = int(audio['tracknumber'][0])
+                except (ValueError, IndexError):
+                    pass
+                    
+            # Technical info
+            metadata['duration'] = audio.info.length
+            metadata['bitrate'] = audio.info.bitrate
+            metadata['sample_rate'] = audio.info.sample_rate
+            metadata['channels'] = audio.info.channels
+            metadata['content_type'] = 'audio'
+        except Exception:
+            # Try alternative Opus format
+            try:
+                from mutagen.oggopus import OggOpus
+                audio = OggOpus(filepath)
+                # Extract similar tags
+                if 'title' in audio:
+                    metadata['title'] = str(audio['title'][0])
+                if 'artist' in audio:
+                    metadata['artist'] = str(audio['artist'][0])
+                    metadata['uploader'] = str(audio['artist'][0])
+                metadata['content_type'] = 'audio'
+            except Exception as e:
+                logging.debug(f"OGG/OPUS metadata extraction error: {str(e)}")
+            
+        return metadata
+    
+    def _get_file_info(self, filepath: str) -> Dict[str, Any]:
+        """Get file information."""
+        metadata = {}
+        
+        try:
+            # Get file stats
+            if os.path.exists(filepath):
+                stat = os.stat(filepath)
+                metadata['filesize'] = stat.st_size
+                metadata['modified_time'] = datetime.fromtimestamp(stat.st_mtime)
+                metadata['created_time'] = datetime.fromtimestamp(stat.st_ctime)
+            
+            # Determine content type based on extension
+            ext = os.path.splitext(filepath)[1].lower()
+            if ext in self.audio_extensions:
+                metadata.setdefault('content_type', 'audio')
+            elif ext in self.video_extensions:
+                metadata.setdefault('content_type', 'video')
+                
+        except Exception as e:
+            logging.debug(f"Error getting file info: {str(e)}")
+            
+        return metadata
+
+class FileOrganizer:
+    """Organize files into directories based on metadata templates."""
+    
+    def __init__(self, config: Dict[str, Any]):
+        self.config = config
+        self.templates = config.get('organization_templates', DEFAULT_ORGANIZATION_TEMPLATES.copy())
+        self.metadata_extractor = MetadataExtractor()
+        
+    def organize_file(self, filepath: str, info: Optional[Dict] = None) -> Optional[str]:
+        """
+        Organize a file based on its metadata.
+        
+        Args:
+            filepath: Path to the file to organize
+            info: Optional yt-dlp info dictionary
+            
+        Returns:
+            New file path if successful, None otherwise
+        """
+        if not os.path.exists(filepath):
+            logging.error(f"Cannot organize: File not found: {filepath}")
+            return None
+        
+        try:
+            # Extract metadata
+            metadata = self.metadata_extractor.extract(filepath, info)
+            
+            # Determine the appropriate base directory and template
+            is_audio = metadata.get('content_type') == 'audio'
+            base_dir = self.config['audio_output'] if is_audio else self.config['video_output']
+            
+            # Select appropriate template
+            content_type = metadata.get('content_type', 'video')
+            if content_type == 'podcast' and 'podcast' in self.templates:
+                template = self.templates['podcast']
+            elif content_type == 'audiobook' and 'audiobook' in self.templates:
+                template = self.templates['audiobook']
+            else:
+                template = self.templates['audio'] if is_audio else self.templates['video']
+            
+            # Format template
+            try:
+                # Create dictionary with lowercase keys for template formatting
+                format_dict = {}
+                for key, value in metadata.items():
+                    format_dict[key.lower()] = value
+                    
+                # Use format_map to allow partial template application
+                relative_path = template.format_map(
+                    # This defaultdict-like approach handles missing keys
+                    type('DefaultDict', (dict,), {'__missing__': lambda self, key: 'Unknown'})(format_dict)
+                )
+            except Exception as e:
+                logging.error(f"Template formatting error: {str(e)}")
+                relative_path = os.path.join(
+                    metadata.get('uploader', 'Unknown'),
+                    str(metadata.get('year', 'Unknown')),
+                    metadata.get('title', os.path.basename(filepath))
+                )
+            
+            # Create the full path
+            filename = os.path.basename(filepath)
+            new_dir = os.path.join(base_dir, relative_path)
+            new_filepath = os.path.join(new_dir, filename)
+            
+            # Create directory if it doesn't exist
+            os.makedirs(new_dir, exist_ok=True)
+            
+            # Check if target file already exists
+            if os.path.exists(new_filepath) and os.path.samefile(filepath, new_filepath):
+                # File is already in the right place
+                return filepath
+                
+            if os.path.exists(new_filepath):
+                # File exists but is different - create a unique name
+                base, ext = os.path.splitext(filename)
+                count = 1
+                while os.path.exists(new_filepath):
+                    new_filename = f"{base}_{count}{ext}"
+                    new_filepath = os.path.join(new_dir, new_filename)
+                    count += 1
+            
+            # Move the file
+            shutil.move(filepath, new_filepath)
+            logging.info(f"Organized file: {filepath} -> {new_filepath}")
+            return new_filepath
+            
+        except Exception as e:
+            logging.error(f"Error organizing file {filepath}: {str(e)}")
+            return None
 
 class DownloadManager:
     """Enhanced download manager with improved performance and resource management"""
@@ -644,6 +1208,11 @@ class DownloadManager:
         self.verify_paths()
         self.last_percentage = 0
         
+        # New: Initialize file organizer for metadata-based organization
+        self.file_organizer = FileOrganizer(config) if config.get('organize', False) else None
+        # Initialize metadata extractor
+        self.metadata_extractor = MetadataExtractor()
+        
         # Convert to tuple for better performance with lru_cache
         self.valid_commands = (
             'download', 'dl', 'audio', 'video', 'help', '?', 'exit', 'quit', 'q',
@@ -661,41 +1230,39 @@ class DownloadManager:
         # Track active downloads for better resource management
         self._active_downloads = set()
         self._download_lock = threading.RLock()
+        self.current_download_url = None      # New attribute for current download URL
+        self.download_start_time = None       # New attribute to mark download start
+        self.session_manager = SessionManager() # Initialize session manager
+        # Store info_dict for post-processing
+        self._current_info_dict = {}
 
     def setup_logging(self):
-        """Set up logging with rotation and improved error handling"""
-        try:
-            log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            
-            # File handler with error handling
-            try:
-                file_handler = logging.FileHandler(LOG_FILE)
-                file_handler.setFormatter(log_formatter)
-            except (PermissionError, OSError) as e:
-                print(f"{Fore.YELLOW}Warning: Could not create log file: {str(e)}{Style.RESET_ALL}")
-                file_handler = None
-                
-            # Console handler (always works)
-            console_handler = logging.StreamHandler()
-            console_handler.setFormatter(log_formatter)
-            
-            # Set up root logger
-            root_logger = logging.getLogger()
-            root_logger.setLevel(logging.INFO)
-            
-            # Remove any existing handlers
-            for handler in root_logger.handlers[:]:
-                root_logger.removeHandler(handler)
-                
-            # Add handlers
-            if file_handler:
-                root_logger.addHandler(file_handler)
-            root_logger.addHandler(console_handler)
-            
-        except Exception as e:
-            print(f"{Fore.YELLOW}Warning: Logger setup failed: {str(e)}. Using basic logging.{Style.RESET_ALL}")
-            logging.basicConfig(level=logging.INFO)
+        """Set up logging with console and file handlers"""
+        verbose = self.config.get('verbose', False)
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)  # Capture all levels
 
+        # Remove existing handlers
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+
+        # Console handler with color
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.DEBUG if verbose else logging.INFO)
+        console_formatter = ColoramaFormatter('%(asctime)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(console_formatter)
+        root_logger.addHandler(console_handler)
+
+        # File handler
+        try:
+            file_handler = logging.FileHandler(LOG_FILE)
+            file_handler.setLevel(logging.DEBUG)
+            file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(file_formatter)
+            root_logger.addHandler(file_handler)
+        except Exception as e:
+            logging.error("Failed to setup file logger: %s", e)
+        file_handler = logging.FileHandler(LOG_FILE)
     def verify_paths(self):
         """Verify and create necessary paths with improved error handling"""
         # Verify FFmpeg location
@@ -720,33 +1287,56 @@ class DownloadManager:
                     self.config[key] = fallback_dir
                 except OSError:
                     raise RuntimeError(f"Cannot create any output directory for {key}")
+                fallback_dir = str(Path.home() / ('Videos' if key == 'video_output' else 'Music'))
+                print(f"{Fore.YELLOW}Warning: Could not create {key}: {str(e)}. Using {fallback_dir}{Style.RESET_ALL}")
+                try:
+                    os.makedirs(fallback_dir, exist_ok=True)
+                    self.config[key] = fallback_dir
+                except OSError:
+                    raise RuntimeError(f"Cannot create any output directory for {key}")
 
     def progress_hook(self, d: Dict[str, Any]) -> None:
-        """Optimized progress hook for downloads"""
+        """Optimized progress hook for downloads with session and bandwidth updates"""
         if d['status'] == 'downloading':
             total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
             downloaded = d.get('downloaded_bytes', 0)
-            
-            # Initialize progress bar if not exists
             if not hasattr(self, 'pbar'):
                 self.pbar = ColorProgressBar(100, desc="Downloading")
                 self.last_percentage = 0  # Reset percentage
-            
-            # Only update when there's meaningful progress
+                if self.download_start_time is None:
+                    self.download_start_time = time.time()
             if total > 0:
                 percentage = min(int((downloaded / total) * 100), 100)
-                # Update only when percentage changes (optimization)
                 if percentage > self.last_percentage:
                     self.pbar.update(percentage - self.last_percentage)
                     self.last_percentage = percentage
-                
+                    speed = calculate_speed(downloaded, self.download_start_time)
+                    self.pbar.set_description(f"Downloading at {format_speed(speed)}")
+                    if self.current_download_url:
+                        self.session_manager.update_session(self.current_download_url, percentage)
+                        
         elif d['status'] == 'finished':
+            logging.info("Download Complete!")
             if hasattr(self, 'pbar'):
                 self.pbar.close()
                 delattr(self, 'pbar')
-            self.last_percentage = 0  # Reset last_percentage
+            self.last_percentage = 0
+            self.download_start_time = None
+            if self.current_download_url:
+                self.session_manager.remove_session(self.current_download_url)
             print(f"{Fore.GREEN}✓ Download Complete!{Style.RESET_ALL}")
-
+            
+            filepath = d.get('filename')
+            if filepath:
+                if self.config.get('organize'):
+                    if not os.path.exists(filepath):
+                        logging.warning(f"Organize failed: File not found {filepath}")
+                    else:
+                        dir_path = os.path.dirname(filepath)
+                        if not os.path.exists(dir_path):
+                            logging.error(f"Directory creation failed: {dir_path}")
+            else:
+                logging.error("Finished status received but no filename provided.")
     # FLAC verification methods with performance improvements
     def _verify_flac_properties(self, audio):
         """Verify FLAC format-specific properties with optimized checks"""
@@ -916,23 +1506,29 @@ class DownloadManager:
     def get_download_options(self, url: str, audio_only: bool, resolution: Optional[str] = None,
                            format_id: Optional[str] = None, filename: Optional[str] = None,
                            audio_format: str = 'mp3') -> Dict[str, Any]:
-        """Get download options with improved sanitization and fallbacks"""
+        """Get download options with improved sanitization and adaptive format selection"""
         # Determine output path with fallback
         try:
             output_path = self.config['audio_output'] if audio_only else self.config['video_output']
             if not os.path.exists(output_path):
                 os.makedirs(output_path, exist_ok=True)
         except OSError:
-            # Fallback to home directory
             output_path = str(Path.home() / ('Music' if audio_only else 'Videos'))
             os.makedirs(output_path, exist_ok=True)
         
-        # Sanitize filename for better OS compatibility
         if filename:
-            # Remove problematic characters
             filename = re.sub(r'[\\/*?:"<>|]', '_', filename)
         
-        # Base options with retry improvements
+        # Adaptive format selection: if video download and no resolution/format_id provided
+        if not audio_only and resolution is None and not format_id:
+            speed = measure_network_speed()
+            if speed < 1.0:
+                resolution = "480"
+            elif speed < 3.0:
+                resolution = "720"
+            else:
+                resolution = "1080"
+        
         options = {
             'outtmpl': os.path.join(output_path, f"{filename or '%(title)s'}.%(ext)s"),
             'ffmpeg_location': self.config['ffmpeg_location'],
@@ -940,74 +1536,72 @@ class DownloadManager:
             'ignoreerrors': True,
             'continue': True,
             'postprocessor_hooks': [self.post_process_hook],
-            'concurrent_fragment_downloads': min(10, os.cpu_count() or 4),  # Dynamic based on CPU
+            'concurrent_fragment_downloads': min(10, os.cpu_count() or 4),
             'no_url_cleanup': True,
             'clean_infojson': False,
             'prefer_insecure': True,
-            'retries': 5,             # Retry failed downloads
-            'fragment_retries': 10,   # Retry failed fragments more aggressively
-            'retry_sleep': lambda n: 5 * (2 ** (n - 1)),  # Exponential backoff
-            'socket_timeout': 60,     # Increased timeout
-            'http_chunk_size': 10485760,  # Larger chunks (10MB) for better performance
+            'retries': 5,
+            'fragment_retries': 10,
+            'retry_sleep': lambda n: 5 * (2 ** (n - 1)),
+            'socket_timeout': 60,
+            'http_chunk_size': 10485760,
         }
 
         if audio_only:
             options['format'] = 'bestaudio/best'
             options['extract_audio'] = True
-            
-            # Process different audio formats
             if audio_format == 'flac':
-                # Enhanced FLAC conversion with more error handling
+                # Use a temporary .wav file as intermediate
                 temp_format = '%(title)s.temp.wav'
+                # Build FFmpeg executable path
+                ffmpeg_bin = os.path.join(self.config["ffmpeg_location"], "ffmpeg")
+                exec_cmd = (
+            f'"{ffmpeg_bin}" -i "%(filepath)s" '
+            '-c:a flac -compression_level 12 -sample_fmt s32 '
+            '-ar 96000 -ac 8 -bits_per_raw_sample 24 -vn '
+            '-af "loudnorm=I=-14:TP=-2:LRA=7,aresample=resampler=soxr:precision=28:dither_method=triangular" '
+            '-metadata encoded_by="Snatch" '
+            '"%(filepath)s.flac" && if exist "%(filepath)s" del "%(filepath)s"'
+        )
                 options['postprocessors'] = [
                     {
                         'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'wav',  # First convert to WAV
+                        'preferredcodec': 'wav',
                         'preferredquality': '0',
                     },
                     {
                         'key': 'FFmpegMetadata',
                         'add_metadata': True,
                     },
-                    # Fix FLAC conversion command for safe Windows path handling
                     {
                         'key': 'ExecAfterDownload',
-                        'exec_cmd': (
-                            f'"{os.path.join(self.config["ffmpeg_location"], "ffmpeg")}" '
-                            '-i "$" '  # Use the $ placeholder which is properly escaped
-                            '-c:a flac -compression_level 12 -sample_fmt s32p '
-                            '-ar 96000 -bits_per_raw_sample 24 -vn '
-                            '-af "aresample=resampler=soxr:precision=28:dither_method=triangular" '
-                            '-metadata encoded_by="Snatch" '
-                            '"$.flac" && del "$"'
-                        )
+                        'exec_cmd':exec_cmd,
                     }
                 ]
                 options['postprocessor_args'] = [
-                    '-acodec', 'pcm_s32le',  # 32-bit WAV
-                    '-ar', '96000',          # 96kHz sampling
+                    '-acodec', 'pcm_s32le',
+                    '-ar', '96000',
                     '-bits_per_raw_sample', '32'
                 ]
             else:
-                # Configure standard audio format with quality settings
+                # For non-FLAC formats such as mp3, wav, or m4a
+                preferredquality = '320' if audio_format == 'mp3' else '0'
                 options['postprocessors'] = [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': audio_format,
-                    'preferredquality': '320' if audio_format == 'mp3' else '0',
+                    'preferredquality': preferredquality,
                 }]
-                
         elif resolution:
-            # Enhanced resolution handling
             options['format'] = f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
         
         return options
 
     def post_process_hook(self, d: Dict[str, Any]) -> None:
-        """Improved post-processing with better file handling"""
+        """Improved post-processing with metadata organization"""
         if d['status'] == 'started':
             filename = d.get('filename', '')
             
-            # Only process FLAC files
+            # Only process FLAC files for verification
             if filename.lower().endswith(FLAC_EXT):
                 print(f"\n{Fore.CYAN}Verifying FLAC conversion...{Style.RESET_ALL}")
                 try:
@@ -1031,15 +1625,43 @@ class DownloadManager:
                         print("   - Compression Level: Maximum (12)")
                     else:
                         # Try to recover by reconverting
-                        temp_wav = filename.replace('.flac', '.temp.wav')
+                        temp_wav = filename.replace(FLAC_EXT, '.temp.wav')
                         if os.path.exists(temp_wav):
                             print(f"{Fore.YELLOW}Attempting recovery of FLAC file...{Style.RESET_ALL}")
                             self.convert_to_flac(temp_wav, filename)
                 except Exception as e:
                     print(f"{Fore.RED}✗ Error during FLAC verification: {str(e)}{Style.RESET_ALL}")
+        
+        # New: Handle file organization after download is finished
+        elif d['status'] == 'finished':
+            filename = d.get('filename', '')
+            if filename and os.path.exists(filename) and self.config.get('organize', False):
+                if self.file_organizer:
+                    # Get info_dict for the current download if available
+                    info_dict = self._current_info_dict.get(filename, {})
+                    
+                    print(f"\n{Fore.CYAN}Organizing file based on metadata...{Style.RESET_ALL}")
+                    
+                    # Create spinner for organization
+                    org_spinner = EnhancedSpinnerAnimation("Organizing file", style="aesthetic")
+                    org_spinner.start()
+                    
+                    try:
+                        new_filepath = self.file_organizer.organize_file(filename, info_dict)
+                        if new_filepath:
+                            org_spinner.stop(clear=False, success=True)
+                            # Show the new location
+                            print(f"{Fore.GREEN}File organized: {Style.RESET_ALL}")
+                            print(f"  {Fore.CYAN}→ {new_filepath}{Style.RESET_ALL}")
+                        else:
+                            org_spinner.stop(clear=False, success=False)
+                            print(f"{Fore.YELLOW}File organization failed{Style.RESET_ALL}")
+                    except Exception as e:
+                        org_spinner.stop(clear=False, success=False)
+                        print(f"{Fore.RED}Error organizing file: {str(e)}{Style.RESET_ALL}")
 
     def download(self, url: str, **kwargs) -> bool:
-        """Download media with improved caching, error handling and resource management"""
+        """Download media with metadata extraction and organization"""
         # Check URL validity early
         try:
             parsed = urllib.parse.urlparse(url)
@@ -1049,6 +1671,9 @@ class DownloadManager:
         except Exception:
             print(f"{Fore.RED}Invalid URL format: {url}{Style.RESET_ALL}")
             return False
+
+        # Set the current download URL for session tracking
+        self.current_download_url = url
 
         # Use enhanced spinner for better user feedback
         info_spinner = EnhancedSpinnerAnimation("Analyzing media", style="aesthetic")
@@ -1082,7 +1707,7 @@ class DownloadManager:
                             info = ydl.extract_info(url, download=False, process=False)
                             
                             # If it's a single video, get full info
-                            if info and not info.get('_type') == 'playlist':
+                            if info and info.get('_type') != 'playlist':
                                 info_spinner.update_status("Getting detailed info")
                                 info = ydl.extract_info(url, download=False)
                                 
@@ -1131,9 +1756,20 @@ class DownloadManager:
             with self._download_lock:
                 self._active_downloads.add(url)
             
+            # Set download start time at the beginning
+            self.download_start_time = time.time()
+
             # Perform the actual download with robust error handling
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    # Store info dict for post-processing
+                    if not kwargs.get('no_cache', False):
+                        downloaded_info = ydl.extract_info(url, download=False)
+                        if downloaded_info:
+                            # Store by expected output path to access during post-processing
+                            expected_filename = ydl.prepare_filename(downloaded_info)
+                            self._current_info_dict[expected_filename] = downloaded_info
+                    
                     ydl.download([url])
                     return True
             except KeyboardInterrupt:
@@ -1141,7 +1777,7 @@ class DownloadManager:
                 return False
             except yt_dlp.utils.DownloadError as e:
                 error_msg = str(e)
-                print(f"{Fore.RED}Download Error: {error_msg}{Style.RESET_ALL}")
+                logging.error("Download Error: %s", error_msg)
                 
                 # Show helpful error explanations and recovery suggestions
                 if "unavailable" in error_msg.lower():
@@ -1155,12 +1791,21 @@ class DownloadManager:
                 # Unregister from active downloads
                 with self._download_lock:
                     self._active_downloads.discard(url)
+                self.current_download_url = None
+                self.download_start_time = None
                 
         except Exception as e:
             info_spinner.stop(clear=False, success=False)
             print(f"{Fore.RED}Unexpected error: {str(e)}{Style.RESET_ALL}")
             return False
 
+    def validate_metadata(self, info: Dict[str, Any]) -> None:
+        """Ensure required metadata fields exist"""
+        required_fields = ['title', 'ext']
+        for field in required_fields:
+            if field not in info:
+                raise ValueError(f"Missing required metadata field: {field}")
+        
     def _display_media_info(self, info: Dict[str, Any]) -> None:
         """Display detailed and well-formatted media information"""
         # Extract commonly used info
@@ -1512,56 +2157,79 @@ def load_config() -> Dict[str, Any]:
     for key, value in DEFAULT_CONFIG.items():
         config.setdefault(key, value)
     
+    # Ensure organization templates are complete
+    if 'organization_templates' in config:
+        for key, value in DEFAULT_ORGANIZATION_TEMPLATES.items():
+            config['organization_templates'].setdefault(key, value)
+    else:
+        config['organization_templates'] = DEFAULT_ORGANIZATION_TEMPLATES.copy()
+    
     return config
 
 def list_supported_sites() -> bool:
-    """List supported sites from the Supported-sites.txt file"""
-    try:
-        sites_file = Path("Supported-sites.txt")
-        if not sites_file.exists():
-            print(f"{Fore.RED}Supported-sites.txt not found. Cannot list supported sites.{Style.RESET_ALL}")
-            return False
-        
-        with open(sites_file, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        print(f"\n{Fore.CYAN}{'=' * 40}")
-        print(f"{Fore.GREEN}SUPPORTED SITES{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}{'=' * 40}{Style.RESET_ALL}\n")
-        
-        # Skip the header lines if present
-        lines = content.split('\n')
-        start_idx = 0
-        for i, line in enumerate(lines):
-            if line.strip().startswith("Below is a list"):
-                start_idx = i + 1
-                break
-                
-        # Track categories for better organization
-        current_category = "General"
-        site_count = 0
-        
-        # Print each site (skipping empty lines)
-        for line in lines[start_idx:]:
-            line = line.strip()
-            if line and not line.startswith('"'):
-                parts = line.split(':', 1)
-                site_name = parts[0].strip()
-                if site_name:
-                    site_count += 1
-                    # Print with nice formatting
-                    if len(parts) > 1:  # This is likely a category entry
-                        current_category = site_name
-                        print(f"\n{Fore.YELLOW}{current_category.upper()}{Style.RESET_ALL}")
-                    else:
-                        print(f"{Fore.GREEN} • {site_name}{Style.RESET_ALL}")
-        
-        print(f"\n{Fore.CYAN}Total supported sites: {site_count}{Style.RESET_ALL}\n")
-        return True
-    
-    except Exception as e:
-        print(f"{Fore.RED}Error reading supported sites: {str(e)}{Style.RESET_ALL}")
+    """Display a clean, cool, and organized list of supported sites using a pager with clear separators."""
+    from pathlib import Path
+    import pydoc
+
+    sites_file = Path("Supported-sites.txt")
+    if not sites_file.exists():
+        print(f"{Fore.RED}Supported-sites.txt not found. Cannot list supported sites.{Style.RESET_ALL}")
         return False
+
+    try:
+        with sites_file.open('r', encoding='utf-8') as f:
+            lines = [line.strip() for line in f if line.strip()]
+    except Exception as e:
+        print(f"{Fore.RED}Error reading Supported-sites.txt: {e}{Style.RESET_ALL}")
+        return False
+
+    # Skip header lines if they start with "below is a list"
+    header_end = 0
+    for i, line in enumerate(lines):
+        if line.lower().startswith("below is a list"):
+            header_end = i + 1
+            break
+    sites = lines[header_end:]
+
+    output_lines = []
+    # Horizontal border line for clear separation
+    border = f"{Fore.CYAN}" + "─" * 60 + f"{Style.RESET_ALL}"
+    title = f"{Fore.GREEN}{'SUPPORTED SITES':^60}{Style.RESET_ALL}"
+    output_lines.append(border)
+    output_lines.append(title)
+    output_lines.append(border)
+    output_lines.append("")
+
+    total_sites = 0
+    current_category = None
+    # Prepare a separator to insert between categories
+    category_separator = f"\n{border}\n"
+    for line in sites:
+        if line.startswith('"'):
+            continue
+        if ':' in line:
+            category, site = map(str.strip, line.split(':', 1))
+            cat_upper = category.upper()
+            if current_category != cat_upper:
+                # Add a separator if this isn't the first category
+                if current_category is not None:
+                    output_lines.append(category_separator)
+                current_category = cat_upper
+                output_lines.append(f"{Fore.MAGENTA}{current_category:^60}{Style.RESET_ALL}")
+            if site:
+                output_lines.append(f"{Fore.YELLOW} • {site}{Style.RESET_ALL}")
+                total_sites += 1
+        else:
+            output_lines.append(f"{Fore.YELLOW} • {line}{Style.RESET_ALL}")
+            total_sites += 1
+
+    output_lines.append("")
+    output_lines.append(f"{Fore.CYAN}Total supported sites: {total_sites}{Style.RESET_ALL}")
+    output_lines.append(border)
+
+    final_output = "\n".join(output_lines)
+    pydoc.pager(final_output)
+    return True
 
 def test_functionality() -> bool:
     """Run basic tests to verify functionality"""
@@ -1590,7 +2258,7 @@ def test_functionality() -> bool:
         return False
 
 def main() -> None:
-    """Enhanced main function with better argument handling and error management"""
+    """Enhanced main function with new CLI options and error management"""
     # Optimized early handling of special args
     if '--version' in sys.argv:
         print(f'Snatch v{VERSION}')
@@ -1606,7 +2274,6 @@ def main() -> None:
         list_supported_sites()
         sys.exit(0)
         
-    # FIXED: Special handling for interactive mode without parsing other args
     if "--interactive" in sys.argv or "-i" in sys.argv:
         try:
             config = load_config()
@@ -1616,8 +2283,7 @@ def main() -> None:
         except Exception as e:
             print(f"{Fore.RED}Error starting interactive mode: {str(e)}{Style.RESET_ALL}")
             sys.exit(1)
-
-    # Simplified path for no arguments (also runs interactive mode)
+    
     if len(sys.argv) == 1:
         try:
             config = load_config()
@@ -1628,7 +2294,6 @@ def main() -> None:
             print(f"{Fore.RED}Error starting interactive mode: {str(e)}{Style.RESET_ALL}")
             sys.exit(1)
 
-    # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description="Snatch - Download Anything!",
         formatter_class=CustomHelpFormatter,
@@ -1637,7 +2302,7 @@ def main() -> None:
     parser.add_argument('urls', nargs='*', help='URLs to download')
     parser.add_argument('--audio-only', action='store_true', help='Download audio only')
     parser.add_argument('--resolution', type=str, help='Specify video resolution (e.g., 1080)')
-    parser.add_argument('--format-id', type=str, help='Specify format ID')
+    parser.add_argument('--format-id', type=str, help='Select specific format IDs')
     parser.add_argument('--filename', type=str, help='Specify custom filename')
     parser.add_argument('--audio-format', type=str, choices=['mp3', 'flac', 'wav', 'm4a'], default='mp3', help='Specify audio format')
     parser.add_argument('--output-dir', type=str, help='Specify custom output directory')
@@ -1645,10 +2310,21 @@ def main() -> None:
     parser.add_argument('--version', action='store_true', help='Show version information')
     parser.add_argument('--test', action='store_true', help='Run basic tests to verify functionality')
     parser.add_argument('--interactive', '-i', action='store_true', help='Run in interactive mode')
-    
+    # New CLI options:
+    parser.add_argument('--resume', action='store_true', help='Resume interrupted downloads')
+    parser.add_argument('--stats', action='store_true', help='Show download statistics')
+    parser.add_argument('--system-stats', action='store_true', help='Show system resource stats')
+    parser.add_argument('--no-cache', action='store_true', help='Skip using cached info')
+    parser.add_argument('--no-retry', action='store_true', help='Do not retry failed downloads')
+    parser.add_argument('--throttle', type=str, help='Limit download speed (e.g., 500KB/s)')
+    parser.add_argument('--aria2c', action='store_true', help='Use aria2c for downloading')
+    parser.add_argument('--verbose', action='store_true', help='Enable detailed output for troubleshooting')
+    # New organize option
+    parser.add_argument('--organize', action='store_true', help='Organize files into directories based on metadata')
+    parser.add_argument('--no-organize', action='store_true', help='Disable file organization (overrides config)')
+    parser.add_argument('--org-template', type=str, help='Custom organization template (e.g. "{uploader}/{year}/{title}")')
     args = parser.parse_args()
     
-    # Handle special args
     if args.version:
         print(f'Snatch v{VERSION}')
         sys.exit(0)
@@ -1663,25 +2339,41 @@ def main() -> None:
         list_supported_sites()
         sys.exit(0)
     
-    # Load configuration
     config = load_config()
-    
-    # Override output directories if specified
     if args.output_dir:
         if args.audio_only:
             config['audio_output'] = args.output_dir
         else:
             config['video_output'] = args.output_dir
     
-    # Initialize download manager
-    manager = DownloadManager(config)
+    # Handle organization settings
+    if args.organize:
+        config['organize'] = True
+    elif args.no_organize:
+        config['organize'] = False
+        
+    # Handle custom organization template
+    if args.org_template:
+        content_type = 'audio' if args.audio_only else 'video'
+        config['organization_templates'][content_type] = args.org_template
     
-    # Handle interactive mode
+    manager = DownloadManager(config)
+    # Pass new arguments as additional kwargs 
+    extra_kwargs = {
+        'resume': args.resume,
+        'stats': args.stats,
+        'system_stats': args.system_stats,
+        'no_cache': args.no_cache,
+        'no_retry': args.no_retry,
+        'throttle': args.throttle,
+        'aria2c': args.aria2c,
+        'verbose': args.verbose
+    }
+    
     if args.interactive:
         manager.interactive_mode()
         sys.exit(0)
     
-    # Handle batch download
     if args.urls:
         manager.batch_download(
             args.urls,
@@ -1689,7 +2381,8 @@ def main() -> None:
             resolution=args.resolution,
             format_id=args.format_id,
             filename=args.filename,
-            audio_format=args.audio_format
+            audio_format=args.audio_format,
+            **extra_kwargs
         )
     else:
         print(f"{Fore.RED}No URLs provided. Use --interactive for interactive mode.{Style.RESET_ALL}")
