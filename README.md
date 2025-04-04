@@ -39,7 +39,8 @@
 - 🧩 **Format Flexibility** - Video, MP3, FLAC, WAV, and more
 - 🌐 **Universal Compatibility** - Works on Windows, macOS, and Linux
 
-## 🔧 Installation
+
+<h2 id="Installation">🔧 Installation</h2>
 
 ### One-Click Setup (Recommended)
 
@@ -75,7 +76,7 @@ pip install -r requirements.txt
 python setup_ffmpeg.py
 ```
 
-## 🏃‍♀️ Quick Start
+<h2 id="Quick Start">🏃‍♀️ Quick Start</h2>
 
 ### Using the Interactive Mode (Easiest)
 
@@ -103,7 +104,7 @@ python Snatch.py "https://youtube.com/watch?v=example" --resolution 1080
 python Snatch.py "https://youtube.com/watch?v=example" --audio-only --audio-format flac
 ```
 
-## 💻 Usage
+<h2 id="Usage">💻 Usage</h2>
 
 ### Interactive Mode Commands
 
@@ -151,7 +152,7 @@ python Snatch.py "URL" --format-id 137+140  # For advanced users
 ```
 
 ## 🌎 Supported Sites
-
+<h2 id="Supported Sites">🌎 Supported Sites</h2>
 Snatch supports over 1000 websites including:
 
 - YouTube
@@ -173,7 +174,7 @@ python Snatch.py --list-sites
 ```
 
 ## 🔍 Troubleshooting
-
+<h2 id="Troubleshooting">🔍 Troubleshooting</h2>
 ### Common Issues
 
 1. **FFmpeg not found**
