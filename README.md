@@ -186,7 +186,7 @@ Available variables include:
 - `{month}` - Release month
 - `{day}` - Release day
 - `{track_number}` - Track number
-## 🌎 Supported Sites
+
 <h2 id="Supported Sites">🌎 Supported Sites</h2>
 Snatch supports over 1000 websites including:
 
