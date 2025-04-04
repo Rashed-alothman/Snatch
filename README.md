@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue" alt="Version 1.2.0" />
+  <img src="https://img.shields.io/badge/version-1.2.0-blue" alt="Version 1.3.0" />
   <img src="https://img.shields.io/badge/python-3.7+-yellow" alt="Python 3.7+" />
   <img src="https://img.shields.io/badge/platforms-Windows%20|%20macOS%20|%20Linux-green" alt="Platforms" />
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="License" />
@@ -25,7 +25,7 @@
 
 **Snatch** is a powerful and user-friendly media downloader that lets you grab videos, audio, and more from hundreds of websites in various formats and qualities. With its sleek interface and powerful features, downloading media has never been easier or more satisfying!
 
-## ✨ Features
+<h2 id="features">✨ Features</h2>
 
 - 🌈 **Beautiful Interactive Mode** - Easy-to-use interface with colorful progress bars
 - 🎭 **Dynamic Resource Management** - Adaptive chunk sizes based on your system's resources
@@ -39,7 +39,8 @@
 - 🧩 **Format Flexibility** - Video, MP3, FLAC, WAV, and more
 - 🌐 **Universal Compatibility** - Works on Windows, macOS, and Linux
 
-## 🔧 Installation
+
+<h2 id="Installation">🔧 Installation</h2>
 
 ### One-Click Setup (Recommended)
 
@@ -75,7 +76,7 @@ pip install -r requirements.txt
 python setup_ffmpeg.py
 ```
 
-## 🏃‍♀️ Quick Start
+<h2 id="Quick Start">🏃‍♀️ Quick Start</h2>
 
 ### Using the Interactive Mode (Easiest)
 
@@ -103,7 +104,7 @@ python Snatch.py "https://youtube.com/watch?v=example" --resolution 1080
 python Snatch.py "https://youtube.com/watch?v=example" --audio-only --audio-format flac
 ```
 
-## 💻 Usage
+<h2 id="Usage">💻 Usage</h2>
 
 ### Interactive Mode Commands
 
@@ -151,7 +152,7 @@ python Snatch.py "URL" --format-id 137+140  # For advanced users
 ```
 
 ## 🌎 Supported Sites
-
+<h2 id="Supported Sites">🌎 Supported Sites</h2>
 Snatch supports over 1000 websites including:
 
 - YouTube
@@ -173,7 +174,7 @@ python Snatch.py --list-sites
 ```
 
 ## 🔍 Troubleshooting
-
+<h2 id="Troubleshooting">🔍 Troubleshooting</h2>
 ### Common Issues
 
 1. **FFmpeg not found**
