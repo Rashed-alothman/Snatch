@@ -38,6 +38,7 @@
 - 🛡️ **Error Recovery** - Robust error handling and helpful suggestions
 - 🧩 **Format Flexibility** - Video, MP3, FLAC, WAV, and more
 - 🌐 **Universal Compatibility** - Works on Windows, macOS, and Linux
+- 🗂️ **Automatic File Organization** - Organize downloads based on metada
 
 
 <h2 id="Installation">🔧 Installation</h2>
