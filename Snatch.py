@@ -151,6 +151,18 @@ EXAMPLES = """
 ║    --audio-format <format>  Set audio format (mp3,flac,etc)    ║
 ║    --output-dir <path>      Specify output directory           ║
 ║                                                                ║
+║  ADVANCED OPTIONS:                                             ║
+║    --resume                 Resume interrupted downloads       ║
+║    --stats                  Show download statistics           ║
+║    --system-stats           Display system resource usage      ║
+║    --format-id <id>         Select specific format ID          ║
+║    --no-cache               Skip using cached media info       ║
+║    --no-retry               Disable automatic retry logic      ║
+║    --throttle <speed>       Limit download speed (e.g. 2M)     ║
+║    --aria2c                 Use aria2c for faster downloads    ║
+║    --verbose                Show detailed debugging output     ║
+║    --organize               Enable metadata-based file sorting ║
+║                                                                ║
 ║  UTILITY COMMANDS:                                             ║
 ║    help, ?                  Show this help menu                ║
 ║    clear, cls               Clear the screen                   ║
@@ -167,6 +179,11 @@ EXAMPLES = """
 ║  BATCH OPERATIONS:                                             ║
 ║    Multiple URLs can be provided on the command line           ║
 ║    python Snatch.py "URL1" "URL2" "URL3"                       ║
+║                                                                ║
+║  ADVANCED USAGE:                                               ║
+║    python Snatch.py "URL" --aria2c --stats                     ║
+║    python Snatch.py "URL" --audio-only --resume                ║
+║    python Snatch.py "URL" --verbose --no-cache                 ║
 ║                                                                ║
 ║  TROUBLESHOOTING:                                              ║
 ║    1. FFmpeg issues - Run with --test to check installation    ║
@@ -478,7 +495,7 @@ def measure_network_speed() -> float:
     url = "https://httpbin.org/bytes/100000"  # 100KB sample
     try:
         start = time.time()
-        response = requests.get(url, stream=True, timeout=5)
+        response = requests.get(url, stream=True, timeout=True)
         total_bytes = 0
         for chunk in response.iter_content(chunk_size=10240):
             total_bytes += len(chunk)
@@ -559,7 +576,7 @@ class EnhancedSpinnerAnimation:
             try:
                 # Check if terminal size changed
                 current_width = shutil.get_terminal_size().columns
-                if current_width != self._last_terminal_width:
+                if (current_width != self._last_terminal_width):
                     self._last_terminal_width = current_width
                 
                 # Handle pause state
@@ -1296,34 +1313,65 @@ class DownloadManager:
                     raise RuntimeError(f"Cannot create any output directory for {key}")
 
     def progress_hook(self, d: Dict[str, Any]) -> None:
-        """Optimized progress hook for downloads with session and bandwidth updates"""
+        """Enhanced progress hook with detailed statistics display"""
         if d['status'] == 'downloading':
             total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
             downloaded = d.get('downloaded_bytes', 0)
-            if not hasattr(self, 'pbar'):
-                self.pbar = ColorProgressBar(100, desc="Downloading")
-                self.last_percentage = 0  # Reset percentage
-                if self.download_start_time is None:
-                    self.download_start_time = time.time()
-            if total > 0:
-                percentage = min(int((downloaded / total) * 100), 100)
-                if percentage > self.last_percentage:
-                    self.pbar.update(percentage - self.last_percentage)
-                    self.last_percentage = percentage
-                    speed = calculate_speed(downloaded, self.download_start_time)
-                    self.pbar.set_description(f"Downloading at {format_speed(speed)}")
-                    if self.current_download_url:
-                        self.session_manager.update_session(self.current_download_url, percentage)
+            
+            # Check if we should use detailed progress display
+            if self.config.get('detailed_progress', False):
+                # Initialize the detailed progress display if needed
+                if not hasattr(self, 'detailed_pbar'):
+                    self.detailed_pbar = DetailedProgressDisplay(
+                        total_size=total,
+                        title="Downloading",
+                        detailed=True,
+                        show_eta=True
+                    )
+                    self.detailed_pbar.start()
+                    if self.download_start_time is None:
+                        self.download_start_time = time.time()
+                
+                # Update the detailed progress display
+                self.detailed_pbar.update(downloaded)
+                
+                # Update session if available
+                if self.current_download_url:
+                    percentage = min(int((downloaded / total) * 100), 100) if total > 0 else 0
+                    self.session_manager.update_session(self.current_download_url, percentage)
+            else:
+                # Use the classic progress bar
+                if not hasattr(self, 'pbar'):
+                    self.pbar = ColorProgressBar(100, desc="Downloading")
+                    self.last_percentage = 0  # Reset percentage
+                    if self.download_start_time is None:
+                        self.download_start_time = time.time()
+                if total > 0:
+                    percentage = min(int((downloaded / total) * 100), 100)
+                    if percentage > self.last_percentage:
+                        self.pbar.update(percentage - self.last_percentage)
+                        self.last_percentage = percentage
+                        speed = calculate_speed(downloaded, self.download_start_time)
+                        self.pbar.set_description(f"Downloading at {format_speed(speed)}")
+                        if self.current_download_url:
+                            self.session_manager.update_session(self.current_download_url, percentage)
                         
         elif d['status'] == 'finished':
             logging.info("Download Complete!")
-            if hasattr(self, 'pbar'):
+            # Close the appropriate progress bar
+            if hasattr(self, 'detailed_pbar'):
+                self.detailed_pbar.finish(success=True)
+                delattr(self, 'detailed_pbar')
+            elif hasattr(self, 'pbar'):
                 self.pbar.close()
                 delattr(self, 'pbar')
+            
+            # Reset state
             self.last_percentage = 0
             self.download_start_time = None
             if self.current_download_url:
                 self.session_manager.remove_session(self.current_download_url)
+                
             print(f"{Fore.GREEN}✓ Download Complete!{Style.RESET_ALL}")
             
             filepath = d.get('filename')
@@ -1337,6 +1385,20 @@ class DownloadManager:
                             logging.error(f"Directory creation failed: {dir_path}")
             else:
                 logging.error("Finished status received but no filename provided.")
+        
+        elif d['status'] == 'error':
+            # Handle error case - close progress bars if they exist
+            if hasattr(self, 'detailed_pbar'):
+                self.detailed_pbar.finish(success=False)
+                delattr(self, 'detailed_pbar')
+            elif hasattr(self, 'pbar'):
+                self.pbar.close("Download Failed")
+                delattr(self, 'pbar')
+            
+            # Reset state
+            self.last_percentage = 0
+            self.download_start_time = None
+
     # FLAC verification methods with performance improvements
     def _verify_flac_properties(self, audio):
         """Verify FLAC format-specific properties with optimized checks"""
@@ -1505,7 +1567,8 @@ class DownloadManager:
 
     def get_download_options(self, url: str, audio_only: bool, resolution: Optional[str] = None,
                            format_id: Optional[str] = None, filename: Optional[str] = None,
-                           audio_format: str = 'mp3') -> Dict[str, Any]:
+                           audio_format: str = 'mp3', no_retry: bool = False, throttle: Optional[str] = None,
+                           use_aria2c: bool = False) -> Dict[str, Any]:
         """Get download options with improved sanitization and adaptive format selection"""
         # Determine output path with fallback
         try:
@@ -1540,14 +1603,41 @@ class DownloadManager:
             'no_url_cleanup': True,
             'clean_infojson': False,
             'prefer_insecure': True,
-            'retries': 5,
             'fragment_retries': 10,
-            'retry_sleep': lambda n: 5 * (2 ** (n - 1)),
             'socket_timeout': 60,
             'http_chunk_size': 10485760,
         }
+        
+        # Handle no_retry option
+        if no_retry:
+            options['retries'] = 0
+            options['fragment_retries'] = 0
+        else:
+            options['retries'] = 5
+            options['retry_sleep'] = lambda n: 5 * (2 ** (n - 1))
+            
+        # Handle throttle option
+        if throttle:
+            # Parse the throttle rate (e.g. "500K", "1.5M", "2G")
+            rate = self._parse_throttle_rate(throttle)
+            if rate > 0:
+                options['throttled_rate'] = rate
+                logging.info(f"Download speed limited to {throttle}/s")
+        
+        # Use aria2c as external downloader if requested
+        if use_aria2c:
+            # Check if aria2c is available
+            if self._check_aria2c_available():
+                options['external_downloader'] = 'aria2c'
+                options['external_downloader_args'] = ['--min-split-size=1M', '--max-connection-per-server=16']
+                logging.info("Using aria2c as download engine")
+            else:
+                logging.warning("aria2c not found, falling back to default downloader")
 
-        if audio_only:
+        # Handle format_id explicitly if provided
+        if format_id:
+            options['format'] = format_id
+        elif audio_only:
             options['format'] = 'bestaudio/best'
             options['extract_audio'] = True
             if audio_format == 'flac':
@@ -2145,6 +2235,47 @@ class DownloadManager:
         else:
             return 1048576   # 1MB chunks for low memory situations
 
+    def _parse_throttle_rate(self, throttle: str) -> int:
+        """
+        Parse a throttle rate string like '500K', '1.5M', '2G' into bytes per second.
+        Returns 0 if parsing fails.
+        """
+        if not throttle:
+            return 0
+            
+        try:
+            # Extract number and unit
+            match = re.match(r'^([\d.]+)([KMGkmg])?$', throttle)
+            if not match:
+                return 0
+                
+            value, unit = match.groups()
+            value = float(value)
+            
+            # Convert to bytes based on unit
+            if unit:
+                unit = unit.upper()
+                if unit == 'K':
+                    value = value * 1024
+                elif unit == 'M':
+                    value = value * 1024 * 1024
+                elif unit == 'G':
+                    value = value * 1024 * 1024 * 1024
+                    
+            return int(value)
+        except Exception:
+            logging.warning(f"Could not parse throttle rate: {throttle, "using unlimited speed:"}")
+            return 0
+            
+    def _check_aria2c_available(self) -> bool:
+        """Check if aria2c is available in the system PATH"""
+        try:
+            cmd = ['aria2c', '--version']
+            subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            return True
+        except (subprocess.SubprocessError, FileNotFoundError):
+            return False
+
 def load_config() -> Dict[str, Any]:
     """Load configuration from file with defaults and error handling"""
     try:
@@ -2319,6 +2450,7 @@ def main() -> None:
     parser.add_argument('--throttle', type=str, help='Limit download speed (e.g., 500KB/s)')
     parser.add_argument('--aria2c', action='store_true', help='Use aria2c for downloading')
     parser.add_argument('--verbose', action='store_true', help='Enable detailed output for troubleshooting')
+    parser.add_argument('--detailed-progress', action='store_true', help='Show detailed progress with real-time statistics')
     # New organize option
     parser.add_argument('--organize', action='store_true', help='Organize files into directories based on metadata')
     parser.add_argument('--no-organize', action='store_true', help='Disable file organization (overrides config)')
@@ -2339,7 +2471,17 @@ def main() -> None:
         list_supported_sites()
         sys.exit(0)
     
+    # Setup logging level if verbose is enabled
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
+        print(f"{Fore.CYAN}Verbose mode enabled. Detailed logging active.{Style.RESET_ALL}")
+    
     config = load_config()
+    # Add verbose and detailed_progress setting to config
+    config['verbose'] = args.verbose
+    config['detailed_progress'] = args.detailed_progress
+    
     if args.output_dir:
         if args.audio_only:
             config['audio_output'] = args.output_dir
@@ -2358,35 +2500,393 @@ def main() -> None:
         config['organization_templates'][content_type] = args.org_template
     
     manager = DownloadManager(config)
-    # Pass new arguments as additional kwargs 
-    extra_kwargs = {
-        'resume': args.resume,
-        'stats': args.stats,
-        'system_stats': args.system_stats,
-        'no_cache': args.no_cache,
-        'no_retry': args.no_retry,
-        'throttle': args.throttle,
-        'aria2c': args.aria2c,
-        'verbose': args.verbose
-    }
+    
+    # Show system stats if requested
+    if args.system_stats:
+        display_system_stats()
+    
+    # Create a download stats tracker
+    download_stats = DownloadStats()
     
     if args.interactive:
         manager.interactive_mode()
         sys.exit(0)
     
     if args.urls:
-        manager.batch_download(
-            args.urls,
-            audio_only=args.audio_only,
-            resolution=args.resolution,
-            format_id=args.format_id,
-            filename=args.filename,
-            audio_format=args.audio_format,
-            **extra_kwargs
-        )
+        # Prepare download options
+        download_options = {
+            'audio_only': args.audio_only,
+            'resolution': args.resolution,
+            'format_id': args.format_id,
+            'filename': args.filename,
+            'audio_format': args.audio_format,
+            'resume': args.resume,
+            'no_cache': args.no_cache,
+            'no_retry': args.no_retry,
+            'throttle': args.throttle,
+            'use_aria2c': args.aria2c  # Make sure aria2c is passed properly
+        }
+        
+        start_time = time.time()
+        results = manager.batch_download(args.urls, **download_options)
+        
+        # Track download results in stats
+        success_count = sum(1 for r in results if r)
+        failure_count = len(results) - success_count
+        
+        # Report stats if requested
+        if args.stats:
+            # Add basic stats from the results
+            for i in range(success_count):
+                download_stats.add_download(True)
+            for i in range(failure_count):
+                download_stats.add_download(False)
+            
+            # Calculate duration
+            download_stats.total_time = time.time() - start_time
+            
+            # Display stats
+            download_stats.display()
     else:
         print(f"{Fore.RED}No URLs provided. Use --interactive for interactive mode.{Style.RESET_ALL}")
         sys.exit(1)
+
+def display_system_stats():
+    """Display detailed system resource statistics"""
+    print(f"\n{Fore.CYAN}{'=' * 40}")
+    print(f"{Fore.GREEN}SYSTEM STATISTICS{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{'=' * 40}{Style.RESET_ALL}\n")
+    
+    # CPU information
+    cpu_percent = psutil.cpu_percent(interval=1)
+    cpu_count = psutil.cpu_count(logical=False)
+    cpu_logical = psutil.cpu_count(logical=True)
+    print(f"{Fore.YELLOW}CPU Usage:{Style.RESET_ALL} {cpu_percent}%")
+    print(f"{Fore.YELLOW}CPU Cores:{Style.RESET_ALL} {cpu_count} physical, {cpu_logical} logical")
+    
+    # Memory information
+    mem = psutil.virtual_memory()
+    print(f"\n{Fore.YELLOW}Memory Usage:{Style.RESET_ALL} {mem.percent}%")
+    print(f"{Fore.YELLOW}Total Memory:{Style.RESET_ALL} {mem.total / (1024**3):.2f} GB")
+    print(f"{Fore.YELLOW}Available Memory:{Style.RESET_ALL} {mem.available / (1024**3):.2f} GB")
+    print(f"{Fore.YELLOW}Used Memory:{Style.RESET_ALL} {mem.used / (1024**3):.2f} GB")
+    
+    # Disk information
+    print(f"\n{Fore.YELLOW}Disk Information:{Style.RESET_ALL}")
+    for part in psutil.disk_partitions(all=False):
+        if os.name == 'nt' and 'cdrom' in part.opts or part.fstype == '':
+            # Skip CD-ROM drives with no disk or other special drives
+            continue
+        usage = psutil.disk_usage(part.mountpoint)
+        print(f"  {Fore.CYAN}Drive {part.mountpoint}{Style.RESET_ALL}")
+        print(f"    Total: {usage.total / (1024**3):.2f} GB")
+        print(f"    Used: {usage.used / (1024**3):.2f} GB ({usage.percent}%)")
+        print(f"    Free: {usage.free / (1024**3):.2f} GB")
+
+class DownloadStats:
+    """Track and report download statistics"""
+    def __init__(self):
+        self.total_downloads = 0
+        self.successful_downloads = 0
+        self.failed_downloads = 0
+        self.total_bytes = 0
+        self.start_time = time.time()
+        self.download_times = []
+        self.download_sizes = []
+    
+    def add_download(self, success: bool, size_bytes: int = 0, duration: float = 0):
+        """Add a download to statistics"""
+        self.total_downloads += 1
+        if success:
+            self.successful_downloads += 1
+            self.total_bytes += size_bytes
+            if duration > 0:
+                self.download_times.append(duration)
+            if size_bytes > 0:
+                self.download_sizes.append(size_bytes)
+        else:
+            self.failed_downloads += 1
+    
+    def get_average_speed(self) -> float:
+        """Calculate average download speed in bytes/second"""
+        if not self.download_times or not self.download_sizes:
+            return 0
+        
+        total_time = sum(self.download_times)
+        total_size = sum(self.download_sizes)
+        
+        if total_time > 0:
+            return total_size / total_time
+        return 0
+    
+    def display(self):
+        """Display formatted download statistics"""
+        runtime = time.time() - self.start_time
+        hours, remainder = divmod(runtime, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        avg_speed = self.get_average_speed()
+        
+        print(f"\n{Fore.CYAN}{'=' * 40}")
+        print(f"{Fore.GREEN}DOWNLOAD STATISTICS{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}{'=' * 40}{Style.RESET_ALL}\n")
+        
+        print(f"{Fore.YELLOW}Session Duration:{Style.RESET_ALL} {int(hours)}h {int(minutes)}m {int(seconds)}s")
+        print(f"{Fore.YELLOW}Total Downloads:{Style.RESET_ALL} {self.total_downloads}")
+        print(f"{Fore.YELLOW}Successful:{Style.RESET_ALL} {self.successful_downloads}")
+        print(f"{Fore.YELLOW}Failed:{Style.RESET_ALL} {self.failed_downloads}")
+        
+        # Format total downloaded bytes
+        if self.total_bytes > 1024**3:
+            size_str = f"{self.total_bytes / 1024**3:.2f} GB"
+        elif self.total_bytes > 1024**2:
+            size_str = f"{self.total_bytes / 1024**2:.2f} MB"
+        else:
+            size_str = f"{self.total_bytes / 1024:.2f} KB"
+            
+        print(f"{Fore.YELLOW}Total Downloaded:{Style.RESET_ALL} {size_str}")
+        
+        # Format speed
+        if avg_speed > 1024**2:
+            speed_str = f"{avg_speed / 1024**2:.2f} MB/s"
+        elif avg_speed > 1024:
+            speed_str = f"{avg_speed / 1024:.2f} KB/s"
+        else:
+            speed_str = f"{avg_speed:.2f} B/s"
+            
+        print(f"{Fore.YELLOW}Average Speed:{Style.RESET_ALL} {speed_str}")
+        
+        if self.successful_downloads > 0:
+            success_rate = (self.successful_downloads / self.total_downloads) * 100
+            print(f"{Fore.YELLOW}Success Rate:{Style.RESET_ALL} {success_rate:.1f}%")
+            
+        print(f"\n{Fore.CYAN}{'=' * 40}{Style.RESET_ALL}")
+
+class DetailedProgressDisplay:
+    """Enhanced progress display with real-time statistics and dynamic updates."""
+    def __init__(self, total_size: int = 0, title: str = "Download", 
+                 detailed: bool = False, show_eta: bool = True):
+        self.total_size = total_size  # Total size in bytes
+        self.downloaded = 0           # Current downloaded bytes
+        self.title = title            # Display title
+        self.start_time = time.time() # Start time
+        self.detailed = detailed      # Whether to show detailed stats
+        self.show_eta = show_eta      # Whether to show ETA
+        self.last_update = 0          # Last update time
+        self.update_interval = 0.25   # Minimum interval between updates (seconds)
+        self.speeds = []              # List of recent speeds for averaging
+        self.speeds_window = 10       # Number of speed samples to keep
+        self.pbar = None              # Progress bar
+        self.max_width = self._get_terminal_width() - 5  # Leave some margin
+        
+        # Size of different parts in the progress display
+        self.bar_size = min(50, max(20, self.max_width // 3))
+        
+        # Initialize stats
+        self.current_speed = 0
+        self.avg_speed = 0
+        self.peak_speed = 0
+        self.eta_seconds = 0
+        
+        # Cache for formatted strings to avoid recalculation
+        self._cache = {}
+        self._cache_time = 0
+        
+    def _get_terminal_width(self) -> int:
+        """Get terminal width with fallback."""
+        try:
+            return shutil.get_terminal_size().columns
+        except (AttributeError, OSError):
+            return 80
+            
+    def _format_size(self, size_bytes: int) -> str:
+        """Format size in human-readable format."""
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes/1024:.1f} KB"
+        elif size_bytes < 1024 * 1024 * 1024:
+            return f"{size_bytes/(1024*1024):.2f} MB"
+        else:
+            return f"{size_bytes/(1024*1024*1024):.2f} GB"
+            
+    def _format_time(self, seconds: float) -> str:
+        """Format time in human-readable format."""
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        elif seconds < 3600:
+            minutes, seconds = divmod(seconds, 60)
+            return f"{int(minutes)}m {int(seconds)}s"
+        else:
+            hours, remainder = divmod(seconds, 3600)
+            minutes, seconds = divmod(remainder, 60)
+            return f"{int(hours)}h {int(minutes)}m"
+            
+    def _calculate_speed(self) -> float:
+        """Calculate current speed in bytes/second."""
+        now = time.time()
+        elapsed = now - self.start_time
+        if elapsed > 0:
+            return self.downloaded / elapsed
+        return 0
+        
+    def _format_speed(self, speed: float) -> str:
+        """Format speed in human-readable format."""
+        if speed < 1024:
+            return f"{speed:.1f} B/s"
+        elif speed < 1024 * 1024:
+            return f"{speed/1024:.1f} KB/s"
+        elif speed < 1024 * 1024 * 1024:
+            return f"{speed/(1024*1024):.2f} MB/s"
+        else:
+            return f"{speed/(1024*1024*1024):.2f} GB/s"
+            
+    def _get_progress_bar(self, percent: float) -> str:
+        """Generate a progress bar string."""
+        bar_width = self.bar_size - 7  # Leave room for percentage
+        filled_width = int(bar_width * percent / 100)
+        
+        # Create a colorful bar with gradient effect
+        if percent < 30:
+            bar_color = Fore.RED
+        elif percent < 60:
+            bar_color = Fore.YELLOW
+        else:
+            bar_color = Fore.GREEN
+            
+        bar = f"{bar_color}{'█' * filled_width}{Style.RESET_ALL}"
+        bar += f"{Fore.WHITE}{'░' * (bar_width - filled_width)}{Style.RESET_ALL}"
+        return f"{bar} {percent:5.1f}%"
+    
+    def update(self, bytes_downloaded: int) -> None:
+        """Update progress with newly downloaded bytes."""
+        self.downloaded = bytes_downloaded
+        now = time.time()
+        
+        # Limit update frequency to avoid excessive terminal updates
+        if now - self.last_update < self.update_interval:
+            return
+            
+        self.last_update = now
+        
+        # Calculate current stats
+        self.current_speed = self._calculate_speed()
+        
+        # Update speed history for averaging
+        self.speeds.append(self.current_speed)
+        if len(self.speeds) > self.speeds_window:
+            self.speeds.pop(0)
+        
+        # Calculate average and peak speeds
+        self.avg_speed = sum(self.speeds) / len(self.speeds)
+        self.peak_speed = max(self.speeds + [self.peak_speed])
+        
+        # Calculate ETA
+        remaining_bytes = max(0, self.total_size - self.downloaded)
+        if self.avg_speed > 0:
+            self.eta_seconds = remaining_bytes / self.avg_speed
+        else:
+            self.eta_seconds = 0
+        
+        # Display progress
+        self.display()
+    
+    def display(self) -> None:
+        """Display the current progress with statistics."""
+        # Check if terminal width has changed
+        current_width = self._get_terminal_width()
+        if current_width != self.max_width:
+            self.max_width = current_width - 5
+            self.bar_size = min(50, max(20, self.max_width // 3))
+        
+        # Calculate percentage
+        percent = min(100.0, (self.downloaded / self.total_size * 100) if self.total_size else 0)
+        
+        # Basic progress line
+        progress_bar = self._get_progress_bar(percent)
+        
+        # Format downloaded/total
+        downloaded_str = self._format_size(self.downloaded)
+        total_str = self._format_size(self.total_size) if self.total_size else "Unknown"
+        size_str = f"{downloaded_str}/{total_str}"
+        
+        # Format current speed
+        speed_str = self._format_speed(self.current_speed)
+        
+        # First line: Title and progress bar
+        line1 = f"{Fore.CYAN}{self.title}: {Style.RESET_ALL}{progress_bar}"
+        
+        # Second line: Size info and speed
+        line2 = f"  {Fore.YELLOW}Size:{Style.RESET_ALL} {size_str}   {Fore.YELLOW}Speed:{Style.RESET_ALL} {speed_str}"
+        
+        # If detailed, add more statistics
+        lines = [line1, line2]
+        if self.detailed:
+            # Third line: Average and peak speeds
+            avg_speed_str = self._format_speed(self.avg_speed)
+            peak_speed_str = self._format_speed(self.peak_speed)
+            line3 = f"  {Fore.YELLOW}Avg:{Style.RESET_ALL} {avg_speed_str}   {Fore.YELLOW}Peak:{Style.RESET_ALL} {peak_speed_str}"
+            lines.append(line3)
+            
+            # Fourth line: ETA and elapsed time if shown
+            if self.show_eta:
+                elapsed = time.time() - self.start_time
+                eta_str = self._format_time(self.eta_seconds)
+                elapsed_str = self._format_time(elapsed)
+                line4 = f"  {Fore.YELLOW}ETA:{Style.RESET_ALL} {eta_str}   {Fore.YELLOW}Elapsed:{Style.RESET_ALL} {elapsed_str}"
+                lines.append(line4)
+        
+        # Clear previous lines and display new ones
+        print("\033[1K\r", end="")  # Clear current line
+        if hasattr(self, 'last_lines'):
+            # Move up to overwrite previous lines
+            print(f"\033[{self.last_lines}A", end="")
+            
+        # Print all lines with ANSI clear to end of line
+        for line in lines:
+            print(f"{line}\033[K")
+        
+        # If not the last line, move back up to prepare for next update
+        if lines:
+            print(f"\033[{len(lines)-1}A", end="")
+        
+        # Store how many lines we printed for next update
+        self.last_lines = len(lines)
+        
+    def start(self):
+        """Initialize and start the progress display."""
+        self.start_time = time.time()
+        self.last_update = 0
+        self.downloaded = 0
+        # Print initial empty lines to make space
+        lines_needed = 4 if self.detailed else 2
+        print("\n" * (lines_needed - 1))
+        # Move cursor back up
+        print(f"\033[{lines_needed-1}A", end="")
+        self.last_lines = lines_needed
+        self.display()
+        
+    def finish(self, success: bool = True):
+        """Finalize the progress display."""
+        # Move to the last line
+        if hasattr(self, 'last_lines'):
+            print(f"\033[{self.last_lines-1}B", end="")
+            
+        # Show completion message
+        if success:
+            print(f"\n{Fore.GREEN}✓ Download complete!{Style.RESET_ALL}")
+        else:
+            print(f"\n{Fore.RED}✗ Download failed!{Style.RESET_ALL}")
+        
+        # Show final statistics
+        elapsed = time.time() - self.start_time
+        avg_speed = self.downloaded / elapsed if elapsed > 0 else 0
+        
+        print(f"{Fore.CYAN}{'─' * 40}{Style.RESET_ALL}")
+        print(f"  {Fore.YELLOW}Total Downloaded:{Style.RESET_ALL} {self._format_size(self.downloaded)}")
+        print(f"  {Fore.YELLOW}Time Taken:{Style.RESET_ALL} {self._format_time(elapsed)}")
+        print(f"  {Fore.YELLOW}Average Speed:{Style.RESET_ALL} {self._format_speed(avg_speed)}")
+        print(f"{Fore.CYAN}{'─' * 40}{Style.RESET_ALL}")
 
 if __name__ == "__main__":
     try:

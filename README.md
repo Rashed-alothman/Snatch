@@ -38,8 +38,10 @@
 - 🛡️ **Error Recovery** - Robust error handling and helpful suggestions
 - 🧩 **Format Flexibility** - Video, MP3, FLAC, WAV, and more
 - 🌐 **Universal Compatibility** - Works on Windows, macOS, and Linux
-- 🗂️ **Automatic File Organization** - Organize downloads based on metada
-
+- 🗂️ **Automatic File Organization** - Organize downloads based on metadata
+- 🔁 **Resume Downloads** - Continue interrupted downloads from where they left off
+- 📊 **Download Statistics** - Track and display download performance metrics
+- 🚀 **aria2c Support** - Optional high-speed download engine for better performance
 
 <h2 id="Installation">🔧 Installation</h2>
 
@@ -103,6 +105,18 @@ python Snatch.py "https://youtube.com/watch?v=example" --resolution 1080
 
 # Download audio in FLAC format
 python Snatch.py "https://youtube.com/watch?v=example" --audio-only --audio-format flac
+
+# Resume an interrupted download
+python Snatch.py "https://youtube.com/watch?v=example" --resume
+
+# Use aria2c for faster downloads
+python Snatch.py "https://youtube.com/watch?v=example" --aria2c
+
+# Show download statistics when finished
+python Snatch.py "https://youtube.com/watch?v=example" --stats
+
+# See detailed logs for troubleshooting
+python Snatch.py "https://youtube.com/watch?v=example" --verbose
 ```
 
 <h2 id="Usage">💻 Usage</h2>
@@ -122,8 +136,7 @@ When in interactive mode, you can use these commands:
 | `clear`                 | Clear the screen                      |
 | `exit` or `quit`        | Exit the application                  |
 
-### Advanced Features
-
+<h2 id="Advanced Features">Advanced Features</h2>
 #### 1. Playlist Downloads
 
 When downloading a playlist, Snatch will present options to:
@@ -188,6 +201,36 @@ Available variables include:
 - `{day}` - Release day
 - `{track_number}` - Track number
 
+#### 6. Advanced Command-line Options
+
+Snatch supports several advanced options for more control over your downloads:
+
+```bash
+# Resume interrupted downloads
+python Snatch.py "URL" --resume
+
+# Show download statistics after completion
+python Snatch.py "URL" --stats
+
+# Display system resource statistics
+python Snatch.py "URL" --system-stats
+
+# Skip using cached media information
+python Snatch.py "URL" --no-cache
+
+# Disable automatic retry logic
+python Snatch.py "URL" --no-retry
+
+# Limit download speed (e.g., 2M = 2MB/s)
+python Snatch.py "URL" --throttle 2M
+
+# Use aria2c as the download engine for better performance
+python Snatch.py "URL" --aria2c
+
+# Enable detailed logging for troubleshooting
+python Snatch.py "URL" --verbose
+```
+
 <h2 id="Supported Sites">🌎 Supported Sites</h2>
 Snatch supports over 1000 websites including:
 
@@ -209,7 +252,6 @@ To see the full list of supported sites:
 python Snatch.py --list-sites
 ```
 
-## 🔍 Troubleshooting
 <h2 id="Troubleshooting">🔍 Troubleshooting</h2>
 ### Common Issues
 
@@ -234,7 +276,8 @@ python Snatch.py --list-sites
 
 4. **Slow Downloads**
    - Check your internet connection
-   - Try with `--http-chunk-size 10485760` for larger chunks
+   - Try with `--aria2c` for faster downloading
+   - Use `--http-chunk-size 10485760` for larger chunks
 
 ### Need Help?
 
@@ -242,9 +285,9 @@ If you're still having issues:
 
 - Check the logs in download_log.txt
 - Run with `--verbose` for detailed output
+- Try `--system-stats` to check if your system has enough resources
 
-## 🤝 Contributing
-
+<h2 id="Contributing"> 🤝 Contributing</h2>
 Contributions are welcome! Feel free to:
 
 - Report bugs
