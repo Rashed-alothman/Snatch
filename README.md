@@ -2,7 +2,7 @@
    <img src="https://github.com/Rashed-alothman/Snatch/blob/main/main/assets/logo.png" alt="Snatch Logo" width="350" />
  </p>
  
-<h1 align="center">🐍 Snatch 🎬</h1>
+<h1 align="center">Snatch</h1>
 <h3 align="center">Download Anything, Anywhere, Anytime</h3>
 
 <p align="center">
