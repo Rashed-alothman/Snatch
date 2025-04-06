@@ -1,5 +1,5 @@
 <p align="center">
-   <img src="https://github.com/Rashed-alothman/Snatch/blob/main/main/assets/logo.png" alt="Snatch Logo" width="200" />
+   <img src="https://github.com/Rashed-alothman/Snatch/blob/main/main/assets/logo.png" alt="Snatch Logo" width="500" />
  </p>
  
 <h1 align="center">🐍 Snatch 🎬</h1>
