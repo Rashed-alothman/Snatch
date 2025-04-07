@@ -284,7 +284,8 @@ python Snatch.py --list-sites
 ```
 
 <h2 id="Troubleshooting">🔍 Troubleshooting</h2>
-### Common Issues
+
+####Common Issues
 
 1. **FFmpeg not found**
 
