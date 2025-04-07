@@ -37,6 +37,7 @@ from mutagen.oggvorbis import OggVorbis
 from datetime import datetime
 import unicodedata
 import tempfile  # New import for temporary files
+import socket  # Import socket module for network connectivity check
 
 # Initialize colorama for Windows support with autoreset for cleaner code
 init(autoreset=True)
@@ -63,7 +64,7 @@ class CustomHelpFormatter(argparse.HelpFormatter):
 # Constants moved to top for better organization and maintainability
 CONFIG_FILE = 'config.json'
 FLAC_EXT = '.flac'
-VERSION = "1.3.0"  # Centralized version definition
+VERSION = "1.4.0"  # Centralized version definition
 LOG_FILE = 'download_log.txt'
 SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 # Default throttling and retry constants
@@ -1318,11 +1319,23 @@ class DownloadManager:
                     raise RuntimeError(f"Cannot create any output directory for {key}")
 
     def progress_hook(self, d: Dict[str, Any]) -> None:
-        """Enhanced progress hook with detailed statistics display"""
+        """Enhanced progress hook with improved percentage calculation and detailed statistics display"""
         if d['status'] == 'downloading':
+            # Get accurate total size info - prioritize actual total bytes if available
             total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
             downloaded = d.get('downloaded_bytes', 0)
             
+            # Account for resuming: adjust total and downloaded with already downloaded bytes
+            if 'total_bytes' in d and 'total_bytes_estimate' in d:
+                # If both values present, use the more accurate one
+                total = d['total_bytes'] if d['total_bytes'] > 0 else d['total_bytes_estimate'] 
+            
+            # Calculate accurate percentage that accounts for resumed downloads
+            if total > 0:
+                percentage = min(100, int((downloaded / total) * 100))
+            else:
+                percentage = 0
+                
             # Check if we should use detailed progress display
             if self.config.get('detailed_progress', False):
                 # Initialize the detailed progress display if needed
@@ -1342,7 +1355,6 @@ class DownloadManager:
                 
                 # Update session if available
                 if self.current_download_url:
-                    percentage = min(int((downloaded / total) * 100), 100) if total > 0 else 0
                     self.session_manager.update_session(self.current_download_url, percentage)
             else:
                 # Use the classic progress bar
@@ -1351,16 +1363,15 @@ class DownloadManager:
                     self.last_percentage = 0  # Reset percentage
                     if self.download_start_time is None:
                         self.download_start_time = time.time()
-                if total > 0:
-                    percentage = min(int((downloaded / total) * 100), 100)
-                    if percentage > self.last_percentage:
-                        self.pbar.update(percentage - self.last_percentage)
-                        self.last_percentage = percentage
-                        speed = calculate_speed(downloaded, self.download_start_time)
-                        self.pbar.set_description(f"Downloading at {format_speed(speed)}")
-                        if self.current_download_url:
-                            self.session_manager.update_session(self.current_download_url, percentage)
-                        
+                    
+                if percentage > self.last_percentage:
+                    self.pbar.update(percentage - self.last_percentage)
+                    self.last_percentage = percentage
+                    speed = calculate_speed(downloaded, self.download_start_time)
+                    self.pbar.set_description(f"Downloading at {format_speed(speed)}")
+                    if self.current_download_url:
+                        self.session_manager.update_session(self.current_download_url, percentage)
+        
         elif d['status'] == 'finished':
             logging.info("Download Complete!")
             # Close the appropriate progress bar
@@ -1379,8 +1390,24 @@ class DownloadManager:
                 
             print(f"{Fore.GREEN}✓ Download Complete!{Style.RESET_ALL}")
             
+            # Clean up the filename if needed
             filepath = d.get('filename')
-            if filepath:
+            if filepath and os.path.exists(filepath):
+                # Check if the filename has redundant extensions
+                clean_filepath = clean_filename(filepath)
+                if clean_filepath != filepath and not os.path.exists(clean_filepath):
+                    try:
+                        # Rename the file
+                        os.rename(filepath, clean_filepath)
+                        print(f"{Fore.GREEN}✓ Cleaned up filename: {Style.RESET_ALL}")
+                        print(f"  {Fore.CYAN}→ {os.path.basename(clean_filepath)}{Style.RESET_ALL}")
+                        
+                        # Update filepath for subsequent operations
+                        filepath = clean_filepath
+                    except OSError as e:
+                        logging.error(f"Error renaming file: {str(e)}")
+                
+                # Continue with organization if enabled
                 if self.config.get('organize'):
                     if not os.path.exists(filepath):
                         logging.warning(f"Organize failed: File not found {filepath}")
@@ -1585,8 +1612,19 @@ class DownloadManager:
             output_path = str(Path.home() / ('Music' if audio_only else 'Videos'))
             os.makedirs(output_path, exist_ok=True)
         
+        # Process filename if provided
+        output_template = '%(title)s.%(ext)s'  # Default template
+        
         if filename:
+            # Remove any existing extension from the filenam
+            filename = os.path.splitext(filename)[0]
+            
+            # Sanitize the filename (remove invalid characters)
             filename = re.sub(r'[\\/*?:"<>|]', '_', filename)
+            
+            # Set output template with the sanitized filename without extension
+            # yt-dlp will add the appropriate extension based on the final format
+            output_template = f"{filename}.%(ext)s"
         
         # Adaptive format selection: if video download and no resolution/format_id provided
         if not audio_only and resolution is None and not format_id:
@@ -1599,7 +1637,7 @@ class DownloadManager:
                 resolution = "1080"
         
         options = {
-            'outtmpl': os.path.join(output_path, f"{filename or '%(title)s'}.%(ext)s"),
+            'outtmpl': os.path.join(output_path, output_template),
             'ffmpeg_location': self.config['ffmpeg_location'],
             'progress_hooks': [self.progress_hook],
             'ignoreerrors': True,
@@ -1648,7 +1686,7 @@ class DownloadManager:
             options['extract_audio'] = True
             if audio_format == 'flac':
                 # Use a temporary .wav file as intermediate
-                temp_format = '%(title)s.temp.wav'
+                #temp_format = '%(title)s.temp.wav'
                 # Build FFmpeg executable path
                 ffmpeg_bin = os.path.join(self.config["ffmpeg_location"], "ffmpeg")
                 exec_cmd = (
@@ -1695,6 +1733,12 @@ class DownloadManager:
                     'preferredquality': preferredquality,
                     # Add audio channels parameter
                     'audioChannels': audio_channels,
+                },{
+                    'key': 'EmbedThumbnail',
+                    'already_have_thumbnail': False,
+                },{
+                    'key': 'FFmpegMetadata',
+                    'add_metadata': True,
                 }]
         elif resolution:
             options['format'] = f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
@@ -1704,6 +1748,7 @@ class DownloadManager:
     def _download_thumbnail(self, url: str, destination: str) -> bool:
         """Download thumbnail from URL to destination path"""
         if not url:
+            logging.debug("No thumbnail URL provided")
             return False
             
         try:
@@ -1722,6 +1767,7 @@ class DownloadManager:
     def _embed_thumbnail(self, audio_file: str, thumbnail_path: str) -> bool:
         """Embed thumbnail into audio file using FFmpeg or mutagen based on file type"""
         if not os.path.exists(audio_file) or not os.path.exists(thumbnail_path):
+            logging.debug("cannot embed thumbnail: audio_file or thumbnail does not exist")
             return False
             
         ext = os.path.splitext(audio_file)[1].lower()
@@ -1741,34 +1787,50 @@ class DownloadManager:
                 pic.mime = "image/jpeg"  # Assume JPEG, could detect from content
                 pic.desc = "Cover"
                 
+                audio.clear_pictures()
                 audio.add_picture(pic)
                 audio.save()
                 success = True
                 
             # MP3 files - use mutagen
             elif ext == '.mp3':
-                audio = ID3(audio_file)
+                try:
+                    audio = ID3(audio_file)
+                except Exception as e:
+                    from mutagen.id3 import ID3NoHeaderError
+                    try:
+                        audio.ID3()
+                        audio.save(audio_file)
+                        audio = ID3(audio_file)
+                    except Exception as e:
+                        logging.debug(f"Failed to create ID3 header: {e}")
+                        return False  
+                    
                 with open(thumbnail_path, 'rb') as img_file:
                     img_data = img_file.read()
-                
                 from mutagen.id3 import APIC
+                # Remove existing cover art
+                audio.delall('APIC')
+                #add new cover art
                 audio.add(APIC(
-                    encoding=3,  # UTF-8
-                    mime="image/jpeg",  # Assume JPEG
-                    type=3,  # Cover (front)
-                    desc="Cover",
-                    data=img_data
-                ))
+                encoding=3,  # UTF-8
+                mime="image/jpeg",  # Assume JPEG
+                type=3,  # Cover (front)
+                desc="Cover",
+                data=img_data
+            ))
                 audio.save()
                 success = True
-                
             # M4A/MP4 files - use mutagen
+            
             elif ext == '.m4a':
                 audio = MP4(audio_file)
                 with open(thumbnail_path, 'rb') as img_file:
                     img_data = img_file.read()
-                
-                audio["covr"] = [MP4Cover(img_data)]
+            
+                from mutagen.mp4 import MP4Cover, MP4Tags
+                covertype = MP4Cover.FORMAT_JPEG
+                audio["covr"] = [MP4Cover(img_data, covertype)]
                 audio.save()
                 success = True
                 
@@ -1784,10 +1846,43 @@ class DownloadManager:
                     img_data = img_file.read()
                 
                 from base64 import b64encode
-                encoded_data = b64encode(img_data).decode('ascii')
+                import base64
+            
+                # Clear existing metadata blocks
+                if 'metadata_block_picture' in audio:
+                    del audio['metadata_block_picture']
+            
+                # Create new metadata block
+                from PIL import Image
+                import io
+            
+                # Get image dimensions
+                with Image.open(thumbnail_path) as img:
+                    width, height = img.size
+                    mime = 'image/jpeg'
+            
+                # Create the metadata block picture
+                picture_data = (
+                    b'\x00\x00\x00\x03' +  # Picture type (3 = cover front)
+                    len(mime.encode()).to_bytes(4, 'big') + mime.encode() +  # MIME type
+                    b'\x00\x00\x00\x00' +  # Description length (0)
+                    width.to_bytes(4, 'big') +  # Width
+                    height.to_bytes(4, 'big') +  # Height
+                    b'\x00\x00\x00\x18' +  # Color depth (24 bits)
+                    b'\x00\x00\x00\x00'    # Indexed color (0 means not indexed)
+                )
+            
+                with open(thumbnail_path, 'rb') as f:
+                    img_data = f.read()
+            
+                picture_data += len(img_data).to_bytes(4, 'big') + img_data
+            
+                encoded_data = base64.b64encode(picture_data).decode('ascii')
                 audio["metadata_block_picture"] = [encoded_data]
+            
                 audio.save()
                 success = True
+            
                 
             # For other formats, try FFmpeg as fallback
             else:
@@ -1819,9 +1914,9 @@ class DownloadManager:
                     success = True
                 else:
                     # Clean up if failed
-                    if os.path.exists(temp_output):
-                        os.remove(temp_output)
-                        
+                    error_output = process.stderr.decode('utf-8', errors='replace')
+                    logging.debug(f"FFmpeg thumbnail embedding failed: {error_output}")
+
             if success:
                 logging.info(f"Successfully embedded album art into {os.path.basename(audio_file)}")
             
@@ -1834,6 +1929,7 @@ class DownloadManager:
     def _process_audio_thumbnail(self, filename: str, info: Dict[str, Any]) -> None:
         """Process and embed thumbnail for audio files"""
         if not os.path.exists(filename):
+            logging.debug(f"Cannot process thumbnail: Audio file {filename} doesn't exist")
             return
             
         # Find thumbnail URL
@@ -1854,7 +1950,30 @@ class DownloadManager:
                     thumbnail_url = thumbnails[0]['url']
         
         if not thumbnail_url:
-            logging.debug("No thumbnail found for embedding")
+            # Check if thumbnail was downloaded alongside the audio file
+            dirname = os.path.dirname(filename)
+            basename = os.path.splitext(os.path.basename(filename))[0]
+            # Check common thumbnail filenames
+            potential_thumbnails = [
+            os.path.join(dirname, f"{basename}.jpg"),
+            os.path.join(dirname, f"{basename}.jpeg"),
+            os.path.join(dirname, f"{basename}.png"),
+            os.path.join(dirname, f"{basename}.webp"),
+            os.path.join(dirname, "thumbnail.jpg"),
+            os.path.join(dirname, "cover.jpg")
+            ]
+            for thumb_path in potential_thumbnails:
+                if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
+                    # Use existing thumbnail file
+                    thumb_spinner = EnhancedSpinnerAnimation("Embedding album artwork", style="aesthetic", color="magenta")
+                    thumb_spinner.start()
+                
+                    if self._embed_thumbnail(filename, thumb_path):
+                        thumb_spinner.stop(clear=False, success=True)
+                    else:
+                        thumb_spinner.stop(clear=False, success=False)
+                    return
+                logging.debug("No thumbnail URL or local thumbnail file found for embedding")
             return
             
         # Create a unique thumbnail file path
@@ -1906,7 +2025,19 @@ class DownloadManager:
                     if not os.path.exists(filename):
                         print(f"{Fore.RED}File not found: {filename}{Style.RESET_ALL}")
                         return
-                        
+                    
+                    # Clean up filename if it has redundant extensions
+                    clean_filepath = clean_filename(filename)
+                    if clean_filepath != filename and not os.path.exists(clean_filepath):
+                        try:
+                            # Rename the file
+                            os.rename(filename, clean_filepath)
+                            filename = clean_filepath
+                            print(f"{Fore.GREEN}✓ Cleaned up filename: {os.path.basename(filename)}{Style.RESET_ALL}")
+                        except OSError as e:
+                            logging.error(f"Error renaming file: {str(e)}")
+                    
+                    # Verify the FLAC file
                     if self.verify_audio_file(filename):
                         audio = FLAC(filename)
                         filesize = os.path.getsize(filename)
@@ -1987,6 +2118,20 @@ class DownloadManager:
             print(f"{Fore.RED}Invalid URL format: {url}{Style.RESET_ALL}")
             return False
 
+        # Check network connectivity before starting download
+        network_spinner = EnhancedSpinnerAnimation("Checking network connection", style="dots", color="cyan")
+        network_spinner.start()
+        
+        is_connected, message = check_network_connectivity()
+        
+        if not is_connected:
+            network_spinner.stop(clear=False, success=False)
+            print(f"{Fore.RED}Network Error: {message}{Style.RESET_ALL}")
+            print(f"{Fore.YELLOW}Please check your internet connection and try again.{Style.RESET_ALL}")
+            return False
+        else:
+            network_spinner.stop(clear=True)
+            
         # Set the current download URL for session tracking
         self.current_download_url = url
         
@@ -2633,14 +2778,13 @@ def test_functionality() -> bool:
             return False
         print(f"{Fore.GREEN}FFmpeg found at: {ffmpeg_path}{Style.RESET_ALL}")
         
-        # Test yt-dlp
-        with yt_dlp.YoutubeDL() as ydl:
-            version = ydl._version
-            print(f"{Fore.GREEN}yt-dlp version: {version}{Style.RESET_ALL}")
+
+        print(f"{Fore.GREEN}yt-dlp version: {yt_dlp.version.__version__}{Style.RESET_ALL}")
         
         # Test download manager
         config = load_config()
         manager = DownloadManager(config)
+        manager.interactive_mode()
         print(f"{Fore.GREEN}Download manager initialized successfully{Style.RESET_ALL}")
         
         return True
@@ -3024,7 +3168,7 @@ class DetailedProgressDisplay:
         return f"{bar} {percent:5.1f}%"
     
     def update(self, bytes_downloaded: int) -> None:
-        """Update progress with newly downloaded bytes."""
+        """Update progress with newly downloaded bytes, with improved accuracy."""
         self.downloaded = bytes_downloaded
         now = time.time()
         
@@ -3034,22 +3178,54 @@ class DetailedProgressDisplay:
             
         self.last_update = now
         
-        # Calculate current stats
-        self.current_speed = self._calculate_speed()
+        # Calculate current stats with improved accuracy
+        elapsed = max(0.001, now - self.start_time)  # Avoid division by zero
+        self.current_speed = bytes_downloaded / elapsed  # Current overall speed
         
-        # Update speed history for averaging
-        self.speeds.append(self.current_speed)
-        if len(self.speeds) > self.speeds_window:
+        # Update speed history for more accurate averaging
+        # Calculate incremental speed for better accuracy
+        if hasattr(self, 'last_bytes') and hasattr(self, 'last_time'):
+            incremental_bytes = bytes_downloaded - self.last_bytes
+            incremental_time = now - self.last_time
+            if incremental_time > 0:
+                incremental_speed = incremental_bytes / incremental_time
+                # Only store reasonable values to avoid spikes
+                if 0 < incremental_speed < self.current_speed * 5:
+                    self.speeds.append(incremental_speed)
+        
+        # Store values for next incremental calculation
+        self.last_bytes = bytes_downloaded
+        self.last_time = now
+        
+        # Keep a reasonable window of speed samples
+        while len(self.speeds) > self.speeds_window:
             self.speeds.pop(0)
         
         # Calculate average and peak speeds
-        self.avg_speed = sum(self.speeds) / len(self.speeds)
-        self.peak_speed = max(self.speeds + [self.peak_speed])
+        if self.speeds:
+            # Use median for more stable average that's less affected by spikes
+            self.speeds.sort()
+            middle = len(self.speeds) // 2
+            if len(self.speeds) % 2 == 0:
+                self.avg_speed = (self.speeds[middle - 1] + self.speeds[middle]) / 2
+            else:
+                self.avg_speed = self.speeds[middle]
+        else:
+            self.avg_speed = self.current_speed
+            
+        self.peak_speed = max(self.speeds + [self.peak_speed, self.current_speed])
         
-        # Calculate ETA
-        remaining_bytes = max(0, self.total_size - self.downloaded)
-        if self.avg_speed > 0:
-            self.eta_seconds = remaining_bytes / self.avg_speed
+        # Calculate ETA with improved accuracy
+        remaining_bytes = max(0, self.total_size - bytes_downloaded)
+        
+        # Use different speed calculations for ETA depending on download size
+        if self.total_size > 100 * 1024 * 1024:  # For files > 100MB, use average speed for stability
+            eta_speed = self.avg_speed if self.avg_speed > 0 else self.current_speed
+        else:  # For smaller files, recent speed may be more accurate
+            eta_speed = self.current_speed
+        
+        if eta_speed > 0:
+            self.eta_seconds = remaining_bytes / eta_speed
         else:
             self.eta_seconds = 0
         
@@ -3152,6 +3328,82 @@ class DetailedProgressDisplay:
         print(f"  {Fore.YELLOW}Time Taken:{Style.RESET_ALL} {self._format_time(elapsed)}")
         print(f"  {Fore.YELLOW}Average Speed:{Style.RESET_ALL} {self._format_speed(avg_speed)}")
         print(f"{Fore.CYAN}{'─' * 40}{Style.RESET_ALL}")
+
+def check_network_connectivity(timeout: float = 3.0) -> Tuple[bool, str]:
+    """
+    Check if the network connection is active and reliable.
+    
+    Args:
+        timeout: Maximum time in seconds to wait for network response
+        
+    Returns:
+        Tuple of (is_connected, message)
+    """
+    # Try multiple methods to verify connection
+    try:
+        # Test with a lightweight request to a reliable service
+        test_urls = [
+            "https://www.google.com",
+            "https://www.cloudflare.com",
+            "https://www.microsoft.com"
+        ]
+        
+        for url in test_urls:
+            try:
+                response = requests.head(url, timeout=timeout)
+                if response.status_code >= 200 and response.status_code < 300:
+                    return True, "Network connection is active"
+            except requests.RequestException:
+                continue
+                
+        # If all web requests failed, try DNS resolution
+        socket.create_connection(("8.8.8.8", 53), timeout=timeout)
+        return True, "Network connection is active but web services may be limited"
+    
+    except (socket.error, socket.timeout):
+        return False, "No network connection detected"
+    except Exception as e:
+        return False, f"Network error: {str(e)}"
+
+def clean_filename(filename: str) -> str:
+    """
+    Clean up filename with redundant or extra extensions.
+    
+    Args:
+        filename: Original filename
+        
+    Returns:
+        Cleaned filename
+    """
+    # First, handle the case where the filename has multiple extensions
+    # like "song.wav.flac" -> "song.flac"
+    basename = os.path.basename(filename)
+    
+    # Match patterns like "name.ext1.ext2" where ext2 is the target extension
+    pattern = r'^(.+?)(\.[^.]+)*(\.[^.]+)$'
+    match = re.match(pattern, basename)
+    
+    if match:
+        # Get directory path
+        dir_path = os.path.dirname(filename)
+        
+        # Extract the base name and the final extension
+        base_name = match.group(1)
+        final_ext = match.group(3)
+        
+        # Remove any redundant extensions from the base name
+        # Check if base_name itself ends with the same extension
+        for ext in AUDIO_EXTENSIONS.union(VIDEO_EXTENSIONS):
+            if base_name.lower().endswith(ext) and ext != final_ext.lower():
+                base_name = base_name[:-len(ext)]
+        
+        # Construct the clean filename
+        clean_name = f"{base_name}{final_ext}"
+        
+        # Return the full path
+        return os.path.join(dir_path, clean_name)
+    
+    return filename
 
 if __name__ == "__main__":
     try:
