@@ -145,7 +145,7 @@ When in interactive mode, you can use these commands:
 | `exit` or `quit`        | Exit the application                  |
 
 <h2 id="Advanced Features">Advanced Features</h2>
-#### 1. Playlist Downloads
+<h4> 1. Playlist Downloads</h4>
 
 When downloading a playlist, Snatch will present options to:
 
