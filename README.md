@@ -2,7 +2,7 @@
    <img src="https://github.com/Rashed-alothman/Snatch/blob/main/main/assets/logo.png" alt="Snatch Logo" width="350" />
  </p>
  
-<h1 align="center">🐍 Snatch 🎬</h1>
+<h1 align="center">Snatch</h1>
 <h3 align="center">Download Anything, Anywhere, Anytime</h3>
 
 <p align="center">
@@ -27,22 +27,22 @@
 
 <h2 id="features">✨ Features</h2>
 
-- 🌈 **Beautiful Interactive Mode** - Easy-to-use interface with colorful progress bars
-- 🎭 **Dynamic Resource Management** - Adaptive chunk sizes based on your system's resources
-- 📋 **Site Explorer** - Browse and search through 1000+ supported sites
-- 🎚️ **Advanced Audio Options** - Choose between Opus (default), MP3, FLAC formats and stereo/surround sound
-- 🔄 **Smart Conversion** - High-quality audio extraction with format options
-- 🚄 **Concurrent Downloads** - Download multiple files simultaneously
-- 🎚️ **Quality Selection** - Choose specific video resolutions
-- 📦 **Playlist Support** - Download entire playlists with options to select specific videos
-- 🔎 **Cache System** - Optimized repeat downloads with smart caching
-- 🛡️ **Error Recovery** - Robust error handling and helpful suggestions
-- 🧩 **Format Flexibility** - Video, Opus, MP3, FLAC, WAV, and more
-- 🌐 **Universal Compatibility** - Works on Windows, macOS, and Linux
-- 🗂️ **Automatic File Organization** - Organize downloads based on metadata
-- 🔁 **Resume Downloads** - Continue interrupted downloads from where they left off
-- 📊 **Download Statistics** - Track and display download performance metrics
-- 🚀 **aria2c Support** - Optional high-speed download engine for better performance
+-  **Beautiful Interactive Mode** - Easy-to-use interface with colorful progress bars
+-  **Dynamic Resource Management** - Adaptive chunk sizes based on your system's resources
+-  **Site Explorer** - Browse and search through 1000+ supported sites
+-  **Advanced Audio Options** - Choose between Opus (default), MP3, FLAC formats and stereo/surround sound
+-  **Smart Conversion** - High-quality audio extraction with format options
+-  **Concurrent Downloads** - Download multiple files simultaneously
+-  **Quality Selection** - Choose specific video resolutions
+-  **Playlist Support** - Download entire playlists with options to select specific videos
+-  **Cache System** - Optimized repeat downloads with smart caching
+-  **Error Recovery** - Robust error handling and helpful suggestions
+-  **Format Flexibility** - Video, Opus, MP3, FLAC, WAV, and more
+-  **Universal Compatibility** - Works on Windows, macOS, and Linux
+-  **Automatic File Organization** - Organize downloads based on metadata
+-  **Resume Downloads** - Continue interrupted downloads from where they left off
+-  **Download Statistics** - Track and display download performance metrics
+-  **aria2c Support** - Optional high-speed download engine for better performance
 
 <h2 id="Installation">🔧 Installation</h2>
 
@@ -80,7 +80,7 @@ pip install -r requirements.txt
 python setup_ffmpeg.py
 ```
 
-<h2 id="Quick Start">🏃‍♀️ Quick Start</h2>
+<h2 id="quick-start">🏃‍♀️ Quick Start</h2>
 
 ### Using the Interactive Mode (Easiest)
 
@@ -262,7 +262,7 @@ python Snatch.py "URL" --aria2c
 python Snatch.py "URL" --verbose
 ```
 
-<h2 id="Supported Sites">🌎 Supported Sites</h2>
+<h2 id="supported-sites">🌎 Supported Sites</h2>
 Snatch supports over 1000 websites including:
 
 - YouTube
