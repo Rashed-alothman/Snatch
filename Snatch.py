@@ -36,6 +36,7 @@ from mutagen.mp4 import MP4
 from mutagen.oggvorbis import OggVorbis
 from datetime import datetime
 import unicodedata
+import tempfile  # New import for temporary files
 
 # Initialize colorama for Windows support with autoreset for cleaner code
 init(autoreset=True)
@@ -1233,11 +1234,12 @@ class DownloadManager:
         # Convert to tuple for better performance with lru_cache
         self.valid_commands = (
             'download', 'dl', 'audio', 'video', 'help', '?', 'exit', 'quit', 'q',
-            'flac', 'mp3', 'wav', 'm4a', 'list', 'sites', 'clear', 'cls'
+            'flac', 'mp3', 'wav', 'm4a', 'opus', 'list', 'sites', 'clear', 'cls'
         )
         
         # Cached format descriptions for performance
         self._format_descriptions = {
+            'opus': 'High quality Opus (192kbps)',
             'mp3': 'High quality MP3 (320kbps)',
             'flac': 'Lossless audio (best quality)',
             'wav': 'Uncompressed audio',
@@ -1252,6 +1254,9 @@ class DownloadManager:
         self.session_manager = SessionManager() # Initialize session manager
         # Store info_dict for post-processing
         self._current_info_dict = {}
+        # Add temporary directory for thumbnails
+        self._temp_dir = Path(tempfile.gettempdir()) / "snatch_thumbnails"
+        os.makedirs(self._temp_dir, exist_ok=True)
 
     def setup_logging(self):
         """Set up logging with console and file handlers"""
@@ -1466,7 +1471,7 @@ class DownloadManager:
             logging.error(f"FLAC verification error: {str(e)}")
             return False
 
-    def _prepare_ffmpeg_command(self, input_file: str, output_file: str) -> list:
+    def _prepare_ffmpeg_command(self, input_file: str, output_file: str, channels: int = 2) -> list:
         """Prepare FFmpeg command with improved option handling"""
         return [
             os.path.join(self.config['ffmpeg_location'], 'ffmpeg'),
@@ -1475,6 +1480,7 @@ class DownloadManager:
             '-compression_level', '12',
             '-sample_fmt', 's32',
             '-ar', '48000',
+            '-ac', str(channels),  # Dynamic channel configuration
             '-progress', 'pipe:1',
             output_file
         ]
@@ -1567,8 +1573,8 @@ class DownloadManager:
 
     def get_download_options(self, url: str, audio_only: bool, resolution: Optional[str] = None,
                            format_id: Optional[str] = None, filename: Optional[str] = None,
-                           audio_format: str = 'mp3', no_retry: bool = False, throttle: Optional[str] = None,
-                           use_aria2c: bool = False) -> Dict[str, Any]:
+                           audio_format: str = 'opus', no_retry: bool = False, throttle: Optional[str] = None,
+                           use_aria2c: bool = False, audio_channels: int = 2) -> Dict[str, Any]:
         """Get download options with improved sanitization and adaptive format selection"""
         # Determine output path with fallback
         try:
@@ -1647,11 +1653,11 @@ class DownloadManager:
                 ffmpeg_bin = os.path.join(self.config["ffmpeg_location"], "ffmpeg")
                 exec_cmd = (
             f'"{ffmpeg_bin}" -i "%(filepath)s" '
-            '-c:a flac -compression_level 12 -sample_fmt s32 '
-            '-ar 96000 -ac 8 -bits_per_raw_sample 24 -vn '
-            '-af "loudnorm=I=-14:TP=-2:LRA=7,aresample=resampler=soxr:precision=28:dither_method=triangular" '
-            '-metadata encoded_by="Snatch" '
-            '"%(filepath)s.flac" && if exist "%(filepath)s" del "%(filepath)s"'
+            f'-c:a flac -compression_level 12 -sample_fmt s32 '
+            f'-ar 96000 -ac {audio_channels} -bits_per_raw_sample 24 -vn '
+            f'-af "loudnorm=I=-14:TP=-2:LRA=7,aresample=resampler=soxr:precision=28:dither_method=triangular" '
+            f'-metadata encoded_by="Snatch" '
+            f'"%(filepath)s.flac" && if exist "%(filepath)s" del "%(filepath)s"'
         )
                 options['postprocessors'] = [
                     {
@@ -1674,20 +1680,222 @@ class DownloadManager:
                     '-bits_per_raw_sample', '32'
                 ]
             else:
-                # For non-FLAC formats such as mp3, wav, or m4a
-                preferredquality = '320' if audio_format == 'mp3' else '0'
+                # For non-FLAC formats such as opus, wav, or m4a
+                # Set appropriate quality settings based on format
+                if audio_format == 'opus':
+                    preferredquality = '192'  # High quality for opus (128-256 is usually excellent)
+                elif audio_format == 'mp3':
+                    preferredquality = '320'  # Highest for mp3
+                else:
+                    preferredquality = '0'    # Lossless for other formats
+                    
                 options['postprocessors'] = [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': audio_format,
                     'preferredquality': preferredquality,
+                    # Add audio channels parameter
+                    'audioChannels': audio_channels,
                 }]
         elif resolution:
             options['format'] = f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
         
         return options
 
+    def _download_thumbnail(self, url: str, destination: str) -> bool:
+        """Download thumbnail from URL to destination path"""
+        if not url:
+            return False
+            
+        try:
+            with requests.get(url, stream=True, timeout=10) as response:
+                response.raise_for_status()
+                
+                with open(destination, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                        
+            return os.path.exists(destination) and os.path.getsize(destination) > 0
+        except Exception as e:
+            logging.debug(f"Failed to download thumbnail: {e}")
+            return False
+
+    def _embed_thumbnail(self, audio_file: str, thumbnail_path: str) -> bool:
+        """Embed thumbnail into audio file using FFmpeg or mutagen based on file type"""
+        if not os.path.exists(audio_file) or not os.path.exists(thumbnail_path):
+            return False
+            
+        ext = os.path.splitext(audio_file)[1].lower()
+        success = False
+        
+        try:
+            # FLAC files - use mutagen for better compatibility
+            if ext == '.flac':
+                audio = FLAC(audio_file)
+                with open(thumbnail_path, 'rb') as img_file:
+                    img_data = img_file.read()
+                
+                from mutagen.flac import Picture
+                pic = Picture()
+                pic.data = img_data
+                pic.type = 3  # Cover (front)
+                pic.mime = "image/jpeg"  # Assume JPEG, could detect from content
+                pic.desc = "Cover"
+                
+                audio.add_picture(pic)
+                audio.save()
+                success = True
+                
+            # MP3 files - use mutagen
+            elif ext == '.mp3':
+                audio = ID3(audio_file)
+                with open(thumbnail_path, 'rb') as img_file:
+                    img_data = img_file.read()
+                
+                from mutagen.id3 import APIC
+                audio.add(APIC(
+                    encoding=3,  # UTF-8
+                    mime="image/jpeg",  # Assume JPEG
+                    type=3,  # Cover (front)
+                    desc="Cover",
+                    data=img_data
+                ))
+                audio.save()
+                success = True
+                
+            # M4A/MP4 files - use mutagen
+            elif ext == '.m4a':
+                audio = MP4(audio_file)
+                with open(thumbnail_path, 'rb') as img_file:
+                    img_data = img_file.read()
+                
+                audio["covr"] = [MP4Cover(img_data)]
+                audio.save()
+                success = True
+                
+            # OGG/OPUS files - use mutagen
+            elif ext in ['.ogg', '.opus']:
+                if ext == '.ogg':
+                    audio = OggVorbis(audio_file)
+                else:
+                    from mutagen.oggopus import OggOpus
+                    audio = OggOpus(audio_file)
+                
+                with open(thumbnail_path, 'rb') as img_file:
+                    img_data = img_file.read()
+                
+                from base64 import b64encode
+                encoded_data = b64encode(img_data).decode('ascii')
+                audio["metadata_block_picture"] = [encoded_data]
+                audio.save()
+                success = True
+                
+            # For other formats, try FFmpeg as fallback
+            else:
+                ffmpeg_path = os.path.join(self.config['ffmpeg_location'], 'ffmpeg')
+                temp_output = f"{audio_file}.temp{ext}"
+                
+                command = [
+                    ffmpeg_path,
+                    '-i', audio_file,
+                    '-i', thumbnail_path,
+                    '-map', '0', 
+                    '-map', '1',
+                    '-c', 'copy',
+                    '-disposition:v', 'attached_pic',
+                    '-metadata:s:v', 'title=Album cover',
+                    '-metadata:s:v', 'comment=Cover (Front)',
+                    temp_output
+                ]
+                
+                process = subprocess.run(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                if process.returncode == 0 and os.path.exists(temp_output):
+                    # Replace original with the new file
+                    shutil.move(temp_output, audio_file)
+                    success = True
+                else:
+                    # Clean up if failed
+                    if os.path.exists(temp_output):
+                        os.remove(temp_output)
+                        
+            if success:
+                logging.info(f"Successfully embedded album art into {os.path.basename(audio_file)}")
+            
+            return success
+            
+        except Exception as e:
+            logging.debug(f"Failed to embed thumbnail: {e}")
+            return False
+        
+    def _process_audio_thumbnail(self, filename: str, info: Dict[str, Any]) -> None:
+        """Process and embed thumbnail for audio files"""
+        if not os.path.exists(filename):
+            return
+            
+        # Find thumbnail URL
+        thumbnail_url = None
+        if info:
+            # Check for thumbnail in various locations within info dict
+            thumbnail_url = info.get('thumbnail')
+            
+            # If not in root, check thumbnails list
+            if not thumbnail_url and 'thumbnails' in info and isinstance(info['thumbnails'], list):
+                # Get the largest thumbnail
+                thumbnails = sorted(
+                    [t for t in info['thumbnails'] if isinstance(t, dict) and 'url' in t],
+                    key=lambda x: x.get('width', 0) * x.get('height', 0),
+                    reverse=True
+                )
+                if thumbnails:
+                    thumbnail_url = thumbnails[0]['url']
+        
+        if not thumbnail_url:
+            logging.debug("No thumbnail found for embedding")
+            return
+            
+        # Create a unique thumbnail file path
+        thumbnail_file = os.path.join(
+            self._temp_dir,
+            f"thumb_{hashlib.md5(thumbnail_url.encode()).hexdigest()}.jpg"
+        )
+        
+        # Download the thumbnail
+        thumb_spinner = None
+        try:
+            thumb_spinner = EnhancedSpinnerAnimation("Downloading album artwork", style="aesthetic", color="magenta")
+            thumb_spinner.start()
+            
+            if self._download_thumbnail(thumbnail_url, thumbnail_file):
+                thumb_spinner.update_message("Embedding album artwork")
+                
+                # Embed the thumbnail
+                if self._embed_thumbnail(filename, thumbnail_file):
+                    thumb_spinner.stop(clear=False, success=True)
+                else:
+                    thumb_spinner.stop(clear=False, success=False)
+                    logging.debug("Failed to embed thumbnail")
+            else:
+                thumb_spinner.stop(clear=False, success=False)
+                logging.debug("Failed to download thumbnail")
+                
+        except Exception as e:
+            if thumb_spinner:
+                thumb_spinner.stop(clear=False, success=False)
+            logging.debug(f"Error processing thumbnail: {e}")
+        finally:
+            # Clean up temporary thumbnail file
+            try:
+                if os.path.exists(thumbnail_file):
+                    os.remove(thumbnail_file)
+            except Exception:
+                pass
+
     def post_process_hook(self, d: Dict[str, Any]) -> None:
-        """Improved post-processing with metadata organization"""
+        """Improved post-processing with metadata organization and thumbnail embedding"""
         if d['status'] == 'started':
             filename = d.get('filename', '')
             
@@ -1713,23 +1921,40 @@ class DownloadManager:
                         print(f"   - Average Bitrate: {int(bitrate)} kbps")
                         print(f"   - File Size: {filesize // 1024 // 1024} MB")
                         print("   - Compression Level: Maximum (12)")
+                        
+                        # Get info dict for the current FLAC file
+                        info_dict = self._current_info_dict.get(filename, {})
+                        
+                        # Process thumbnail for FLAC
+                        self._process_audio_thumbnail(filename, info_dict)
                     else:
                         # Try to recover by reconverting
                         temp_wav = filename.replace(FLAC_EXT, '.temp.wav')
                         if os.path.exists(temp_wav):
                             print(f"{Fore.YELLOW}Attempting recovery of FLAC file...{Style.RESET_ALL}")
-                            self.convert_to_flac(temp_wav, filename)
+                            if self.convert_to_flac(temp_wav, filename):
+                                # Get info dict for the current FLAC file
+                                info_dict = self._current_info_dict.get(filename, {})
+                                
+                                # Process thumbnail for recovered FLAC
+                                self._process_audio_thumbnail(filename, info_dict)
                 except Exception as e:
                     print(f"{Fore.RED}✗ Error during FLAC verification: {str(e)}{Style.RESET_ALL}")
         
         # New: Handle file organization after download is finished
         elif d['status'] == 'finished':
             filename = d.get('filename', '')
-            if filename and os.path.exists(filename) and self.config.get('organize', False):
-                if self.file_organizer:
-                    # Get info_dict for the current download if available
-                    info_dict = self._current_info_dict.get(filename, {})
-                    
+            if filename and os.path.exists(filename):
+                # Get info_dict for the current download if available
+                info_dict = self._current_info_dict.get(filename, {})
+                
+                # Process thumbnail for audio files (non-FLAC formats handled here)
+                ext = os.path.splitext(filename)[1].lower()
+                if ext in AUDIO_EXTENSIONS and ext != FLAC_EXT:  # FLAC already handled in 'started'
+                    self._process_audio_thumbnail(filename, info_dict)
+                
+                # Handle file organization if enabled
+                if self.config.get('organize', False) and self.file_organizer:
                     print(f"\n{Fore.CYAN}Organizing file based on metadata...{Style.RESET_ALL}")
                     
                     # Create spinner for organization
@@ -1764,9 +1989,33 @@ class DownloadManager:
 
         # Set the current download URL for session tracking
         self.current_download_url = url
-
+        
         # Use enhanced spinner for better user feedback
         info_spinner = EnhancedSpinnerAnimation("Analyzing media", style="aesthetic")
+        
+        # Audio configuration selection for interactive mode
+        audio_channels = kwargs.get('audio_channels', 2)  # Default to stereo (2 channels)
+        
+        # For audio downloads in interactive mode, prompt for channel configuration
+        if kwargs.get('audio_only', False) and not kwargs.get('non_interactive', False):
+            info_spinner.start()
+            time.sleep(0.5)  # Brief pause
+            info_spinner.stop(clear=True)
+            
+            print(f"\n{Fore.CYAN}Audio Channel Configuration:{Style.RESET_ALL}")
+            print(f"1. Stereo (2.0) - Standard quality, compatible with all devices")
+            print(f"2. Surround (7.1) - High quality for home theater systems")
+            
+            try:
+                choice = input(f"{Fore.GREEN}Select audio configuration [1-2] (default: 1): {Style.RESET_ALL}")
+                if choice == '2':
+                    audio_channels = 8  # 7.1 surround sound
+                    print(f"{Fore.YELLOW}Selected: 7.1 surround sound{Style.RESET_ALL}")
+                else:
+                    print(f"{Fore.YELLOW}Selected: Stereo{Style.RESET_ALL}")
+            except (KeyboardInterrupt, EOFError):
+                print(f"\n{Fore.YELLOW}Using default stereo configuration{Style.RESET_ALL}")
+        
         try:
             # First check cache for info
             cached_info = self.download_cache.get_info(url)
@@ -1785,7 +2034,11 @@ class DownloadManager:
                     kwargs.get('resolution'),
                     kwargs.get('format_id'),
                     kwargs.get('filename'),
-                    kwargs.get('audio_format', 'mp3')
+                    kwargs.get('audio_format', 'opus'),  # Default to opus instead of mp3
+                    kwargs.get('no_retry', False),
+                    kwargs.get('throttle'),
+                    kwargs.get('use_aria2c', False),
+                    audio_channels  # Pass audio channels configuration
                 )
                 ydl_opts['quiet'] = True  # Silence yt-dlp output during info extraction
 
@@ -1807,7 +2060,7 @@ class DownloadManager:
                             info_spinner.stop(clear=False, success=False)
                             print(f"{Fore.RED}Error fetching media info: {str(e)}{Style.RESET_ALL}")
                             return False
-            
+        
             # Stop the spinner with success indicator
             info_spinner.stop(clear=True)
             
@@ -1820,7 +2073,7 @@ class DownloadManager:
             
             # Check for playlists and handle accordingly
             if info.get('_type') == 'playlist':
-                return self._handle_playlist(url, info, **kwargs)
+                return self._handle_playlist(url, info, **kwargs, audio_channels=audio_channels)
                 
             # Check system resources before large downloads
             est_size = estimate_download_size(info)
@@ -1837,7 +2090,11 @@ class DownloadManager:
                 kwargs.get('resolution'),
                 kwargs.get('format_id'),
                 kwargs.get('filename'),
-                kwargs.get('audio_format', 'mp3')
+                kwargs.get('audio_format', 'opus'),  # Default to opus instead of mp3
+                kwargs.get('no_retry', False),
+                kwargs.get('throttle'),
+                kwargs.get('use_aria2c', False),
+                audio_channels  # Pass audio channels configuration
             )
             # Set optimal chunk size based on system memory
             ydl_opts['http_chunk_size'] = self._adaptive_chunk_size()
@@ -2006,7 +2263,7 @@ class DownloadManager:
             kwargs.get('resolution'),
             kwargs.get('format_id'),
             kwargs.get('filename'),
-            kwargs.get('audio_format', 'mp3')
+            kwargs.get('audio_format', 'opus')
         )
         
         try:
@@ -2026,7 +2283,7 @@ class DownloadManager:
             kwargs.get('resolution'),
             kwargs.get('format_id'),
             kwargs.get('filename'),
-            kwargs.get('audio_format', 'mp3')
+            kwargs.get('audio_format', 'opus')
         )
         
         # Add playlist item limit (1-based indexing for yt-dlp)
@@ -2167,7 +2424,7 @@ class DownloadManager:
                     options = {}
                     if len(parts) > 1:
                         option_text = parts[1].lower()
-                        if option_text in ['mp3', 'wav', 'flac', 'm4a']:
+                        if option_text in ['opus', 'mp3', 'wav', 'flac', 'm4a']:
                             options['audio_only'] = True
                             options['audio_format'] = option_text
                         # Handle resolution options
@@ -2206,6 +2463,9 @@ class DownloadManager:
                 elif command.startswith('m4a'):
                     url = input(f"{Fore.GREEN}Enter URL: {Style.RESET_ALL}").strip()
                     self.download(url, audio_only=True, audio_format='m4a')
+                elif command.startswith('opus'):
+                    url = input(f"{Fore.GREEN}Enter URL: {Style.RESET_ALL}").strip()
+                    self.download(url, audio_only=True, audio_format='opus')
                 elif command.startswith('list') or command.startswith('sites'):
                     list_supported_sites()
                 elif command.startswith('clear') or command.startswith('cls'):
@@ -2435,7 +2695,7 @@ def main() -> None:
     parser.add_argument('--resolution', type=str, help='Specify video resolution (e.g., 1080)')
     parser.add_argument('--format-id', type=str, help='Select specific format IDs')
     parser.add_argument('--filename', type=str, help='Specify custom filename')
-    parser.add_argument('--audio-format', type=str, choices=['mp3', 'flac', 'wav', 'm4a'], default='mp3', help='Specify audio format')
+    parser.add_argument('--audio-format', type=str, choices=['opus', 'mp3', 'flac', 'wav', 'm4a'], default='opus', help='Specify audio format')
     parser.add_argument('--output-dir', type=str, help='Specify custom output directory')
     parser.add_argument('--list-sites', action='store_true', help='List all supported sites')
     parser.add_argument('--version', action='store_true', help='Show version information')
@@ -2455,6 +2715,9 @@ def main() -> None:
     parser.add_argument('--organize', action='store_true', help='Organize files into directories based on metadata')
     parser.add_argument('--no-organize', action='store_true', help='Disable file organization (overrides config)')
     parser.add_argument('--org-template', type=str, help='Custom organization template (e.g. "{uploader}/{year}/{title}")')
+    # Audio channels option
+    parser.add_argument('--audio-channels', type=int, choices=[2, 8], default=2, help='Audio channels: 2 (stereo) or 8 (7.1 surround)')
+    parser.add_argument('--non-interactive', action='store_true', help='Disable interactive prompts')
     args = parser.parse_args()
     
     if args.version:
@@ -2524,7 +2787,9 @@ def main() -> None:
             'no_cache': args.no_cache,
             'no_retry': args.no_retry,
             'throttle': args.throttle,
-            'use_aria2c': args.aria2c  # Make sure aria2c is passed properly
+            'use_aria2c': args.aria2c,  # Make sure aria2c is passed properly
+            'audio_channels': args.audio_channels,  # Pass audio channels configuration
+            'non_interactive': args.non_interactive  # Pass non-interactive flag
         }
         
         start_time = time.time()
@@ -2537,9 +2802,9 @@ def main() -> None:
         # Report stats if requested
         if args.stats:
             # Add basic stats from the results
-            for i in range(success_count):
+            for _ in range(success_count):
                 download_stats.add_download(True)
-            for i in range(failure_count):
+            for _ in range(failure_count):
                 download_stats.add_download(False)
             
             # Calculate duration

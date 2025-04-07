@@ -2,7 +2,7 @@
    <img src="https://github.com/Rashed-alothman/Snatch/blob/main/main/assets/logo.png" alt="Snatch Logo" width="350" />
  </p>
  
-<h1 align="center">Snatch</h1>
+<h1 align="center">🐍 Snatch 🎬</h1>
 <h3 align="center">Download Anything, Anywhere, Anytime</h3>
 
 <p align="center">
@@ -30,13 +30,14 @@
 - 🌈 **Beautiful Interactive Mode** - Easy-to-use interface with colorful progress bars
 - 🎭 **Dynamic Resource Management** - Adaptive chunk sizes based on your system's resources
 - 📋 **Site Explorer** - Browse and search through 1000+ supported sites
+- 🎚️ **Advanced Audio Options** - Choose between Opus (default), MP3, FLAC formats and stereo/surround sound
 - 🔄 **Smart Conversion** - High-quality audio extraction with format options
 - 🚄 **Concurrent Downloads** - Download multiple files simultaneously
 - 🎚️ **Quality Selection** - Choose specific video resolutions
 - 📦 **Playlist Support** - Download entire playlists with options to select specific videos
 - 🔎 **Cache System** - Optimized repeat downloads with smart caching
 - 🛡️ **Error Recovery** - Robust error handling and helpful suggestions
-- 🧩 **Format Flexibility** - Video, MP3, FLAC, WAV, and more
+- 🧩 **Format Flexibility** - Video, Opus, MP3, FLAC, WAV, and more
 - 🌐 **Universal Compatibility** - Works on Windows, macOS, and Linux
 - 🗂️ **Automatic File Organization** - Organize downloads based on metadata
 - 🔁 **Resume Downloads** - Continue interrupted downloads from where they left off
@@ -97,14 +98,20 @@ Or simply double-click **Snatch.bat** (Windows) / **snatch.sh** (macOS/Linux)
 # Download video in best quality
 python Snatch.py "https://youtube.com/watch?v=example"
 
-# Download audio only (MP3)
+# Download audio only (Opus format by default)
 python Snatch.py "https://youtube.com/watch?v=example" --audio-only
+
+# Download audio in MP3 format
+python Snatch.py "https://youtube.com/watch?v=example" --audio-only --audio-format mp3
+
+# Download audio in FLAC format
+python Snatch.py "https://youtube.com/watch?v=example" --audio-only --audio-format flac
 
 # Download in specific resolution
 python Snatch.py "https://youtube.com/watch?v=example" --resolution 1080
 
-# Download audio in FLAC format
-python Snatch.py "https://youtube.com/watch?v=example" --audio-only --audio-format flac
+# Specify audio channels (2=stereo, 8=7.1 surround)
+python Snatch.py "https://youtube.com/watch?v=example" --audio-only --audio-channels 8
 
 # Resume an interrupted download
 python Snatch.py "https://youtube.com/watch?v=example" --resume
@@ -129,6 +136,7 @@ When in interactive mode, you can use these commands:
 | ----------------------- | ------------------------------------- |
 | `help` or `?`           | Show help and all available commands  |
 | `URL`                   | Download media in best quality        |
+| `URL opus`              | Download audio in Opus format         |
 | `URL mp3`               | Download audio in MP3 format          |
 | `URL flac`              | Download audio in FLAC format         |
 | `URL 720` or `URL 1080` | Download video in specific resolution |
@@ -201,7 +209,30 @@ Available variables include:
 - `{day}` - Release day
 - `{track_number}` - Track number
 
-#### 6. Advanced Command-line Options
+#### 6. Advanced Audio Options
+
+Snatch now offers enhanced audio conversion options:
+
+- **Default Format**: Opus audio format (superior quality-to-size ratio)
+- **Channel Configuration**:
+  - Interactive prompt to choose between stereo (2.0) and surround sound (7.1)
+  - Command-line option: `--audio-channels 2` (stereo) or `--audio-channels 8` (7.1)
+- **Format Options**:
+  - Opus: `--audio-format opus` (default, excellent quality at smaller file sizes)
+  - MP3: `--audio-format mp3` (maximum compatibility)
+  - FLAC: `--audio-format flac` (lossless audio)
+  - WAV: `--audio-format wav` (uncompressed)
+  - M4A: `--audio-format m4a` (AAC audio)
+
+```bash
+# Download with 7.1 surround sound in Opus format
+python Snatch.py "URL" --audio-only --audio-channels 8
+
+# Skip interactive prompts (useful for scripting)
+python Snatch.py "URL" --audio-only --non-interactive
+```
+
+#### 7. Advanced Command-line Options
 
 Snatch supports several advanced options for more control over your downloads:
 
