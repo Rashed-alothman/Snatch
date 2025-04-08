@@ -1301,7 +1301,7 @@ class DownloadManager:
         for key in ['video_output', 'audio_output']:
             try:
                 os.makedirs(self.config[key], exist_ok=True)
-            except (OSError) as e:
+            except (PermissionError, OSError) as e:
                 # Try to use home directory as fallback
                 fallback_dir = str(Path.home() / ('Videos' if key == 'video_output' else 'Music'))
                 print(f"{Fore.YELLOW}Warning: Could not create {key}: {str(e)}. Using {fallback_dir}{Style.RESET_ALL}")
@@ -1319,6 +1319,17 @@ class DownloadManager:
                     raise RuntimeError(f"Cannot create any output directory for {key}")
 
     def progress_hook(self, d: Dict[str, Any]) -> None:
+
+        """Improved post-processing with metadata organization and thumbnail embedding"""
+        filename = d.get('filename', '')
+        # Skip processing for temporary fragment files
+        if filename and (
+            '.f' in os.path.basename(filename) or
+            '.part' in os.path.basename(filename) or
+            'tmp' in os.path.basename(filename)
+        ):
+            logging.debug(f"Skipping post-processing for fragment file: {filename}")
+            return
         """Enhanced progress hook with improved percentage calculation and detailed statistics display"""
         if d['status'] == 'downloading':
             # Get accurate total size info - prioritize actual total bytes if available
@@ -1384,14 +1395,24 @@ class DownloadManager:
             
             # Reset state
             self.last_percentage = 0
-            self.download_start_time = None
-            if self.current_download_url:
-                self.session_manager.remove_session(self.current_download_url)
+            
+            # Don't reset download times or remove sessions for fragment downloads
+            # Check if this is a fragment or final file
+            filepath = d.get('filename', '')
+            is_fragment = filepath and (
+            '.f' in os.path.basename(filepath) or
+            '.part' in os.path.basename(filepath) or
+            'tmp' in os.path.basename(filepath)
+            )
+            if not is_fragment: 
+                self.download_start_time = None
+                if self.current_download_url:
+                    self.session_manager.remove_session(self.current_download_url)
                 
             print(f"{Fore.GREEN}✓ Download Complete!{Style.RESET_ALL}")
             
-            # Clean up the filename if needed
-            filepath = d.get('filename')
+            
+            # Only clean up and organize the final merged file, not fragments
             if filepath and os.path.exists(filepath):
                 # Check if the filename has redundant extensions
                 clean_filepath = clean_filename(filepath)
@@ -1416,6 +1437,7 @@ class DownloadManager:
                         if not os.path.exists(dir_path):
                             logging.error(f"Directory creation failed: {dir_path}")
             else:
+                # For fragment downloads, just log but don't process them
                 logging.error("Finished status received but no filename provided.")
         
         elif d['status'] == 'error':
@@ -1604,7 +1626,6 @@ class DownloadManager:
                            use_aria2c: bool = False, audio_channels: int = 2) -> Dict[str, Any]:
         """Get download options with improved sanitization and adaptive format selection"""
         # Determine output path with fallback
-        logging.debug(f"Preparing download options for URL: {url}")
         try:
             output_path = self.config['audio_output'] if audio_only else self.config['video_output']
             if not os.path.exists(output_path):
@@ -1651,13 +1672,16 @@ class DownloadManager:
             'fragment_retries': 10,
             'socket_timeout': 60,
             'http_chunk_size': 10485760,
-            # Enhanced network resilience
+            'merge_output_format': 'mp4',  # Use MP4 as default output format for better compatibility
+            'keepvideo': False,  
             'extractor_retries': 5,          # Retry info extraction
             'file_access_retries': 5,        # Retry on file access issues
             'skip_unavailable_fragments': True,  # Skip unavailable fragments rather than failing
             'force_generic_extractor': False,    # Fallback to generic extractor if specific one fails
             'retry_sleep_functions': {'http': lambda attempt: 5 * (2 ** (attempt - 1))}, # Exponential backoff
             'network_retries': 20,         # Retry on network errors
+            'allow_unplayable_formats': False,  # Avoid formats that might cause merge issues
+            'check_formats': True,             # Verify formats before downloading
         }
         
         # Handle no_retry option
@@ -1665,9 +1689,9 @@ class DownloadManager:
             options['retries'] = 0
             options['fragment_retries'] = 0
         else:
-            options['retries'] = 15  # Increase from 5 to 15 for better resilience
-            options['retry_sleep'] = lambda n: min(10 * (2 ** (n - 1)), 600)  # Exponential backoff capped at 10 minutes
-
+            options['retries'] = 5
+            options['retry_sleep'] = lambda n: 5 * (2 ** (n - 1))
+            
         # Handle throttle option
         if throttle:
             # Parse the throttle rate (e.g. "500K", "1.5M", "2G")
@@ -1750,82 +1774,24 @@ class DownloadManager:
             options['format'] = f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
         
         return options
-        
-    def _handle_connection_error(self, error: Exception, url: str, retry_count: int, max_retries: int) -> bool:
-        """Handle connection errors with user-friendly messages and logging
-    
-        Returns:
-            bool: True if should retry, False if should give up
-        """
-        error_str = str(error)
-        error_type = type(error).__name__
-    
-        # Format user-friendly error message based on error type
-        if "ConnectionResetError" in error_type or "10054" in error_str:
-            message = "Connection was reset by the server"
-            detailed_msg = "The remote host closed the connection unexpectedly"
-        elif "ConnectionAbortedError" in error_type or "ConnectionRefusedError" in error_type:
-            message = "Connection was aborted or refused"
-            detailed_msg = "The server actively refused or aborted the connection"
-        elif "ConnectTimeout" in error_type or "timeout" in error_str.lower():
-            message = "Connection timed out"
-            detailed_msg = "The server took too long to respond"
-        elif "SSLError" in error_type:
-            message = "SSL/TLS error occurred"
-            detailed_msg = "There was a problem with the secure connection"
-        elif "RemoteDisconnected" in error_type or "IncompleteRead" in error_type:
-            message = "Remote server disconnected unexpectedly"
-            detailed_msg = "The server disconnected before sending a complete response"
-        elif "ProxyError" in error_type:
-            message = "Proxy connection error"
-            detailed_msg = "There was an issue connecting through your proxy"
-        elif "ConnectionError" in error_type:
-            message = "Network connection error"
-            detailed_msg = "A general network connection problem occurred"
-        else:
-            message = f"Download error: {error_str}"
-            detailed_msg = f"An unexpected error occurred: {error_str}"
-    
-        # Log the error with appropriate level
-        logging.error(f"{message} for URL: {url} ({retry_count}/{max_retries} attempts)")
-        logging.debug(f"Detailed error info: {detailed_msg} - Error type: {error_type}, Error message: {error_str}")
 
-        # Print user-friendly message with retry information
-        if retry_count < max_retries:
-            # Calculate exponential backoff time with jitter for network resilience
-            # Base wait time increases exponentially, plus a small random component to avoid retry storms
-            #base_wait = RETRY_SLEEP_BASE * (2 ** (retry_count - 1))
-            #jitter = random.uniform(0, RETRY_SLEEP_BASE)
-            #wait_time = min(base_wait + jitter, 120)  # Cap at 2 minutes
-
-            wait_time = min(RETRY_SLEEP_BASE * (2 ** (retry_count - 1)), 60)
-            short_url = url[:40] + "..." if len(url) > 40 else url
-            print(f"\n{Fore.YELLOW}⚠️ {message} downloading from {short_url}. Retrying in {wait_time} seconds... ({retry_count}/{max_retries}){Style.RESET_ALL}")
-            time.sleep(wait_time)
-            return True
-        else:
-            # Final failure with more helpful explanation and potential troubleshooting tips
-            print(f"\n{Fore.RED}✗ {message}. Maximum retries reached.{Style.RESET_ALL}")
-
-            # Provide specific troubleshooting advice based on error type
-            if "ConnectionResetError" in error_type or "10054" in error_str or "RemoteDisconnected" in error_type:
-                print(f"{Fore.YELLOW}The connection was repeatedly reset by the server. This could be due to:")
-                print(f"  • Network instability or firewall issues")
-                print(f"  • The server actively blocking download requests")
-                print(f"  • Try again later or with a different network connection{Style.RESET_ALL}")
-            elif "ConnectTimeout" in error_type or "timeout" in error_str.lower():
-                print(f"{Fore.YELLOW}Connection repeatedly timed out. This could be due to:")
-                print(f"  • Server overload or rate limiting")
-                print(f"  • Network congestion or instability")
-                print(f"  • Try again later or with the --throttle option{Style.RESET_ALL}")
-            elif "SSLError" in error_type:
-                print(f"{Fore.YELLOW}SSL/TLS connection issues. This could be due to:")
-                print(f"  • Outdated SSL certificates or security settings")
-                print(f"  • Network security software interference")
-                print(f"  • Try using the --no-check-certificate option{Style.RESET_ALL}")
-
-            # Log the final failure for diagnostics
-            logging.error(f"Failed to download after {max_retries} attempts: {url}")
+    def _download_thumbnail(self, url: str, destination: str) -> bool:
+        """Download thumbnail from URL to destination path"""
+        if not url:
+            logging.debug("No thumbnail URL provided")
+            return False
+            
+        try:
+            with requests.get(url, stream=True, timeout=10) as response:
+                response.raise_for_status()
+                
+                with open(destination, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                        
+            return os.path.exists(destination) and os.path.getsize(destination) > 0
+        except Exception as e:
+            logging.debug(f"Failed to download thumbnail: {e}")
             return False
 
     def _embed_thumbnail(self, audio_file: str, thumbnail_path: str) -> bool:
@@ -2185,9 +2151,9 @@ class DownloadManager:
         # Check network connectivity before starting download
         network_spinner = EnhancedSpinnerAnimation("Checking network connection", style="dots", color="cyan")
         network_spinner.start()
-
+        
         is_connected, message = check_network_connectivity()
-
+        
         if not is_connected:
             network_spinner.stop(clear=False, success=False)
             print(f"{Fore.RED}Network Error: {message}{Style.RESET_ALL}")
@@ -2195,26 +2161,26 @@ class DownloadManager:
             return False
         else:
             network_spinner.stop(clear=True)
-
+            
         # Set the current download URL for session tracking
         self.current_download_url = url
-
+        
         # Use enhanced spinner for better user feedback
         info_spinner = EnhancedSpinnerAnimation("Analyzing media", style="aesthetic")
-
+        
         # Audio configuration selection for interactive mode
         audio_channels = kwargs.get('audio_channels', 2)  # Default to stereo (2 channels)
-
+        
         # For audio downloads in interactive mode, prompt for channel configuration
         if kwargs.get('audio_only', False) and not kwargs.get('non_interactive', False):
             info_spinner.start()
             time.sleep(0.5)  # Brief pause
             info_spinner.stop(clear=True)
-
+            
             print(f"\n{Fore.CYAN}Audio Channel Configuration:{Style.RESET_ALL}")
             print(f"1. Stereo (2.0) - Standard quality, compatible with all devices")
             print(f"2. Surround (7.1) - High quality for home theater systems")
-
+            
             try:
                 choice = input(f"{Fore.GREEN}Select audio configuration [1-2] (default: 1): {Style.RESET_ALL}")
                 if choice == '2':
@@ -2224,87 +2190,19 @@ class DownloadManager:
                     print(f"{Fore.YELLOW}Selected: Stereo{Style.RESET_ALL}")
             except (KeyboardInterrupt, EOFError):
                 print(f"\n{Fore.YELLOW}Using default stereo configuration{Style.RESET_ALL}")
-
-        # Get max retries from config or use default
-        max_retries = kwargs.get('max_retries', MAX_RETRIES)
-        retry_count = 0
-        info = None  # Initialize info to avoid uninitialized variable access
-
-        while retry_count <= max_retries:
-            try:
-                # First check cache for info
-                cached_info = self.download_cache.get_info(url)
-                if cached_info:
-                    info_spinner.update_message("Using cached media information")
-                    info_spinner.start()
-                    time.sleep(0.5)  # Brief pause to show the cached info message
-                    info = cached_info
-                else:
-                    info_spinner.start()
-
-                    # Prepare options with smart defaults based on content
-                    ydl_opts = self.get_download_options(
-                        url, 
-                        kwargs.get('audio_only', False),
-                        kwargs.get('resolution'),
-                        kwargs.get('format_id'),
-                        kwargs.get('filename'),
-                        kwargs.get('audio_format', 'opus'),  # Default to opus instead of mp3
-                        kwargs.get('no_retry', False),
-                        kwargs.get('throttle'),
-                        kwargs.get('use_aria2c', False),
-                        audio_channels  # Pass audio channels configuration
-                    )
-                    ydl_opts['quiet'] = True  # Silence yt-dlp output during info extraction
-
-                    # Extract info with timeout and caching
-                    with timer("Media info extraction", silent=True):
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            try:
-                                # First try quick extraction 
-                                info = ydl.extract_info(url, download=False, process=False)
-
-                                # If it's a single video, get full info
-                                if info and info.get('_type') != 'playlist':
-                                    info_spinner.update_status("Getting detailed info")
-                                    info = ydl.extract_info(url, download=False)
-
-                                    # Cache successful info for future use
-                                    self.download_cache.save_info(url, info)
-                            except Exception as e:
-                                info_spinner.stop(clear=False, success=False)
-                                # Handle connection errors specifically during info extraction
-                                if any(err_type in type(e).__name__ for err_type in ['Connection', 'Timeout', 'SSLError', 'HTTPError']):
-                                    retry_count += 1
-                                    if self._handle_connection_error(e, url, retry_count, max_retries):
-                                        info_spinner = EnhancedSpinnerAnimation("Retrying media analysis", style="aesthetic")
-                                        continue
-                                print(f"{Fore.RED}Error fetching media info: {str(e)}{Style.RESET_ALL}")
-                                return False
-
-                # Stop the spinner with success indicator
-                info_spinner.stop(clear=True)
-
-                if not info:
-                    print(f"{Fore.RED}Could not fetch media information for: {url}{Style.RESET_ALL}")
-                    return False
-
-                # Show media information
-                self._display_media_info(info)
-
-                # Check for playlists and handle accordingly
-                if info.get('_type') == 'playlist':
-                    return self._handle_playlist(url, info, **kwargs, audio_channels=audio_channels)
-
-                # Check system resources before large downloads
-                est_size = estimate_download_size(info)
-                if est_size > 500 * 1024 * 1024 and not is_memory_sufficient():  # > 500MB
-                    print(f"{Fore.YELLOW}⚠️ Warning: System memory is low. Download may be slow or fail.{Style.RESET_ALL}")
-                    proceed = input(f"{Fore.CYAN}Continue anyway? (y/n): {Style.RESET_ALL}").lower().startswith('y')
-                    if not proceed:
-                        return False # Exit the download process if user chooses not to continue
-
-                # Prepare download options with dynamic chunk size
+        
+        try:
+            # First check cache for info
+            cached_info = self.download_cache.get_info(url)
+            if cached_info:
+                info_spinner.update_message("Using cached media information")
+                info_spinner.start()
+                time.sleep(0.5)  # Brief pause to show the cached info message
+                info = cached_info
+            else:
+                info_spinner.start()
+                
+                # Prepare options with smart defaults based on content
                 ydl_opts = self.get_download_options(
                     url, 
                     kwargs.get('audio_only', False),
@@ -2317,91 +2215,119 @@ class DownloadManager:
                     kwargs.get('use_aria2c', False),
                     audio_channels  # Pass audio channels configuration
                 )
-                # Set optimal chunk size based on system memory
-                ydl_opts['http_chunk_size'] = self._adaptive_chunk_size()
-                ydl_opts['socket_timeout'] = 120  # Increase timeout from 60 to 120 seconds
-                ydl_opts['retries'] = 20  # Increase from default
-                ydl_opts['fragment_retries'] = 20  # Increase from default
-                ydl_opts['retry_sleep'] = lambda n: min(30 * (2 ** (n - 1)), 3600)  # Exponential backoff up to 1 hour
+                # Force MP4 as preferred output format for video downloads
+                if not kwargs.get('audio_only', False):
+                    ydl_opts['merge_output_format'] = 'mp4'
+                    # Prefer merged output when possible
+                    ydl_opts['postprocessor_args'] = ['-c', 'copy']
+                    # Use specific container formats with better compatibility
+                    if not kwargs.get('format_id'):
+                        # Use a format string that prefers MP4/M4A combinations for better compatibility
+                        ydl_opts['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
 
-                # Register this download as active for resource management
-                with self._download_lock:
-                    self._active_downloads.add(url)
-
-                # Set download start time at the beginning
-                self.download_start_time = time.time()
-
-                # Perform the actual download with robust error handling
-                try:
+                # Extract info with timeout and caching
+                with timer("Media info extraction", silent=True):
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        # Store info dict for post-processing
-                        if not kwargs.get('no_cache', False):
-                            downloaded_info = ydl.extract_info(url, download=False)
-                            if downloaded_info:
-                                # Store by expected output path to access during post-processing
-                                expected_filename = ydl.prepare_filename(downloaded_info)
-                                self._current_info_dict[expected_filename] = downloaded_info
-
-                        ydl.download([url])
-
-                        # Successful download
-                        logging.info(f"Successfully downloaded media from {url}")
-                        return True
-
-                except KeyboardInterrupt:
-                    print(f"\n{Fore.YELLOW}Download cancelled by user{Style.RESET_ALL}")
-                    logging.info("Download cancelled by user")
-                    return False
-
-                except yt_dlp.utils.DownloadError as e:
-                    error_msg = str(e)
-                    logging.error(f"Download Error: {error_msg}")
-
-                    # Handle connection-related errors with retry logic
-                    if any(err_type in error_msg.lower() for err_type in ['connection', 'timeout', 'network', 'ssl', 'reset']):
-                        retry_count += 1
-                        if self._handle_connection_error(e, url, retry_count, max_retries):
-                            continue  # Retry the download
-                        
-                    # Show helpful error explanations and recovery suggestions for non-connection errors
-                    if "unavailable" in error_msg.lower():
-                        print(f"{Fore.YELLOW}This media may have been removed or is private.{Style.RESET_ALL}")
-                    elif "ffmpeg" in error_msg.lower():
-                        print(f"{Fore.YELLOW}FFmpeg error. Try running 'python setup_ffmpeg.py' to fix.{Style.RESET_ALL}")
-                    elif any(net_err in error_msg.lower() for net_err in ["timeout", "connection", "network"]):
-                        print(f"{Fore.YELLOW}Network error. Check your internet connection and try again.{Style.RESET_ALL}")
-                    else:
-                        print(f"{Fore.RED}Download error: {error_msg}{Style.RESET_ALL}")
-                    return False
-
-                except Exception as e:
-                    # Handle general exceptions with the same retry logic
-                    retry_count += 1
-                    if any(err_type in type(e).__name__ for err_type in ['Connection', 'Timeout', 'SSL', 'HTTP']):
-                        if self._handle_connection_error(e, url, retry_count, max_retries):
-                            continue  # Retry the download
-                        
-                    logging.error(f"Unexpected error during download: {str(e)}")
-                    print(f"{Fore.RED}Unexpected error: {str(e)}{Style.RESET_ALL}")
-                    return False
-
-                finally:
-                    # Unregister from active downloads
-                    with self._download_lock:
-                        self._active_downloads.discard(url)
-                    self.current_download_url = None
-                    self.download_start_time = None
-
-            except Exception as e:
-                if info_spinner:
-                    info_spinner.stop(clear=False, success=False)
-                logging.error(f"Unexpected error: {str(e)}")
-                print(f"{Fore.RED}Unexpected error: {str(e)}{Style.RESET_ALL}")
+                        try:
+                            # First try quick extraction 
+                            info = ydl.extract_info(url, download=False, process=False)
+                            
+                            # If it's a single video, get full info
+                            if info and info.get('_type') != 'playlist':
+                                info_spinner.update_status("Getting detailed info")
+                                info = ydl.extract_info(url, download=False)
+                                
+                                # Cache successful info for future use
+                                self.download_cache.save_info(url, info)
+                        except Exception as e:
+                            info_spinner.stop(clear=False, success=False)
+                            print(f"{Fore.RED}Error fetching media info: {str(e)}{Style.RESET_ALL}")
+                            return False
+        
+            # Stop the spinner with success indicator
+            info_spinner.stop(clear=True)
+            
+            if not info:
+                print(f"{Fore.RED}Could not fetch media information for: {url}{Style.RESET_ALL}")
                 return False
-    
-    # If we reach here after exhausting all retries
-        print(f"\n{Fore.RED}Failed to download after {max_retries} attempts.{Style.RESET_ALL}")
-        return False
+                
+            # Show media information
+            self._display_media_info(info)
+            
+            # Check for playlists and handle accordingly
+            if info.get('_type') == 'playlist':
+                return self._handle_playlist(url, info, **kwargs, audio_channels=audio_channels)
+                
+            # Check system resources before large downloads
+            est_size = estimate_download_size(info)
+            if est_size > 500 * 1024 * 1024 and not is_memory_sufficient():  # > 500MB
+                print(f"{Fore.YELLOW}⚠️ Warning: System memory is low. Download may be slow or fail.{Style.RESET_ALL}")
+                proceed = input(f"{Fore.CYAN}Continue anyway? (y/n): {Style.RESET_ALL}").lower().startswith('y')
+                if not proceed:
+                    return False
+                    
+            # Prepare download options with dynamic chunk size
+            ydl_opts = self.get_download_options(
+                url, 
+                kwargs.get('audio_only', False),
+                kwargs.get('resolution'),
+                kwargs.get('format_id'),
+                kwargs.get('filename'),
+                kwargs.get('audio_format', 'opus'),  # Default to opus instead of mp3
+                kwargs.get('no_retry', False),
+                kwargs.get('throttle'),
+                kwargs.get('use_aria2c', False),
+                audio_channels  # Pass audio channels configuration
+            )
+            # Set optimal chunk size based on system memory
+            ydl_opts['http_chunk_size'] = self._adaptive_chunk_size()
+            
+            # Register this download as active for resource management
+            with self._download_lock:
+                self._active_downloads.add(url)
+            
+            # Set download start time at the beginning
+            self.download_start_time = time.time()
+
+            # Perform the actual download with robust error handling
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    # Store info dict for post-processing
+                    if not kwargs.get('no_cache', False):
+                        downloaded_info = ydl.extract_info(url, download=False)
+                        if downloaded_info:
+                            # Store by expected output path to access during post-processing
+                            expected_filename = ydl.prepare_filename(downloaded_info)
+                            self._current_info_dict[expected_filename] = downloaded_info
+                    
+                    ydl.download([url])
+                    return True
+            except KeyboardInterrupt:
+                print(f"\n{Fore.YELLOW}Download cancelled by user{Style.RESET_ALL}")
+                return False
+            except yt_dlp.utils.DownloadError as e:
+                error_msg = str(e)
+                logging.error("Download Error: %s", error_msg)
+                
+                # Show helpful error explanations and recovery suggestions
+                if "unavailable" in error_msg.lower():
+                    print(f"{Fore.YELLOW}This media may have been removed or is private.{Style.RESET_ALL}")
+                elif "ffmpeg" in error_msg.lower():
+                    print(f"{Fore.YELLOW}FFmpeg error. Try running 'python setup_ffmpeg.py' to fix.{Style.RESET_ALL}")
+                elif any(net_err in error_msg.lower() for net_err in ["timeout", "connection", "network"]):
+                    print(f"{Fore.YELLOW}Network error. Check your internet connection and try again.{Style.RESET_ALL}")
+                return False
+            finally:
+                # Unregister from active downloads
+                with self._download_lock:
+                    self._active_downloads.discard(url)
+                self.current_download_url = None
+                self.download_start_time = None
+                
+        except Exception as e:
+            info_spinner.stop(clear=False, success=False)
+            print(f"{Fore.RED}Unexpected error: {str(e)}{Style.RESET_ALL}")
+            return False
 
     def validate_metadata(self, info: Dict[str, Any]) -> None:
         """Ensure required metadata fields exist"""
@@ -2650,7 +2576,28 @@ class DownloadManager:
         
         print(f"\n{Fore.GREEN}Batch download complete. {sum(results)} of {total} items downloaded successfully.{Style.RESET_ALL}")
         return results
+        # Add this to the DownloadManager class
 
+    def _cleanup_fragment_files(self, directory: str, base_filename: str) -> None:
+        """Clean up any orphaned fragment files after a download completes"""
+        try:
+            basename = os.path.basename(base_filename)
+            name_without_ext = os.path.splitext(basename)[0]
+        
+            # Look for fragment files with pattern: name.f123.ext
+            pattern = re.compile(fr"{re.escape(name_without_ext)}\.f\d+\..+")
+        
+            for filename in os.listdir(directory):
+                if pattern.match(filename):
+                    fragment_path = os.path.join(directory, filename)
+                    logging.debug(f"Removing orphaned fragment file: {fragment_path}")
+                    try:
+                        os.remove(fragment_path)
+                    except OSError as e:
+                        logging.debug(f"Failed to remove fragment file: {e}")
+        except Exception as e:
+            logging.debug(f"Error during fragment cleanup: {e}")
+    
     def interactive_mode(self) -> None:
         """Interactive mode for user-friendly operation"""
         print_banner()
