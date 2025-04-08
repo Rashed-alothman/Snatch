@@ -2185,9 +2185,9 @@ class DownloadManager:
         # Check network connectivity before starting download
         network_spinner = EnhancedSpinnerAnimation("Checking network connection", style="dots", color="cyan")
         network_spinner.start()
-        
+
         is_connected, message = check_network_connectivity()
-        
+
         if not is_connected:
             network_spinner.stop(clear=False, success=False)
             print(f"{Fore.RED}Network Error: {message}{Style.RESET_ALL}")
@@ -2195,26 +2195,26 @@ class DownloadManager:
             return False
         else:
             network_spinner.stop(clear=True)
-            
+
         # Set the current download URL for session tracking
         self.current_download_url = url
-        
+
         # Use enhanced spinner for better user feedback
         info_spinner = EnhancedSpinnerAnimation("Analyzing media", style="aesthetic")
-        
+
         # Audio configuration selection for interactive mode
         audio_channels = kwargs.get('audio_channels', 2)  # Default to stereo (2 channels)
-        
+
         # For audio downloads in interactive mode, prompt for channel configuration
         if kwargs.get('audio_only', False) and not kwargs.get('non_interactive', False):
             info_spinner.start()
             time.sleep(0.5)  # Brief pause
             info_spinner.stop(clear=True)
-            
+
             print(f"\n{Fore.CYAN}Audio Channel Configuration:{Style.RESET_ALL}")
             print(f"1. Stereo (2.0) - Standard quality, compatible with all devices")
             print(f"2. Surround (7.1) - High quality for home theater systems")
-            
+
             try:
                 choice = input(f"{Fore.GREEN}Select audio configuration [1-2] (default: 1): {Style.RESET_ALL}")
                 if choice == '2':
@@ -2224,11 +2224,12 @@ class DownloadManager:
                     print(f"{Fore.YELLOW}Selected: Stereo{Style.RESET_ALL}")
             except (KeyboardInterrupt, EOFError):
                 print(f"\n{Fore.YELLOW}Using default stereo configuration{Style.RESET_ALL}")
-        
-         # Get max retries from config or use default
+
+        # Get max retries from config or use default
         max_retries = kwargs.get('max_retries', MAX_RETRIES)
         retry_count = 0
-    
+        info = None  # Initialize info to avoid uninitialized variable access
+
         while retry_count <= max_retries:
             try:
                 # First check cache for info
@@ -2240,7 +2241,7 @@ class DownloadManager:
                     info = cached_info
                 else:
                     info_spinner.start()
-                
+
                     # Prepare options with smart defaults based on content
                     ydl_opts = self.get_download_options(
                         url, 
@@ -2255,19 +2256,19 @@ class DownloadManager:
                         audio_channels  # Pass audio channels configuration
                     )
                     ydl_opts['quiet'] = True  # Silence yt-dlp output during info extraction
-            except Exception as e:
+
                     # Extract info with timeout and caching
                     with timer("Media info extraction", silent=True):
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                             try:
                                 # First try quick extraction 
                                 info = ydl.extract_info(url, download=False, process=False)
-                            
+
                                 # If it's a single video, get full info
                                 if info and info.get('_type') != 'playlist':
                                     info_spinner.update_status("Getting detailed info")
                                     info = ydl.extract_info(url, download=False)
-                                
+
                                     # Cache successful info for future use
                                     self.download_cache.save_info(url, info)
                             except Exception as e:
@@ -2280,104 +2281,127 @@ class DownloadManager:
                                         continue
                                 print(f"{Fore.RED}Error fetching media info: {str(e)}{Style.RESET_ALL}")
                                 return False
-                            
-        
-            # Stop the spinner with success indicator
-            info_spinner.stop(clear=True)
-            
-            if not info:
-                print(f"{Fore.RED}Could not fetch media information for: {url}{Style.RESET_ALL}")
-                return False
-                
-            # Show media information
-            self._display_media_info(info)
-            
-            # Check for playlists and handle accordingly
-            if info.get('_type') == 'playlist':
-                return self._handle_playlist(url, info, **kwargs, audio_channels=audio_channels)
-                
-            # Check system resources before large downloads
-            est_size = estimate_download_size(info)
-            if est_size > 500 * 1024 * 1024 and not is_memory_sufficient():  # > 500MB
-                print(f"{Fore.YELLOW}⚠️ Warning: System memory is low. Download may be slow or fail.{Style.RESET_ALL}")
-                proceed = input(f"{Fore.CYAN}Continue anyway? (y/n): {Style.RESET_ALL}").lower().startswith('y')
-                if not proceed:
-                    return False
-                    
-            # Prepare download options with dynamic chunk size
-            ydl_opts = self.get_download_options(
-                url, 
-                kwargs.get('audio_only', False),
-                kwargs.get('resolution'),
-                kwargs.get('format_id'),
-                kwargs.get('filename'),
-                kwargs.get('audio_format', 'opus'),  # Default to opus instead of mp3
-                kwargs.get('no_retry', False),
-                kwargs.get('throttle'),
-                kwargs.get('use_aria2c', False),
-                audio_channels  # Pass audio channels configuration
-            )
-            # Set optimal chunk size based on system memory
-            ydl_opts['http_chunk_size'] = self._adaptive_chunk_size()
-            ydl_opts['socket_timeout'] = 120  # Increase timeout from 60 to 120 seconds
-            ydl_opts['retries'] = 20  # Increase from default
-            ydl_opts['fragment_retries'] = 20  # Increase from default
-            ydl_opts['retry_sleep'] = lambda n: min(30 * (2 ** (n - 1)), 3600)  # Exponential backoff up to 1 hour
-            
-            # Register this download as active for resource management
-            with self._download_lock:
-                self._active_downloads.add(url)
-            
-            # Set download start time at the beginning
-            self.download_start_time = time.time()
 
-            # Perform the actual download with robust error handling
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    # Store info dict for post-processing
-                    if not kwargs.get('no_cache', False):
-                        downloaded_info = ydl.extract_info(url, download=False)
-                        if downloaded_info:
-                            # Store by expected output path to access during post-processing
-                            expected_filename = ydl.prepare_filename(downloaded_info)
-                            self._current_info_dict[expected_filename] = downloaded_info
-                    
-                    ydl.download([url])
-                    return True
-            except KeyboardInterrupt:
-                print(f"\n{Fore.YELLOW}Download cancelled by user{Style.RESET_ALL}")
-                return False
-            except yt_dlp.utils.DownloadError as e:
-                error_msg = str(e)
-                logging.error("Download Error: %s", error_msg)
-                
-                # Show helpful error explanations and recovery suggestions
-                if "unavailable" in error_msg.lower():
-                    print(f"{Fore.YELLOW}This media may have been removed or is private.{Style.RESET_ALL}")
-                elif "ffmpeg" in error_msg.lower():
-                    print(f"{Fore.YELLOW}FFmpeg error. Try running 'python setup_ffmpeg.py' to fix.{Style.RESET_ALL}")
-                elif any(net_err in error_msg.lower() for net_err in ["timeout", "connection", "network"]):
-                    print(f"{Fore.YELLOW}Network error. Check your internet connection and try again.{Style.RESET_ALL}")
-                return False
-            except Exception as e:
-                # Handle general exceptions with the same retry logic
-                retry_count += 1
-                if any(err_type in type(e).__name__ for err_type in ['Connection', 'Timeout', 'SSL', 'HTTP']):
-                    if self._handle_connection_error(e, url, retry_count, max_retries):
-                        continue  # Retry the download
-                
-                logging.error(f"Unexpected error during download: {str(e)}")
-                print(f"{Fore.RED}Unexpected error: {str(e)}{Style.RESET_ALL}")
-                return False
-            finally:
-                # Unregister from active downloads
+                # Stop the spinner with success indicator
+                info_spinner.stop(clear=True)
+
+                if not info:
+                    print(f"{Fore.RED}Could not fetch media information for: {url}{Style.RESET_ALL}")
+                    return False
+
+                # Show media information
+                self._display_media_info(info)
+
+                # Check for playlists and handle accordingly
+                if info.get('_type') == 'playlist':
+                    return self._handle_playlist(url, info, **kwargs, audio_channels=audio_channels)
+
+                # Check system resources before large downloads
+                est_size = estimate_download_size(info)
+                if est_size > 500 * 1024 * 1024 and not is_memory_sufficient():  # > 500MB
+                    print(f"{Fore.YELLOW}⚠️ Warning: System memory is low. Download may be slow or fail.{Style.RESET_ALL}")
+                    proceed = input(f"{Fore.CYAN}Continue anyway? (y/n): {Style.RESET_ALL}").lower().startswith('y')
+                    if not proceed:
+                        return False # Exit the download process if user chooses not to continue
+
+                # Prepare download options with dynamic chunk size
+                ydl_opts = self.get_download_options(
+                    url, 
+                    kwargs.get('audio_only', False),
+                    kwargs.get('resolution'),
+                    kwargs.get('format_id'),
+                    kwargs.get('filename'),
+                    kwargs.get('audio_format', 'opus'),  # Default to opus instead of mp3
+                    kwargs.get('no_retry', False),
+                    kwargs.get('throttle'),
+                    kwargs.get('use_aria2c', False),
+                    audio_channels  # Pass audio channels configuration
+                )
+                # Set optimal chunk size based on system memory
+                ydl_opts['http_chunk_size'] = self._adaptive_chunk_size()
+                ydl_opts['socket_timeout'] = 120  # Increase timeout from 60 to 120 seconds
+                ydl_opts['retries'] = 20  # Increase from default
+                ydl_opts['fragment_retries'] = 20  # Increase from default
+                ydl_opts['retry_sleep'] = lambda n: min(30 * (2 ** (n - 1)), 3600)  # Exponential backoff up to 1 hour
+
+                # Register this download as active for resource management
                 with self._download_lock:
-                    self._active_downloads.discard(url)
-                self.current_download_url = None
-                self.download_start_time = None
-                info_spinner.stop(clear=False, success=False)
+                    self._active_downloads.add(url)
+
+                # Set download start time at the beginning
+                self.download_start_time = time.time()
+
+                # Perform the actual download with robust error handling
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        # Store info dict for post-processing
+                        if not kwargs.get('no_cache', False):
+                            downloaded_info = ydl.extract_info(url, download=False)
+                            if downloaded_info:
+                                # Store by expected output path to access during post-processing
+                                expected_filename = ydl.prepare_filename(downloaded_info)
+                                self._current_info_dict[expected_filename] = downloaded_info
+
+                        ydl.download([url])
+
+                        # Successful download
+                        logging.info(f"Successfully downloaded media from {url}")
+                        return True
+
+                except KeyboardInterrupt:
+                    print(f"\n{Fore.YELLOW}Download cancelled by user{Style.RESET_ALL}")
+                    logging.info("Download cancelled by user")
+                    return False
+
+                except yt_dlp.utils.DownloadError as e:
+                    error_msg = str(e)
+                    logging.error(f"Download Error: {error_msg}")
+
+                    # Handle connection-related errors with retry logic
+                    if any(err_type in error_msg.lower() for err_type in ['connection', 'timeout', 'network', 'ssl', 'reset']):
+                        retry_count += 1
+                        if self._handle_connection_error(e, url, retry_count, max_retries):
+                            continue  # Retry the download
+                        
+                    # Show helpful error explanations and recovery suggestions for non-connection errors
+                    if "unavailable" in error_msg.lower():
+                        print(f"{Fore.YELLOW}This media may have been removed or is private.{Style.RESET_ALL}")
+                    elif "ffmpeg" in error_msg.lower():
+                        print(f"{Fore.YELLOW}FFmpeg error. Try running 'python setup_ffmpeg.py' to fix.{Style.RESET_ALL}")
+                    elif any(net_err in error_msg.lower() for net_err in ["timeout", "connection", "network"]):
+                        print(f"{Fore.YELLOW}Network error. Check your internet connection and try again.{Style.RESET_ALL}")
+                    else:
+                        print(f"{Fore.RED}Download error: {error_msg}{Style.RESET_ALL}")
+                    return False
+
+                except Exception as e:
+                    # Handle general exceptions with the same retry logic
+                    retry_count += 1
+                    if any(err_type in type(e).__name__ for err_type in ['Connection', 'Timeout', 'SSL', 'HTTP']):
+                        if self._handle_connection_error(e, url, retry_count, max_retries):
+                            continue  # Retry the download
+                        
+                    logging.error(f"Unexpected error during download: {str(e)}")
+                    print(f"{Fore.RED}Unexpected error: {str(e)}{Style.RESET_ALL}")
+                    return False
+
+                finally:
+                    # Unregister from active downloads
+                    with self._download_lock:
+                        self._active_downloads.discard(url)
+                    self.current_download_url = None
+                    self.download_start_time = None
+
+            except Exception as e:
+                if info_spinner:
+                    info_spinner.stop(clear=False, success=False)
+                logging.error(f"Unexpected error: {str(e)}")
                 print(f"{Fore.RED}Unexpected error: {str(e)}{Style.RESET_ALL}")
-            return False
+                return False
+    
+    # If we reach here after exhausting all retries
+        print(f"\n{Fore.RED}Failed to download after {max_retries} attempts.{Style.RESET_ALL}")
+        return False
 
     def validate_metadata(self, info: Dict[str, Any]) -> None:
         """Ensure required metadata fields exist"""
