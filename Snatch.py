@@ -64,7 +64,7 @@ class CustomHelpFormatter(argparse.HelpFormatter):
 # Constants moved to top for better organization and maintainability
 CONFIG_FILE = 'config.json'
 FLAC_EXT = '.flac'
-VERSION = "1.4.0"  # Centralized version definition
+VERSION = "1.5.0"  # Centralized version definition
 LOG_FILE = 'download_log.txt'
 SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 # Default throttling and retry constants
@@ -393,7 +393,7 @@ def print_banner():
 ║  {Fore.GREEN}   /    |         {Fore.YELLOW}                                {Fore.CYAN}      ║
 ║  {Fore.GREEN}  *___/||         {Fore.YELLOW}                                {Fore.CYAN}      ║
 ╠{'═' * 58}╣
-║     {Fore.GREEN}■ {Fore.WHITE}Version: {Fore.YELLOW}1.3.0{Fore.WHITE}                                   {Fore.CYAN}  ║
+║     {Fore.GREEN}■ {Fore.WHITE}Version: {Fore.YELLOW}1.5.0{Fore.WHITE}                                   {Fore.CYAN}  ║
 ║     {Fore.GREEN}■ {Fore.WHITE}GitHub : {Fore.YELLOW}github.com/Rashed-alothman/Snatch{Fore.WHITE}        {Fore.CYAN} ║
 ╠{'═' * 58}╣
 ║  {Fore.YELLOW}Type {Fore.GREEN}help{Fore.YELLOW} or {Fore.GREEN}?{Fore.YELLOW} for commands  {Fore.WHITE}|  {Fore.YELLOW}Press {Fore.GREEN}Ctrl+C{Fore.YELLOW} to cancel  {Fore.CYAN}║
