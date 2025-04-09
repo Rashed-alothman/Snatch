@@ -1509,6 +1509,13 @@ class DownloadManager:
             return True
         
         try:
+            # Quick header check first (much faster)
+            with open(filepath, 'rb') as f:
+                header = f.read(4)
+                if header != b'fLaC':
+                    logging.error("Invalid FLAC signature")
+                    return False
+                
             # Load FLAC file once and reuse for all checks
             audio = FLAC(filepath)
             
@@ -1679,25 +1686,56 @@ class DownloadManager:
             'ignoreerrors': True,
             'continue': True,
             'postprocessor_hooks': [self.post_process_hook],
-            'concurrent_fragment_downloads': min(10, os.cpu_count() or 4),
+            'concurrent_fragment_downloads': 4,# Reduced to prevent memory issues
             'no_url_cleanup': True,
             'clean_infojson': False,
             'prefer_insecure': True,
-            'fragment_retries': 10,
-            'socket_timeout': 60,
-            'http_chunk_size': 10485760,
+            'fragment_retries': 3,
+            'socket_timeout': 15,
+            'http_chunk_size': 5242880,
             'merge_output_format': 'mp4',  # Use MP4 as default output format for better compatibility
             'keepvideo': False,  
-            'extractor_retries': 5,          # Retry info extraction
-            'file_access_retries': 5,        # Retry on file access issues
+            'extractor_retries': 3,          # Retry info extraction
+            'file_access_retries': 3,        # Retry on file access issues
             'skip_unavailable_fragments': True,  # Skip unavailable fragments rather than failing
             'force_generic_extractor': False,    # Fallback to generic extractor if specific one fails
             'retry_sleep_functions': {'http': lambda attempt: 5 * (2 ** (attempt - 1))}, # Exponential backoff
-            'network_retries': 20,         # Retry on network errors
+            'network_retries': 3,         # Retry on network errors
             'allow_unplayable_formats': False,  # Avoid formats that might cause merge issues
             'check_formats': True,             # Verify formats before downloading
+            'quiet': True,  # Suppress verbose output for speed
+            'no_warnings': False,  # Keep important warnings
+            'postprocessor_args': [ 
+                '-c:v', 'copy', 
+                '-c:a', 'copy',
+                '-movflags', '+faststart',
+                '-max_muxing_queue_size', '9999' ],  # Faster processing
         }
-        
+        # Disable thumbnail downloading completely to improve speed
+        self._download_thumbnail = lambda url, dest: False
+        # For faster downloads with aria2c
+        if use_aria2c:
+            # For faster downloads
+            if use_aria2c and self._check_aria2c_available():
+                options['external_downloader'] = 'aria2c'
+            options['external_downloader_args'] = [
+                '--min-split-size=1M', 
+                '--max-connection-per-server=32',  # Significantly increased connections
+                '--max-concurrent-downloads=16',   # More concurrent downloads
+                '--split=16',                      # Split downloads into more parts
+                '--file-allocation=none',          # Skip file allocation for speed
+                '--optimize-concurrent-downloads=true',  # Auto-optimize concurrency
+                '--auto-file-renaming=false',      # Don't rename files
+                '--allow-overwrite=true',          # Allow overwriting files
+                '--disable-ipv6'                   # Disable IPv6 for faster connections
+            ]
+            logging.info("Using aria2c with optimized settings for maximum speed")
+        else:
+            # If aria2c not available, optimize native downloader
+            options['concurrent_fragment_downloads'] = min(24, os.cpu_count() or 4)
+            options['http_chunk_size'] = 20971520  # 20MB chunks for faster downloads
+    
+
         # Handle no_retry option
         if no_retry:
             options['retries'] = 0
@@ -1735,14 +1773,36 @@ class DownloadManager:
                 #temp_format = '%(title)s.temp.wav'
                 # Build FFmpeg executable path
                 ffmpeg_bin = os.path.join(self.config["ffmpeg_location"], "ffmpeg")
-                exec_cmd = (
-            f'"{ffmpeg_bin}" -i "%(filepath)s" '
-            f'-c:a flac -compression_level 12 -sample_fmt s32 '
-            f'-ar 96000 -ac {audio_channels} -bits_per_raw_sample 24 -vn '
-            f'-af "loudnorm=I=-14:TP=-2:LRA=7,aresample=resampler=soxr:precision=28:dither_method=triangular" '
-            f'-metadata encoded_by="Snatch" '
-            f'"%(filepath)s.flac" && if exist "%(filepath)s" del "%(filepath)s"'
-        )
+                if audio_channels == 8:  # 7.1 surround
+                    # Optimized 7.1 surround settings
+                    exec_cmd = (
+                        f'"{ffmpeg_bin}" -i "%(filepath)s" '
+                        f'-c:a flac -compression_level 8 -sample_fmt s32 '
+                        f'-ar 96000 -ac 8 -bits_per_raw_sample 24 -vn '
+                        # Use a proper channel mapping filter that doesn't rely on FL/FR input names
+                        f'-af "aformat=channel_layouts=stereo[stereo]; '
+                        # Create a proper 7.1 upmix from stereo using pan filter
+                        f'[stereo]pan=7.1|FL=c0|FR=c1|FC=0.5*c0+0.5*c1|LFE=0.5*c0+0.5*c1|'
+                        f'BL=0.7*c0|BR=0.7*c1|SL=0.5*c0|SR=0.5*c1,'
+                        f'loudnorm=I=-16:TP=-1.5:LRA=11:measured_I=-27:measured_TP=-4:measured_LRA=15:linear=true:dual_mono=false,'
+                        f'aresample=resampler=soxr:precision=32:dither_method=triangular_hp:filter_size=256" '
+                        f'-metadata encoded_by="Snatch" '
+                        f'-metadata SURROUND="7.1" '
+                        f'-metadata CHANNELS="8" '
+                        f'-metadata BITDEPTH="24" '
+                        f'-metadata SAMPLERATE="96000" '
+                        f'"%(filepath)s.flac" && del "%(filepath)s"'
+                    )
+                else:  # Standard stereo
+                    exec_cmd = (
+                        f'"{ffmpeg_bin}" -i "%(filepath)s" '
+                        f'-c:a flac -compression_level 8 -sample_fmt s32 '
+                        f'-ar 48000 -ac {audio_channels} -bits_per_sample 24 -vn '
+                        f'-af "loudnorm=I=-14:TP=-2:LRA=7,aresample=resampler=soxr:precision=24:dither_method=triangular" '
+                        f'-metadata encoded_by="Snatch" '
+                        f'"%(filepath)s.flac" && del "%(filepath)s"'
+                    )
+
                 options['postprocessors'] = [
                     {
                         'key': 'FFmpegExtractAudio',
@@ -1778,16 +1838,45 @@ class DownloadManager:
                     'preferredcodec': audio_format,
                     'preferredquality': preferredquality,
                 },{
-                    'key': 'EmbedThumbnail',
-                    'already_have_thumbnail': False,
-                },{
                     'key': 'FFmpegMetadata',
                     'add_metadata': True,
+                },{
+                    #'key': 'EmbedThumbnail',
+                    #'already_have_thumbnail': False,
                 }]
         elif resolution:
             options['format'] = f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
-        
+        else:
+            options['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
+            if not audio_only:
+                
+                options['merge_output_format'] = 'mp4'
+                # Don't keep original streams
+                options['keepvideo'] = False
         return options
+    def _check_memory_pressure(self) -> None:
+        """Monitor and respond to memory pressure during downloads"""
+        try:
+            vm = psutil.virtual_memory()
+            # Take action if memory usage is high
+            if vm.percent > 80:
+                # Force garbage collection
+                import gc
+                gc.collect()
+
+                # Clear caches
+                self._current_info_dict.clear()
+                self.download_cache._cleanup_if_needed()
+
+                # If memory is critically high, pause a moment
+                if vm.percent > 85:
+                    time.sleep(0.5)  # Brief pause to let system recover
+
+                    # Close file handles and other resources
+                    gc.collect(2)  # Full collection
+
+        except Exception:
+            pass  # Fail silently
 
     def _download_thumbnail(self, url: str, destination: str) -> bool:
         """Download thumbnail from URL to destination path"""
@@ -2211,7 +2300,7 @@ class DownloadManager:
             if cached_info:
                 info_spinner.update_message("Using cached media information")
                 info_spinner.start()
-                time.sleep(0.5)  # Brief pause to show the cached info message
+                time.sleep(0.1)  # Brief pause to show the cached info message
                 info = cached_info
             else:
                 info_spinner.start()
@@ -2256,7 +2345,7 @@ class DownloadManager:
 
                                 # Cache successful info for future use
                                 self.download_cache.save_info(url, serializable_info)
-                                
+
                         except Exception as e:
                             info_spinner.stop(clear=False, success=False)
                             print(f"{Fore.RED}Error fetching media info: {str(e)}{Style.RESET_ALL}")
