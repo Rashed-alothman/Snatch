@@ -788,11 +788,14 @@ def sanitize_filename(filename: str) -> str:
     Create a sanitized version of a filename that works across platforms.
     Removes illegal characters and limits length.
     """
+    # Replace problematic characters including Unicode special chars
+    illegal_chars = r'[\\/*?:"<>|⧸⁄∕⧵＼／]'  # Added more Unicode slash variants
+    
     # Normalize unicode characters
     filename = unicodedata.normalize('NFKD', filename)
     
     # Replace characters that aren't allowed in filenames
-    filename = re.sub(SAFE_FILENAME_CHARS, '_', filename)
+    filename = re.sub(illegal_chars, '_', filename)
     
     # Replace multiple spaces and underscores with a single one
     filename = re.sub(r'[_ ]+', ' ', filename).strip()
@@ -1269,9 +1272,6 @@ class DownloadManager:
         self.session_manager = SessionManager() # Initialize session manager
         # Store info_dict for post-processing
         self._current_info_dict = {}
-        # Add temporary directory for thumbnails
-        self._temp_dir = Path(tempfile.gettempdir()) / "snatch_thumbnails"
-        os.makedirs(self._temp_dir, exist_ok=True)
 
     def setup_logging(self):
         """Set up logging with console and file handlers"""
@@ -1334,7 +1334,7 @@ class DownloadManager:
 
     def progress_hook(self, d: Dict[str, Any]) -> None:
 
-        """Improved post-processing with metadata organization and thumbnail embedding"""
+        """Improved post-processing with metadata organization"""
         filename = d.get('filename', '')
         # Skip processing for temporary fragment files
         if filename and (
@@ -1661,14 +1661,15 @@ class DownloadManager:
         if filename:
             # Remove any existing extension from the filenam
             filename = os.path.splitext(filename)[0]
-            
-            # Sanitize the filename (remove invalid characters)
-            filename = re.sub(r'[\\/*?:"<>|]', '_', filename)
-            
-            # Set output template with the sanitized filename without extension
-            # yt-dlp will add the appropriate extension based on the final format
             output_template = f"{filename}.%(ext)s"
         
+            # Sanitize the filename (remove invalid characters)
+            filename = re.sub(r'[\\/*?:"<>|]', '_', filename)
+        else:
+            # Set output template with the sanitized filename without extension
+            # yt-dlp will add the appropriate extension based on the final format
+            output_template = sanitize_filename('%(title)s.%(ext)s')
+            
         # Adaptive format selection: if video download and no resolution/format_id provided
         if not audio_only and resolution is None and not format_id:
             speed = measure_network_speed()
@@ -1681,6 +1682,7 @@ class DownloadManager:
         
         options = {
             'outtmpl': os.path.join(output_path, output_template),
+            'restrictfilenames': True,  # Add this to ensure ytdlp also sanitizes filenames
             'ffmpeg_location': self.config['ffmpeg_location'],
             'progress_hooks': [self.progress_hook],
             'ignoreerrors': True,
@@ -1711,8 +1713,7 @@ class DownloadManager:
                 '-movflags', '+faststart',
                 '-max_muxing_queue_size', '9999' ],  # Faster processing
         }
-        # Disable thumbnail downloading completely to improve speed
-        self._download_thumbnail = lambda url, dest: False
+        
         # For faster downloads with aria2c
         if use_aria2c:
             # For faster downloads
@@ -1761,7 +1762,7 @@ class DownloadManager:
                 logging.info("Using aria2c as download engine")
             else:
                 logging.warning("aria2c not found, falling back to default downloader")
-
+        
         # Handle format_id explicitly if provided
         if format_id:
             options['format'] = format_id
@@ -1791,7 +1792,7 @@ class DownloadManager:
                         f'-metadata CHANNELS="8" '
                         f'-metadata BITDEPTH="24" '
                         f'-metadata SAMPLERATE="96000" '
-                        f'"%(filepath)s.flac" && del "%(filepath)s"'
+                        f'"%(filepath)s.flac" && powershell -Command "Remove-Item -LiteralPath \\"%(filepath)s\\" -Force"'
                     )
                 else:  # Standard stereo
                     exec_cmd = (
@@ -1800,7 +1801,7 @@ class DownloadManager:
                         f'-ar 48000 -ac {audio_channels} -bits_per_sample 24 -vn '
                         f'-af "loudnorm=I=-14:TP=-2:LRA=7,aresample=resampler=soxr:precision=24:dither_method=triangular" '
                         f'-metadata encoded_by="Snatch" '
-                        f'"%(filepath)s.flac" && del "%(filepath)s"'
+                        f'"%(filepath)s.flac" && powershell -Command "Remove-Item -LiteralPath \\"%(filepath)s\\" -Force"'
                     )
 
                 options['postprocessors'] = [
@@ -1840,9 +1841,6 @@ class DownloadManager:
                 },{
                     'key': 'FFmpegMetadata',
                     'add_metadata': True,
-                },{
-                    #'key': 'EmbedThumbnail',
-                    #'already_have_thumbnail': False,
                 }]
         elif resolution:
             options['format'] = f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
@@ -1878,276 +1876,8 @@ class DownloadManager:
         except Exception:
             pass  # Fail silently
 
-    def _download_thumbnail(self, url: str, destination: str) -> bool:
-        """Download thumbnail from URL to destination path"""
-        if not url:
-            logging.debug("No thumbnail URL provided")
-            return False
-            
-        try:
-            with requests.get(url, stream=True, timeout=10) as response:
-                response.raise_for_status()
-                
-                with open(destination, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                        
-            return os.path.exists(destination) and os.path.getsize(destination) > 0
-        except Exception as e:
-            logging.debug(f"Failed to download thumbnail: {e}")
-            return False
-
-    def _embed_thumbnail(self, audio_file: str, thumbnail_path: str) -> bool:
-        """Embed thumbnail into audio file using FFmpeg or mutagen based on file type"""
-        if not os.path.exists(audio_file) or not os.path.exists(thumbnail_path):
-            logging.debug("cannot embed thumbnail: audio_file or thumbnail does not exist")
-            return False
-            
-        ext = os.path.splitext(audio_file)[1].lower()
-        success = False
-        
-        try:
-            # FLAC files - use mutagen for better compatibility
-            if ext == '.flac':
-                audio = FLAC(audio_file)
-                with open(thumbnail_path, 'rb') as img_file:
-                    img_data = img_file.read()
-                
-                from mutagen.flac import Picture
-                pic = Picture()
-                pic.data = img_data
-                pic.type = 3  # Cover (front)
-                pic.mime = "image/jpeg"  # Assume JPEG, could detect from content
-                pic.desc = "Cover"
-                
-                audio.clear_pictures()
-                audio.add_picture(pic)
-                audio.save()
-                success = True
-                
-            # MP3 files - use mutagen
-            elif ext == '.mp3':
-                try:
-                    audio = ID3(audio_file)
-                except Exception as e:
-                    from mutagen.id3 import ID3NoHeaderError
-                    try:
-                        audio.ID3()
-                        audio.save(audio_file)
-                        audio = ID3(audio_file)
-                    except Exception as e:
-                        logging.debug(f"Failed to create ID3 header: {e}")
-                        return False  
-                    
-                with open(thumbnail_path, 'rb') as img_file:
-                    img_data = img_file.read()
-                from mutagen.id3 import APIC
-                # Remove existing cover art
-                audio.delall('APIC')
-                #add new cover art
-                audio.add(APIC(
-                encoding=3,  # UTF-8
-                mime="image/jpeg",  # Assume JPEG
-                type=3,  # Cover (front)
-                desc="Cover",
-                data=img_data
-            ))
-                audio.save()
-                success = True
-            # M4A/MP4 files - use mutagen
-            
-            elif ext == '.m4a':
-                audio = MP4(audio_file)
-                with open(thumbnail_path, 'rb') as img_file:
-                    img_data = img_file.read()
-            
-                from mutagen.mp4 import MP4Cover, MP4Tags
-                covertype = MP4Cover.FORMAT_JPEG
-                audio["covr"] = [MP4Cover(img_data, covertype)]
-                audio.save()
-                success = True
-                
-            # OGG/OPUS files - use mutagen
-            elif ext in ['.ogg', '.opus']:
-                if ext == '.ogg':
-                    audio = OggVorbis(audio_file)
-                else:
-                    from mutagen.oggopus import OggOpus
-                    audio = OggOpus(audio_file)
-                
-                with open(thumbnail_path, 'rb') as img_file:
-                    img_data = img_file.read()
-                
-                from base64 import b64encode
-                import base64
-            
-                # Clear existing metadata blocks
-                if 'metadata_block_picture' in audio:
-                    del audio['metadata_block_picture']
-            
-                # Create new metadata block
-                from PIL import Image
-                import io
-            
-                # Get image dimensions
-                with Image.open(thumbnail_path) as img:
-                    width, height = img.size
-                    mime = 'image/jpeg'
-            
-                # Create the metadata block picture
-                picture_data = (
-                    b'\x00\x00\x00\x03' +  # Picture type (3 = cover front)
-                    len(mime.encode()).to_bytes(4, 'big') + mime.encode() +  # MIME type
-                    b'\x00\x00\x00\x00' +  # Description length (0)
-                    width.to_bytes(4, 'big') +  # Width
-                    height.to_bytes(4, 'big') +  # Height
-                    b'\x00\x00\x00\x18' +  # Color depth (24 bits)
-                    b'\x00\x00\x00\x00'    # Indexed color (0 means not indexed)
-                )
-            
-                with open(thumbnail_path, 'rb') as f:
-                    img_data = f.read()
-            
-                picture_data += len(img_data).to_bytes(4, 'big') + img_data
-            
-                encoded_data = base64.b64encode(picture_data).decode('ascii')
-                audio["metadata_block_picture"] = [encoded_data]
-            
-                audio.save()
-                success = True
-            
-                
-            # For other formats, try FFmpeg as fallback
-            else:
-                ffmpeg_path = os.path.join(self.config['ffmpeg_location'], 'ffmpeg')
-                temp_output = f"{audio_file}.temp{ext}"
-                
-                command = [
-                    ffmpeg_path,
-                    '-i', audio_file,
-                    '-i', thumbnail_path,
-                    '-map', '0', 
-                    '-map', '1',
-                    '-c', 'copy',
-                    '-disposition:v', 'attached_pic',
-                    '-metadata:s:v', 'title=Album cover',
-                    '-metadata:s:v', 'comment=Cover (Front)',
-                    temp_output
-                ]
-                
-                process = subprocess.run(
-                    command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                
-                if process.returncode == 0 and os.path.exists(temp_output):
-                    # Replace original with the new file
-                    shutil.move(temp_output, audio_file)
-                    success = True
-                else:
-                    # Clean up if failed
-                    error_output = process.stderr.decode('utf-8', errors='replace')
-                    logging.debug(f"FFmpeg thumbnail embedding failed: {error_output}")
-
-            if success:
-                logging.info(f"Successfully embedded album art into {os.path.basename(audio_file)}")
-            
-            return success
-            
-        except Exception as e:
-            logging.debug(f"Failed to embed thumbnail: {e}")
-            return False
-        
-    def _process_audio_thumbnail(self, filename: str, info: Dict[str, Any]) -> None:
-        """Process and embed thumbnail for audio files"""
-        if not os.path.exists(filename):
-            logging.debug(f"Cannot process thumbnail: Audio file {filename} doesn't exist")
-            return
-            
-        # Find thumbnail URL
-        thumbnail_url = None
-        if info:
-            # Check for thumbnail in various locations within info dict
-            thumbnail_url = info.get('thumbnail')
-            
-            # If not in root, check thumbnails list
-            if not thumbnail_url and 'thumbnails' in info and isinstance(info['thumbnails'], list):
-                # Get the largest thumbnail
-                thumbnails = sorted(
-                    [t for t in info['thumbnails'] if isinstance(t, dict) and 'url' in t],
-                    key=lambda x: x.get('width', 0) * x.get('height', 0),
-                    reverse=True
-                )
-                if thumbnails:
-                    thumbnail_url = thumbnails[0]['url']
-        
-        if not thumbnail_url:
-            # Check if thumbnail was downloaded alongside the audio file
-            dirname = os.path.dirname(filename)
-            basename = os.path.splitext(os.path.basename(filename))[0]
-            # Check common thumbnail filenames
-            potential_thumbnails = [
-            os.path.join(dirname, f"{basename}.jpg"),
-            os.path.join(dirname, f"{basename}.jpeg"),
-            os.path.join(dirname, f"{basename}.png"),
-            os.path.join(dirname, f"{basename}.webp"),
-            os.path.join(dirname, "thumbnail.jpg"),
-            os.path.join(dirname, "cover.jpg")
-            ]
-            for thumb_path in potential_thumbnails:
-                if os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
-                    # Use existing thumbnail file
-                    thumb_spinner = EnhancedSpinnerAnimation("Embedding album artwork", style="aesthetic", color="magenta")
-                    thumb_spinner.start()
-                
-                    if self._embed_thumbnail(filename, thumb_path):
-                        thumb_spinner.stop(clear=False, success=True)
-                    else:
-                        thumb_spinner.stop(clear=False, success=False)
-                    return
-                logging.debug("No thumbnail URL or local thumbnail file found for embedding")
-            return
-            
-        # Create a unique thumbnail file path
-        thumbnail_file = os.path.join(
-            self._temp_dir,
-            f"thumb_{hashlib.md5(thumbnail_url.encode()).hexdigest()}.jpg"
-        )
-        
-        # Download the thumbnail
-        thumb_spinner = None
-        try:
-            thumb_spinner = EnhancedSpinnerAnimation("Downloading album artwork", style="aesthetic", color="magenta")
-            thumb_spinner.start()
-            
-            if self._download_thumbnail(thumbnail_url, thumbnail_file):
-                thumb_spinner.update_message("Embedding album artwork")
-                
-                # Embed the thumbnail
-                if self._embed_thumbnail(filename, thumbnail_file):
-                    thumb_spinner.stop(clear=False, success=True)
-                else:
-                    thumb_spinner.stop(clear=False, success=False)
-                    logging.debug("Failed to embed thumbnail")
-            else:
-                thumb_spinner.stop(clear=False, success=False)
-                logging.debug("Failed to download thumbnail")
-                
-        except Exception as e:
-            if thumb_spinner:
-                thumb_spinner.stop(clear=False, success=False)
-            logging.debug(f"Error processing thumbnail: {e}")
-        finally:
-            # Clean up temporary thumbnail file
-            try:
-                if os.path.exists(thumbnail_file):
-                    os.remove(thumbnail_file)
-            except Exception:
-                pass
-
     def post_process_hook(self, d: Dict[str, Any]) -> None:
-        """Improved post-processing with metadata organization and thumbnail embedding"""
+        """Improved post-processing with metadata organization"""
         if d['status'] == 'started':
             filename = d.get('filename', '')
             
@@ -2186,58 +1916,59 @@ class DownloadManager:
                         print(f"   - File Size: {filesize // 1024 // 1024} MB")
                         print("   - Compression Level: Maximum (12)")
                         
-                        # Get info dict for the current FLAC file
-                        info_dict = self._current_info_dict.get(filename, {})
-                        
-                        # Process thumbnail for FLAC
-                        self._process_audio_thumbnail(filename, info_dict)
                     else:
                         # Try to recover by reconverting
                         temp_wav = filename.replace(FLAC_EXT, '.temp.wav')
                         if os.path.exists(temp_wav):
                             print(f"{Fore.YELLOW}Attempting recovery of FLAC file...{Style.RESET_ALL}")
                             if self.convert_to_flac(temp_wav, filename):
-                                # Get info dict for the current FLAC file
-                                info_dict = self._current_info_dict.get(filename, {})
-                                
-                                # Process thumbnail for recovered FLAC
-                                self._process_audio_thumbnail(filename, info_dict)
+                                pass
                 except Exception as e:
                     print(f"{Fore.RED}✗ Error during FLAC verification: {str(e)}{Style.RESET_ALL}")
         
         # New: Handle file organization after download is finished
         elif d['status'] == 'finished':
             filename = d.get('filename', '')
-            if filename and os.path.exists(filename):
-                # Get info_dict for the current download if available
-                info_dict = self._current_info_dict.get(filename, {})
-                
-                # Process thumbnail for audio files (non-FLAC formats handled here)
-                ext = os.path.splitext(filename)[1].lower()
-                if ext in AUDIO_EXTENSIONS and ext != FLAC_EXT:  # FLAC already handled in 'started'
-                    self._process_audio_thumbnail(filename, info_dict)
-                
-                # Handle file organization if enabled
-                if self.config.get('organize', False) and self.file_organizer:
-                    print(f"\n{Fore.CYAN}Organizing file based on metadata...{Style.RESET_ALL}")
-                    
-                    # Create spinner for organization
-                    org_spinner = EnhancedSpinnerAnimation("Organizing file", style="aesthetic")
-                    org_spinner.start()
-                    
+            if filename:
+                # Ensure the filename is properly sanitized for Windows
+                sanitized = sanitize_filename(os.path.basename(filename))
+                dirname = os.path.dirname(filename)
+                sanitized_path = os.path.join(dirname, sanitized)
+                                # If the filename differs from sanitized version, rename
+                if os.path.exists(filename) and sanitized_path != filename:
                     try:
-                        new_filepath = self.file_organizer.organize_file(filename, info_dict)
-                        if new_filepath:
-                            org_spinner.stop(clear=False, success=True)
-                            # Show the new location
-                            print(f"{Fore.GREEN}File organized: {Style.RESET_ALL}")
-                            print(f"  {Fore.CYAN}→ {new_filepath}{Style.RESET_ALL}")
-                        else:
-                            org_spinner.stop(clear=False, success=False)
-                            print(f"{Fore.YELLOW}File organization failed{Style.RESET_ALL}")
+                        os.rename(filename, sanitized_path)
+                        logging.info(f"Renamed file to remove invalid characters: {sanitized}")
+                        # Update filename for further processing
+                        filename = sanitized_path
                     except Exception as e:
-                        org_spinner.stop(clear=False, success=False)
-                        print(f"{Fore.RED}Error organizing file: {str(e)}{Style.RESET_ALL}")
+                        logging.error(f"Failed to rename file: {e}")
+
+                if filename and os.path.exists(filename):
+                    # Get info_dict for the current download if available
+                    info_dict = self._current_info_dict.get(filename, {})
+
+                    # Handle file organization if enabled
+                    if self.config.get('organize', False) and self.file_organizer:
+                        print(f"\n{Fore.CYAN}Organizing file based on metadata...{Style.RESET_ALL}")
+
+                        # Create spinner for organization
+                        org_spinner = EnhancedSpinnerAnimation("Organizing file", style="aesthetic")
+                        org_spinner.start()
+
+                        try:
+                            new_filepath = self.file_organizer.organize_file(filename, info_dict)
+                            if new_filepath:
+                                org_spinner.stop(clear=False, success=True)
+                                # Show the new location
+                                print(f"{Fore.GREEN}File organized: {Style.RESET_ALL}")
+                                print(f"  {Fore.CYAN}→ {new_filepath}{Style.RESET_ALL}")
+                            else:
+                                org_spinner.stop(clear=False, success=False)
+                                print(f"{Fore.YELLOW}File organization failed{Style.RESET_ALL}")
+                        except Exception as e:
+                            org_spinner.stop(clear=False, success=False)
+                            print(f"{Fore.RED}Error organizing file: {str(e)}{Style.RESET_ALL}")
 
     def download(self, url: str, **kwargs) -> bool:
         """Download media with metadata extraction and organization"""
@@ -3354,7 +3085,7 @@ class DetailedProgressDisplay:
         bar = f"{bar_color}{'█' * filled_width}{Style.RESET_ALL}"
         bar += f"{Fore.WHITE}{'░' * (bar_width - filled_width)}{Style.RESET_ALL}"
         return f"{bar} {percent:5.1f}%"
-    
+
     def update(self, bytes_downloaded: int) -> None:
         """Update progress with newly downloaded bytes, with improved accuracy."""
         self.downloaded = bytes_downloaded
