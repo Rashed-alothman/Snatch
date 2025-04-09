@@ -1688,13 +1688,13 @@ class DownloadManager:
             'ignoreerrors': True,
             'continue': True,
             'postprocessor_hooks': [self.post_process_hook],
-            'concurrent_fragment_downloads': 4,# Reduced to prevent memory issues
+            'concurrent_fragment_downloads':min(16, os.cpu_count() or 4),# Reduced to prevent memory issues + new Increased from 4 to utilize more cores
             'no_url_cleanup': True,
             'clean_infojson': False,
             'prefer_insecure': True,
             'fragment_retries': 3,
-            'socket_timeout': 15,
-            'http_chunk_size': 5242880,
+            'socket_timeout': 30, # Increased from 15 to allow more time for large data transfers
+            'http_chunk_size': 10485760,
             'merge_output_format': 'mp4',  # Use MP4 as default output format for better compatibility
             'keepvideo': False,  
             'extractor_retries': 3,          # Retry info extraction
@@ -1742,8 +1742,9 @@ class DownloadManager:
             options['retries'] = 0
             options['fragment_retries'] = 0
         else:
-            options['retries'] = 5
-            options['retry_sleep'] = lambda n: 5 * (2 ** (n - 1))
+            options['retries'] = 3
+            options['retry_sleep'] = lambda n: 2 * n  # Linear growth: 2s, 4s, 6s
+            options['fragment_retries'] = 3  # Add explicit fragment retry limit
             
         # Handle throttle option
         if throttle:
@@ -1758,9 +1759,26 @@ class DownloadManager:
             # Check if aria2c is available
             if self._check_aria2c_available():
                 options['external_downloader'] = 'aria2c'
-                options['external_downloader_args'] = ['--min-split-size=1M', '--max-connection-per-server=16']
-                logging.info("Using aria2c as download engine")
+                options['external_downloader_args']  = [
+                '--min-split-size=1M',
+                '--max-connection-per-server=32',  # Increased from 16
+                '--max-concurrent-downloads=32',   # Increased from 16
+                '--split=32',                      # Increased from 16
+                '--file-allocation=none',
+                '--optimize-concurrent-downloads=true',
+                '--auto-file-renaming=false',
+                '--allow-overwrite=true',
+                '--disable-ipv6',
+                '--timeout=10',                   # Added timeout option
+                '--connect-timeout=10',           # Added connect timeout
+                '--http-no-cache=true',          # Added to bypass cache
+                '--max-tries=3',                 # Limit retries for speed
+                '--retry-wait=2'                 # Shorter retry wait time
+                    ]
+                logging.info("Using aria2c with optimized settings for maximum speed")
             else:
+                options['concurrent_fragment_downloads'] = min(32, os.cpu_count() or 4)
+                options['http_chunk_size'] = 20971520  # 20MB chunks for faster downloads
                 logging.warning("aria2c not found, falling back to default downloader")
         
         # Handle format_id explicitly if provided
@@ -1857,7 +1875,7 @@ class DownloadManager:
         try:
             vm = psutil.virtual_memory()
             # Take action if memory usage is high
-            if vm.percent > 80:
+            if vm.percent > 90: # Changed from 80% to 90%
                 # Force garbage collection
                 import gc
                 gc.collect()
@@ -1867,9 +1885,8 @@ class DownloadManager:
                 self.download_cache._cleanup_if_needed()
 
                 # If memory is critically high, pause a moment
-                if vm.percent > 85:
-                    time.sleep(0.5)  # Brief pause to let system recover
-
+                if vm.percent > 95:
+                    time.sleep(0.2)  # Brief pause to let system recover
                     # Close file handles and other resources
                     gc.collect(2)  # Full collection
 
@@ -1999,6 +2016,13 @@ class DownloadManager:
         # Set the current download URL for session tracking
         self.current_download_url = url
         
+        # Auto-detect aria2c for better download performance
+        if not kwargs.get('use_aria2c', False):
+            has_aria2c = self._check_aria2c_available()
+            if has_aria2c:
+                print(f"{Fore.CYAN}Using aria2c for faster downloads{Style.RESET_ALL}")
+                kwargs['use_aria2c'] = True
+
         # Use enhanced spinner for better user feedback
         info_spinner = EnhancedSpinnerAnimation("Analyzing media", style="aesthetic")
         
@@ -2549,15 +2573,15 @@ class DownloadManager:
         """Dynamically determine optimal chunk size based on available memory"""
         available_memory = get_available_memory()
         
-        # Use larger chunks when more memory is available
+        # Use larger chunks when more memory is available + new add More aggressive chunk sizes for better performance
         if available_memory > 4 * 1024 * 1024 * 1024:  # > 4GB free
             return 10485760  # 10MB chunks
         elif available_memory > 2 * 1024 * 1024 * 1024:  # > 2GB free
             return 5242880   # 5MB chunks
         elif available_memory > 1 * 1024 * 1024 * 1024:  # > 1GB free
-            return 2097152   # 2MB chunks
+            return 5242880   # 5MB chunks 
         else:
-            return 1048576   # 1MB chunks for low memory situations
+            return 2097152   # 2MB chunks for low memory (increased from 1MB)
 
     def _parse_throttle_rate(self, throttle: str) -> int:
         """
