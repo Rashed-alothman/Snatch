@@ -694,8 +694,21 @@ class DownloadCache:
         """Save info for a URL"""
         key = self._get_cache_key(url)
         info_path = self.cache_dir / f"{key}.info.json"
-        
+        # Convert LazyList objects to regular lists for JSON serialization
+        def make_serializable(obj):
+            if isinstance(obj, list) and hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, dict)):
+                return list(obj)  # Convert LazyList to regular list
+            elif isinstance(obj, dict):
+                return {k: make_serializable(v) for k, v in obj.items()}
+            elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, dict)):
+                return list(obj)
+            else:
+                return obj
+            
         try:
+            # Create a serializable copy
+            serializable_info = make_serializable(info)
+
             with open(info_path, 'w') as f:
                 json.dump(info, f)
             # Update LRU ordering
@@ -703,6 +716,7 @@ class DownloadCache:
             self.lru[key] = time.time()
             self._cleanup_if_needed()  # Evict if capacity exceeded
         except IOError:
+            logging.debug(f"Failed to save cache info: {str(e)}")
             pass
             
     def _cleanup_if_needed(self) -> None:
@@ -2237,8 +2251,12 @@ class DownloadManager:
                                 info_spinner.update_status("Getting detailed info")
                                 info = ydl.extract_info(url, download=False)
                                 
+                                # Get serializable version and update info to use it
+                                serializable_info = self._display_media_info(info)
+
                                 # Cache successful info for future use
-                                self.download_cache.save_info(url, info)
+                                self.download_cache.save_info(url, serializable_info)
+                                
                         except Exception as e:
                             info_spinner.stop(clear=False, success=False)
                             print(f"{Fore.RED}Error fetching media info: {str(e)}{Style.RESET_ALL}")
@@ -2338,69 +2356,91 @@ class DownloadManager:
         
     def _display_media_info(self, info: Dict[str, Any]) -> None:
         """Display detailed and well-formatted media information"""
-        # Extract commonly used info
-        title = info.get('title', 'Unknown Title')
-        uploader = info.get('uploader', info.get('channel', 'Unknown Uploader'))
-        duration = info.get('duration', 0)
+        try:
+            # Make a serializable copy of the info
+            def make_serializable(obj):
+                if isinstance(obj, list) and hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, dict)):
+                    return list(obj)  # Convert LazyList to regular list
+                elif isinstance(obj, dict):
+                    return {k: make_serializable(v) for k, v in obj.items()}
+                elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, dict)):
+                    return list(obj)
+                else:
+                    return obj
         
-        # Calculate formatted duration
-        if duration:
-            mins, secs = divmod(int(duration), 60)
-            hours, mins = divmod(mins, 60)
-            duration_str = f"{hours}:{mins:02d}:{secs:02d}" if hours else f"{mins}:{secs:02d}"
-        else:
-            duration_str = "Unknown duration"
-        
-        # Get video quality if available
-        height = info.get('height', 0)
-        width = info.get('width', 0)
-        quality = ""
-        if width and height:
-            if height >= 2160:
-                quality = "4K"
-            elif height >= 1080:
-                quality = "Full HD"
-            elif height >= 720:
-                quality = "HD"
-                
-        # Determine file size
-        filesize = info.get('filesize', info.get('filesize_approx', 0))
-        if filesize:
-            if filesize > 1024 * 1024 * 1024:
-                filesize_str = f"{filesize / (1024 * 1024 * 1024):.2f} GB"
-            else:
-                filesize_str = f"{filesize / (1024 * 1024):.2f} MB"
-        else:
-            filesize_str = "Unknown"
-            
-        # Display info with colors and formatting
-        print(f"\n{Fore.CYAN}{'='*40}{Style.RESET_ALL}")
-        print(f"{Fore.GREEN}Title:{Style.RESET_ALL} {title}")
-        print(f"{Fore.GREEN}Channel/Uploader:{Style.RESET_ALL} {uploader}")
-        print(f"{Fore.GREEN}Duration:{Style.RESET_ALL} {duration_str}")
-        
-        if quality:
-            print(f"{Fore.GREEN}Quality:{Style.RESET_ALL} {quality} ({width}x{height})")
-            
-        print(f"{Fore.GREEN}Estimated Size:{Style.RESET_ALL} {filesize_str}")
-        
-        # Show additional metadata if available
-        if info.get('upload_date'):
-            try:
-                date_str = info['upload_date']
-                formatted_date = f"{date_str[0:4]}-{date_str[4:6]}-{date_str[6:8]}"
-                print(f"{Fore.GREEN}Upload Date:{Style.RESET_ALL} {formatted_date}")
-            except (IndexError, ValueError):
-                pass
-                
-        if info.get('view_count'):
-            view_count = info['view_count']
-            # Format view count with commas
-            view_str = f"{view_count:,}"
-            print(f"{Fore.GREEN}Views:{Style.RESET_ALL} {view_str}")
-            
-        print(f"{Fore.CYAN}{'='*40}{Style.RESET_ALL}\n")
+            # Create a serializable copy of the info
+            serializable_info = make_serializable(info)
 
+            # Extract commonly used info from serializable copy
+            title = serializable_info.get('title', 'Unknown Title')
+            uploader = serializable_info.get('uploader', serializable_info.get('channel', 'Unknown Uploader'))
+            duration = serializable_info.get('duration', 0)
+
+            # Calculate formatted duration
+            if duration:
+                mins, secs = divmod(int(duration), 60)
+                hours, mins = divmod(mins, 60)
+                duration_str = f"{hours}:{mins:02d}:{secs:02d}" if hours else f"{mins}:{secs:02d}"
+            else:
+                duration_str = "Unknown duration"
+
+            # Get video quality if available
+            height = info.get('height', 0)
+            width = info.get('width', 0)
+            quality = ""
+            if width and height:
+                if height >= 2160:
+                    quality = "4K"
+                elif height >= 1080:
+                    quality = "Full HD"
+                elif height >= 720:
+                    quality = "HD"
+
+            # Determine file size
+            filesize = info.get('filesize', info.get('filesize_approx', 0))
+            if filesize:
+                if filesize > 1024 * 1024 * 1024:
+                    filesize_str = f"{filesize / (1024 * 1024 * 1024):.2f} GB"
+                else:
+                    filesize_str = f"{filesize / (1024 * 1024):.2f} MB"
+            else:
+                filesize_str = "Unknown"
+
+            # Display info with colors and formatting
+            print(f"\n{Fore.CYAN}{'='*40}{Style.RESET_ALL}")
+            print(f"{Fore.GREEN}Title:{Style.RESET_ALL} {title}")
+            print(f"{Fore.GREEN}Channel/Uploader:{Style.RESET_ALL} {uploader}")
+            print(f"{Fore.GREEN}Duration:{Style.RESET_ALL} {duration_str}")
+
+            if quality:
+                print(f"{Fore.GREEN}Quality:{Style.RESET_ALL} {quality} ({width}x{height})")
+
+            print(f"{Fore.GREEN}Estimated Size:{Style.RESET_ALL} {filesize_str}")
+
+            # Show additional metadata if available
+            if info.get('upload_date'):
+                try:
+                    date_str = serializable_info['upload_date']
+                    formatted_date = f"{date_str[0:4]}-{date_str[4:6]}-{date_str[6:8]}"
+                    print(f"{Fore.GREEN}Upload Date:{Style.RESET_ALL} {formatted_date}")
+                except (IndexError, ValueError):
+                    pass
+
+            if info.get('view_count'):
+                view_count = serializable_info['view_count']
+                # Format view count with commas
+                view_str = f"{view_count:,}"
+                print(f"{Fore.GREEN}Views:{Style.RESET_ALL} {view_str}")
+
+            print(f"{Fore.CYAN}{'='*40}{Style.RESET_ALL}\n")
+            
+            # Return the serializable version for caching
+            return serializable_info
+        except Exception as e:
+            logging.error(f"Error displaying media info: {str(e)}")
+            print(f"{Fore.YELLOW}⚠️ Limited media information available. Continuing with download...{Style.RESET_ALL}")
+            return info  # Return original in case of error
+        
     def _handle_playlist(self, url: str, info: Dict[str, Any], **kwargs) -> bool:
         """Handle playlist downloads with better UX and resource management"""
         entries = info.get('entries', [])
