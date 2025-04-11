@@ -21,8 +21,8 @@
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="License" />
 </p>
 
-```markdown
-## 🎉 What's New in v1.7.0
+
+<h2> What's New in v1.7.0</h2>
 
 - **Smart Format Selection**: Automatically selects optimal formats without testing all possibilities
 - **Network Speed Testing**: Optimizes download settings based on your connection speed
@@ -30,7 +30,7 @@
 - **Performance Improvements**: Faster startup times and more efficient downloads
 - **Enhanced User Experience**: Better progress displays and more intuitive interface
 - **Improved Error Handling**: More robust error recovery and clearer error messages
-```
+
 
 ## 🚀 Overview
 
