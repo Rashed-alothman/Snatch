@@ -15,11 +15,22 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.5.0-blue" alt="Version 1.5.0" />
+  <img src="https://img.shields.io/badge/version-1.7.0-blue" alt="Version 1.7.0" />
   <img src="https://img.shields.io/badge/python-3.7+-yellow" alt="Python 3.7+" />
   <img src="https://img.shields.io/badge/platforms-Windows%20|%20macOS%20|%20Linux-green" alt="Platforms" />
   <img src="https://img.shields.io/badge/license-MIT-orange" alt="License" />
 </p>
+
+```markdown
+## 🎉 What's New in v1.7.0
+
+- **Smart Format Selection**: Automatically selects optimal formats without testing all possibilities
+- **Network Speed Testing**: Optimizes download settings based on your connection speed
+- **Advanced Temp File Management**: Better handling of locked files and cleanup of orphaned fragments
+- **Performance Improvements**: Faster startup times and more efficient downloads
+- **Enhanced User Experience**: Better progress displays and more intuitive interface
+- **Improved Error Handling**: More robust error recovery and clearer error messages
+```
 
 ## 🚀 Overview
 
@@ -27,22 +38,25 @@
 
 <h2 id="features">✨ Features</h2>
 
--  **Beautiful Interactive Mode** - Easy-to-use interface with colorful progress bars
--  **Dynamic Resource Management** - Adaptive chunk sizes based on your system's resources
--  **Site Explorer** - Browse and search through 1000+ supported sites
--  **Advanced Audio Options** - Choose between Opus (default), MP3, FLAC formats and stereo/surround sound
--  **Smart Conversion** - High-quality audio extraction with format options
--  **Concurrent Downloads** - Download multiple files simultaneously
--  **Quality Selection** - Choose specific video resolutions
--  **Playlist Support** - Download entire playlists with options to select specific videos
--  **Cache System** - Optimized repeat downloads with smart caching
--  **Error Recovery** - Robust error handling and helpful suggestions
--  **Format Flexibility** - Video, Opus, MP3, FLAC, WAV, and more
--  **Universal Compatibility** - Works on Windows, macOS, and Linux
--  **Automatic File Organization** - Organize downloads based on metadata
--  **Resume Downloads** - Continue interrupted downloads from where they left off
--  **Download Statistics** - Track and display download performance metrics
--  **aria2c Support** - Optional high-speed download engine for better performance
+- **Beautiful Interactive Mode** - Easy-to-use interface with colorful progress bars
+- **Dynamic Resource Management** - Adaptive chunk sizes based on your system's resources
+- **Site Explorer** - Browse and search through 1000+ supported sites
+- **Advanced Audio Options** - Choose between Opus (default), MP3, FLAC formats and stereo/surround sound
+- **Smart Conversion** - High-quality audio extraction with format options
+- **Concurrent Downloads** - Download multiple files simultaneously
+- **Quality Selection** - Choose specific video resolutions
+- **Playlist Support** - Download entire playlists with options to select specific videos
+- **Cache System** - Optimized repeat downloads with smart caching
+- **Error Recovery** - Robust error handling and helpful suggestions
+- **Format Flexibility** - Video, Opus, MP3, FLAC, WAV, and more
+- **Universal Compatibility** - Works on Windows, macOS, and Linux
+- **Automatic File Organization** - Organize downloads based on metadata
+- **Resume Downloads** - Continue interrupted downloads from where they left off
+- **Download Statistics** - Track and display download performance metrics
+- **aria2c Support** - Optional high-speed download engine for better performance
+- **Network Speed Testing** - Automatically optimize settings based on your connection speed
+- **Smart Format Selection** - Intelligently selects best format without testing all possibilities
+- **Temporary File Management** - Advanced handling of temporary files to prevent disk space waste
 
 <h2 id="Installation">🔧 Installation</h2>
 
@@ -53,6 +67,8 @@ Run this single command to set up everything automatically:
 ```bash
 python setup.py
 ```
+
+````
 
 This will:
 
@@ -260,6 +276,24 @@ python Snatch.py "URL" --aria2c
 
 # Enable detailed logging for troubleshooting
 python Snatch.py "URL" --verbose
+
+# Test all available formats for best quality (slower)
+python Snatch.py "URL" --test-formats
+
+# Use fast format selection (default)
+python Snatch.py "URL" --fast
+```
+
+#### 8. Network Speed Testing
+
+Snatch can automatically test your network speed to optimize download settings:
+
+```bash
+# Run a standalone speed test
+python Snatch.py speedtest
+
+# Get detailed speed test results
+python Snatch.py test
 ```
 
 <h2 id="supported-sites">🌎 Supported Sites</h2>
@@ -345,3 +379,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 <p align="center">
 Made with ❤️ by <a href="https://github.com/Rashed-alothman">Rashed Alothman</a>
 </p>
+````
