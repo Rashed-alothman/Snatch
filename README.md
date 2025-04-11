@@ -68,8 +68,6 @@ Run this single command to set up everything automatically:
 python setup.py
 ```
 
-````
-
 This will:
 
 1. Install all dependencies
