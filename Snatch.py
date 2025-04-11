@@ -37,10 +37,178 @@ from mutagen.oggvorbis import OggVorbis
 from datetime import datetime
 import unicodedata
 import tempfile  # New import for temporary files
-import socket  # Import socket module for network connectivity check
+import socket  # Import socket module for network connectivity check 
+import math  # Import math for mathematical operations
 
 # Initialize colorama for Windows support with autoreset for cleaner code
 init(autoreset=True)
+
+# Global validation state to avoid redundant FFmpeg checks
+_config_initialized = False
+_ffmpeg_validated = False
+_background_init_complete = False
+_config_updates_available = False
+_update_messages = []
+
+def _run_background_init(config: dict) -> None:
+    """
+    Run background configuration validation and update checks.
+    This function runs in a separate thread to avoid delaying the UI.
+    
+    Args:
+        config: The loaded configuration dictionary
+    """
+    global _ffmpeg_validated, _background_init_complete, _config_updates_available, _update_messages
+    
+    try:
+        # Check if FFmpeg version is outdated by comparing version number
+        if config.get('ffmpeg_location') and validate_ffmpeg_path(config['ffmpeg_location']):
+            _ffmpeg_validated = True
+            ffmpeg_path = os.path.join(config['ffmpeg_location'], 'ffmpeg' + ('.exe' if is_windows() else ''))
+            
+            try:
+                # Check FFmpeg version
+                result = subprocess.run(
+                    [ffmpeg_path, '-version'],
+                    capture_output=True,
+                    text=True,
+                    timeout=3
+                )
+                if result.returncode == 0:
+                    version_info = result.stdout.splitlines()[0] if result.stdout else ""
+                    # Extract version number - typically in format "ffmpeg version 4.4"
+                    match = re.search(r'version\s+(\d+\.\d+)', version_info)
+                    if match:
+                        version = float(match.group(1))
+                        if version < 4.0:
+                            _update_messages.append(f"FFmpeg version {version} detected. Consider updating to version 4.0 or newer for better performance.")
+                            _config_updates_available = True
+            except Exception as e:
+                logging.debug(f"FFmpeg version check failed: {e}")
+        
+        # Check for missing optional config fields
+        optional_fields = {
+            'theme': 'default',
+            'download_history': True,
+            'concurrent_fragment_downloads': 16,
+            'auto_update_check': True,
+            'bandwidth_limit': 0,  # 0 means unlimited
+            'preferred_video_codec': 'h264',
+            'preferred_audio_codec': 'aac',
+        }
+        
+        missing_fields = False
+        for field, default_value in optional_fields.items():
+            if field not in config:
+                config[field] = default_value
+                missing_fields = True
+                
+        if missing_fields:
+            _update_messages.append("Added new configuration options. Check your config for new features.")
+            _config_updates_available = True
+            
+            # Save updated config in the background
+            try:
+                config_path = Path(CONFIG_FILE)
+                with open(config_path, 'w') as f:
+                    json.dump(config, f, indent=4)
+                logging.info("Updated configuration file with new options")
+            except Exception as e:
+                logging.error(f"Failed to update configuration file: {e}")
+        
+    except Exception as e:
+        logging.error(f"Background initialization error: {e}")
+    finally:
+        _background_init_complete = True
+
+def initialize_config_async(force_validation: bool = False) -> Dict[str, Any]:
+    """
+    Load and validate configuration file asynchronously, with intelligent fallbacks.
+    Runs critical validation immediately and launches non-blocking background checks.
+    
+    Args:
+        force_validation: If True, validate FFmpeg path even if config exists
+        
+    Returns:
+        Dict containing validated configuration
+    """
+    global _config_initialized, _ffmpeg_validated
+    
+    config = {}
+    config_path = Path(CONFIG_FILE)
+    config_changed = False
+    
+    try:
+        # Step 1: Fast load of existing config if available
+        if config_path.exists():
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                
+                # Ensure all default keys are present (critical only)
+                for key, value in DEFAULT_CONFIG.items():
+                    if key not in config:
+                        config[key] = value
+                        config_changed = True
+                        
+            except (json.JSONDecodeError, IOError) as e:
+                logging.error(f"Error loading config file: {e}")
+                config = DEFAULT_CONFIG.copy()
+                config_changed = True
+        else:
+            # No config file exists, create default
+            config = DEFAULT_CONFIG.copy()
+            config_changed = True
+            
+        # Step 2: Quick check for FFmpeg path - only if forced or not yet done
+        if (force_validation or not _ffmpeg_validated) and not config.get('ffmpeg_location', ''):
+            ffmpeg_path = find_ffmpeg()
+            
+            if ffmpeg_path:
+                config['ffmpeg_location'] = ffmpeg_path
+                config_changed = True
+                _ffmpeg_validated = True
+            elif force_validation:  # Only show message if explicitly validating
+                print_ffmpeg_instructions()
+                config['ffmpeg_location'] = ''
+                config_changed = True
+                
+        # Step 3: Save critical config changes immediately
+        if config_changed:
+            try:
+                with open(config_path, 'w') as f:
+                    json.dump(config, f, indent=4)
+            except IOError as e:
+                logging.error(f"Error saving config file: {e}")
+        
+        # Step 4: Launch background thread for non-blocking checks
+        if not _config_initialized or force_validation:
+            bg_thread = threading.Thread(
+                target=_run_background_init,
+                args=(config,),
+                daemon=True,
+                name="ConfigBackgroundInit"
+            )
+            bg_thread.start()
+            
+        _config_initialized = True
+        return config
+            
+    except Exception as e:
+        logging.error(f"Config initialization error: {e}")
+        return DEFAULT_CONFIG.copy()
+
+def check_for_updates() -> None:
+    """
+    Check if any configuration updates were detected in the background thread.
+    If so, display notifications to the user.
+    """
+    if _background_init_complete and _config_updates_available:
+        print(f"\n{Fore.YELLOW}Configuration Updates Available:{Style.RESET_ALL}")
+        for message in _update_messages:
+            print(f"  {Fore.CYAN}• {message}{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}Run with --update-config to apply all recommended updates.{Style.RESET_ALL}")
+
 
 # Set up logging configuration with color support
 class ColoramaFormatter(logging.Formatter):
@@ -64,7 +232,12 @@ class CustomHelpFormatter(argparse.HelpFormatter):
 # Constants moved to top for better organization and maintainability
 CONFIG_FILE = 'config.json'
 FLAC_EXT = '.flac'
-VERSION = "1.6.0"  # Centralized version definition
+opus_ext = '.opus'
+webn_ext = '.webm'
+part_ext = '.part'
+speedtestresult='speedtest_result.json'
+bestaudio_ext = 'bestaudio/best'
+VERSION = "1.7.0"  # Centralized version definition
 LOG_FILE = 'download_log.txt'
 SPINNER_CHARS = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 # Default throttling and retry constants
@@ -110,8 +283,8 @@ SPINNER_STYLES = {
 }
 
 # Common file extensions by type for better categorization
-AUDIO_EXTENSIONS = {'.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg', '.opus'}
-VIDEO_EXTENSIONS = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.wmv', '.3gp'}
+AUDIO_EXTENSIONS = {'.mp3', FLAC_EXT, '.wav', '.m4a', '.aac', '.ogg', opus_ext}
+VIDEO_EXTENSIONS = {'.mp4', webn_ext, '.mkv', '.avi', '.mov', '.flv', '.wmv', '.3gp'}
 
 # Create a download cache directory for faster repeated downloads
 CACHE_DIR = Path.home() / '.snatch' / 'cache'
@@ -129,6 +302,7 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 # Examples text unchanged
+# Add speedtest to the utility commands section in EXAMPLES
 EXAMPLES = """
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║                          SNATCH COMMAND CENTER                           ║
@@ -173,11 +347,13 @@ EXAMPLES = """
 ║    --no-cache                Skip using cached media info                ║
 ║    --throttle <speed>        Limit download speed (e.g., 2M)             ║
 ║    --aria2c                  Use aria2c for faster downloads             ║
+║    --speedtest               Run network speed test                      ║
 ║                                                                          ║
 ║  📋 UTILITY COMMANDS:                                                   ║
 ║    help, ?                   Show this help menu                         ║
 ║    clear, cls                Clear the screen                            ║
 ║    list, sites               List supported sites                        ║
+║    speedtest, test           Run network speed test                      ║
 ║    exit, quit, q             Exit the application                        ║
 ║                                                                          ║
 ║  📚 BATCH OPERATIONS:                                                   ║
@@ -186,11 +362,375 @@ EXAMPLES = """
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
+def _cleanup_temporary_files(self) -> None:
+    """
+    Clean up temporary files created during downloads with robust error handling
+    for locked files and permission issues.
+    """
+    try:
+        # Get common temp directories
+        temp_dirs = [tempfile.gettempdir()]
+        # Add output directories
+        if 'audio_output' in self.config:
+            temp_dirs.append(self.config['audio_output'])
+        if 'video_output' in self.config:
+            temp_dirs.append(self.config['video_output'])
+            
+        # Pattern for temporary files created by yt-dlp
+        patterns = [
+            r'.*\.temp\.\w+$',        # Temp files
+            r'.*\.part$',             # Partial downloads
+            r'.*\.ytdl$',             # yt-dlp temp files
+            r'.*\.download$',         # Download in progress
+            r'.*\.download\.\w+$',    # Partial fragment downloads
+            r'.*\.f\d+\.\w+$',        # Format fragment files
+            r'.*tmp\w+\.tmp$',        # Windows-style temp files
+        ]
+        
+        # Compile patterns for efficiency
+        compiled_patterns = [re.compile(pattern) for pattern in patterns]
+        
+        # Find and clean up temp files older than 1 hour
+        now = time.time()
+        max_age = 3600  # 1 hour in seconds
+        cleaned_files = 0
+        cleaned_bytes = 0
+        failed_files = []
+        
+        for temp_dir in temp_dirs:
+            if not os.path.exists(temp_dir):
+                continue
+                
+            for filename in os.listdir(temp_dir):
+                # Skip non-matching files
+                if not any(pattern.match(filename) for pattern in compiled_patterns):
+                    continue
+                    
+                filepath = os.path.join(temp_dir, filename)
+                
+                try:
+                    # Check file age and size
+                    file_stat = os.stat(filepath)
+                    file_age = now - file_stat.st_mtime
+                    
+                    # Only delete older files to avoid interfering with active downloads
+                    if file_age > max_age:
+                        file_size = file_stat.st_size
+                        
+                        # Try different deletion methods for Windows vs POSIX systems
+                        try:
+                            # First attempt: standard deletion
+                            os.unlink(filepath)
+                            cleaned_files += 1
+                            cleaned_bytes += file_size
+                        except PermissionError:
+                            # Windows-specific: Try using system commands for locked files
+                            if os.name == 'nt':
+                                try:
+                                    subprocess.run(
+                                        ['cmd', '/c', 'del', '/f', '/q', filepath], 
+                                        stderr=subprocess.PIPE,
+                                        stdout=subprocess.PIPE,
+                                        timeout=2
+                                    )
+                                    if not os.path.exists(filepath):
+                                        cleaned_files += 1
+                                        cleaned_bytes += file_size
+                                    else:
+                                        failed_files.append(filepath)
+                                except Exception:
+                                    failed_files.append(filepath)
+                            else:
+                                failed_files.append(filepath)
+                except (OSError, IOError):
+                    # Skip files we can't access
+                    failed_files.append(filepath)
+        
+        if cleaned_files > 0:
+            logging.info(f"Cleaned up {cleaned_files} temporary files ({cleaned_bytes / (1024*1024):.2f} MB)")
+        
+        # Log failed deletions in debug mode
+        if failed_files:
+            for failed in failed_files:
+                logging.debug(f"Unable to delete temporary file \"{failed}\"")
+                
+            # Print warning for interactive mode feedback if there are failures
+            if len(failed_files) <= 3:  # Only show if the list is short
+                for failed in failed_files:
+                    print(f"{Fore.YELLOW}WARNING: Unable to delete temporary file \"{failed}\"{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.YELLOW}WARNING: Unable to delete {len(failed_files)} temporary files{Style.RESET_ALL}")
+                
+    except Exception as e:
+        logging.debug(f"Error cleaning temporary files: {e}")
 
+def run_speedtest(detailed: bool = True) -> float:
+    """
+    Run network speed test and display results to the user.
+    
+    Tests multiple endpoints for accurate speed measurement and shows
+    results in a user-friendly format. Returns the measured speed in Mbps.
+    
+    Args:
+        detailed: Whether to show detailed output with recommendations
+        
+    Returns:
+        Network speed in Mbps
+    """
+    # Create a spinner to show progress
+    spinner = SpinnerAnimation("Running speed test", style="aesthetic", color="cyan")
+    spinner.start()
+    
+    # Check for cached results first
+    cache_file = os.path.join(CACHE_DIR, speedtestresult)
+    now = time.time()
+    try:
+        if os.path.exists(cache_file):
+            with open(cache_file, 'r') as f:
+                data = json.load(f)
+                
+            # If test was run within the last hour, use cached result
+            if now - data['timestamp'] < 3600:  # 1 hour cache
+                speed = data['speed_mbps']
+                spinner.update_status(f"Using cached result ({time.strftime('%H:%M', time.localtime(data['timestamp']))})")
+                time.sleep(0.5)
+                spinner.stop(clear=True)
+                _display_speedtest_results(speed, detailed)
+                return speed
+    except Exception:
+        # If any error occurs with cache, just run a new test
+        pass
+    
+    # Define test endpoints - multiple CDNs for more accurate measurement
+    test_endpoints = [
+        # Small payload (~100KB) for initial test
+        "https://httpbin.org/stream-bytes/102400",
+        # 1MB test file from reliable CDNs
+        "https://speed.cloudflare.com/__down?bytes=1048576",
+        "https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js",
+        # Larger test file for higher-speed connections
+        "https://proof.ovh.net/files/10Mb.dat"
+    ]
+    
+    # Run the tests
+    speeds = []
+    start_time = time.time()
+    max_test_time = 8.0  # Maximum 8 seconds for testing
+    
+    for i, url in enumerate(test_endpoints):
+        if time.time() - start_time > max_test_time:
+            break
+        
+        spinner.update_status(f"Testing speed ({i+1}/{len(test_endpoints)})")
+        
+        try:
+            # Create a session for this request
+            session = requests.Session()
+            
+            # Warm up connection (connect only to avoid measuring DNS overhead)
+            session.head(url, timeout=2.0)
+            
+            # Measure download speed
+            start = time.time()
+            response = session.get(url, stream=True, timeout=5.0)
+            
+            if response.status_code == 200:
+                total_bytes = 0
+                for chunk in response.iter_content(chunk_size=65536):
+                    total_bytes += len(chunk)
+                    # Early exit if we have enough data or exceeded time limit
+                    if total_bytes > 5 * 1024 * 1024 or time.time() - start > 3.0:
+                        break
+                
+                # Calculate speed
+                elapsed = time.time() - start
+                if elapsed > 0 and total_bytes > 102400:  # Ensure we got at least 100KB
+                    mbps = (total_bytes * 8) / (elapsed * 1000 * 1000)
+                    speeds.append(mbps)
+                    spinner.update_status(f"Measured: {mbps:.2f} Mbps")
+            
+            response.close()
+            
+        except requests.RequestException:
+            continue
+    
+    spinner.stop(clear=True)
+    
+    # Calculate final speed (use median for robustness against outliers)
+    if speeds:
+        speeds.sort()
+        if len(speeds) >= 3:
+            # Remove highest and lowest values if we have enough samples
+            speeds = speeds[1:-1]
+        
+        speed = sum(speeds) / len(speeds)
+    else:
+        # Fallback if all tests failed
+        speed = 2.0  # Conservative estimate
+        print(f"{Fore.YELLOW}Speed test encountered issues. Using default value of 2 Mbps.{Style.RESET_ALL}")
+    
+    # Cache the result
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        with open(cache_file, 'w') as f:
+            json.dump({
+                'timestamp': time.time(),
+                'speed_mbps': speed,
+                'samples': speeds
+            }, f)
+    except Exception:
+        # Ignore cache write failures
+        pass
+    
+    # Display results
+    _display_speedtest_results(speed, detailed)
+    
+    return speed
+
+def _display_speedtest_results(speed_mbps: float, detailed: bool = True) -> None:
+    """
+    Display speed test results in a user-friendly format with recommendations.
+    
+    Args:
+        speed_mbps: Measured speed in Mbps
+        detailed: Whether to show detailed recommendations
+    """
+    # Calculate more intuitive measurements
+    mb_per_sec = speed_mbps / 8  # Convert Mbps to MB/s
+    
+    # Format numbers for display
+    if mb_per_sec >= 1.0:
+        speed_str = f"{mb_per_sec:.2f} MB/s"
+    else:
+        speed_str = f"{mb_per_sec * 1024:.1f} KB/s"
+        
+    # Create border width based on terminal
+    try:
+        term_width = shutil.get_terminal_size().columns
+        border_width = min(60, max(40, term_width - 10))
+    except (OSError, AttributeError, ValueError) as e:
+        logging.debug(f"Could not determine terminal width: {e}")
+        # Fallback to a default width
+        border_width = 50
+        
+    border = f"{Fore.CYAN}{'═' * border_width}{Style.RESET_ALL}"
+    
+    # Display results with nice formatting
+    print(border)
+    print(f"{Fore.GREEN}NETWORK SPEED TEST RESULTS{Style.RESET_ALL}")
+    print(border)
+    
+    # Determine color based on speed
+    if speed_mbps >= 50:
+        color = Fore.GREEN
+        rating = "Excellent"
+    elif speed_mbps >= 20:
+        color = Fore.CYAN
+        rating = "Very Good"
+    elif speed_mbps >= 10:
+        color = Fore.BLUE
+        rating = "Good"
+    elif speed_mbps >= 5:
+        color = Fore.YELLOW
+        rating = "Average"
+    elif speed_mbps >= 2:
+        color = Fore.YELLOW
+        rating = "Below Average"
+    else:
+        color = Fore.RED
+        rating = "Slow"
+    
+    # Main display
+    print(f"\n  Download Speed: {color}{speed_mbps:.2f} Mbps{Style.RESET_ALL} ({speed_str})")
+    print(f"  Rating: {color}{rating}{Style.RESET_ALL}")
+    
+    # Add detailed recommendations if requested
+    if detailed:
+        print(f"\n{Fore.CYAN}DOWNLOAD RECOMMENDATIONS:{Style.RESET_ALL}")
+        
+        # Video quality recommendations
+        print(f"\n  {Fore.YELLOW}Recommended Video Quality:{Style.RESET_ALL}")
+        if speed_mbps >= 50:
+            print(f"  • {Fore.GREEN}4K Video:{Style.RESET_ALL} ✓ Excellent")
+            print(f"  • {Fore.GREEN}1080p Video:{Style.RESET_ALL} ✓ Excellent")
+            print(f"  • {Fore.GREEN}720p Video:{Style.RESET_ALL} ✓ Excellent")
+        elif speed_mbps >= 25:
+            print(f"  • {Fore.YELLOW}4K Video:{Style.RESET_ALL} ⚠ May buffer occasionally")
+            print(f"  • {Fore.GREEN}1080p Video:{Style.RESET_ALL} ✓ Excellent")
+            print(f"  • {Fore.GREEN}720p Video:{Style.RESET_ALL} ✓ Excellent")
+        elif speed_mbps >= 10:
+            print(f"  • {Fore.RED}4K Video:{Style.RESET_ALL} ✗ Not recommended")
+            print(f"  • {Fore.GREEN}1080p Video:{Style.RESET_ALL} ✓ Good")
+            print(f"  • {Fore.GREEN}720p Video:{Style.RESET_ALL} ✓ Excellent")
+        elif speed_mbps >= 5:
+            print(f"  • {Fore.RED}4K Video:{Style.RESET_ALL} ✗ Not recommended")
+            print(f"  • {Fore.YELLOW}1080p Video:{Style.RESET_ALL} ⚠ May buffer")
+            print(f"  • {Fore.GREEN}720p Video:{Style.RESET_ALL} ✓ Good")
+        else:
+            print(f"  • {Fore.RED}4K Video:{Style.RESET_ALL} ✗ Not recommended")
+            print(f"  • {Fore.RED}1080p Video:{Style.RESET_ALL} ✗ Not recommended")
+            print(f"  • {Fore.YELLOW}720p Video:{Style.RESET_ALL} ⚠ May buffer")
+            print(f"  • {Fore.GREEN}480p Video:{Style.RESET_ALL} ✓ Recommended")
+        
+        # Audio format recommendations
+        print(f"\n  {Fore.YELLOW}Audio Format Recommendations:{Style.RESET_ALL}")
+        if speed_mbps >= 10:
+            print(f"  • {Fore.GREEN}FLAC:{Style.RESET_ALL} ✓ Recommended for best quality")
+            print(f"  • {Fore.GREEN}MP3/Opus:{Style.RESET_ALL} ✓ Fast downloads")
+        elif speed_mbps >= 3:
+            print(f"  • {Fore.YELLOW}FLAC:{Style.RESET_ALL} ⚠ Will work but slower")
+            print(f"  • {Fore.GREEN}MP3/Opus:{Style.RESET_ALL} ✓ Recommended for faster downloads")
+        else:
+            print(f"  • {Fore.RED}FLAC:{Style.RESET_ALL} ✗ Not recommended")
+            print(f"  • {Fore.GREEN}MP3/Opus:{Style.RESET_ALL} ✓ Recommended")
+            
+        # Download settings recommendations
+        print(f"\n  {Fore.YELLOW}Optimized Settings:{Style.RESET_ALL}")
+        
+        # Determine optimal chunk size and concurrent downloads
+        if speed_mbps >= 50:
+            chunk_size = "20MB"
+            concurrent = "24-32"
+            aria2 = "✓ Highly recommended"
+            aria_color = Fore.GREEN
+        elif speed_mbps >= 20:
+            chunk_size = "10MB"
+            concurrent = "16-24"
+            aria2 = "✓ Recommended"
+            aria_color = Fore.GREEN
+        elif speed_mbps >= 10:
+            chunk_size = "5MB"
+            concurrent = "8-16"
+            aria2 = "✓ Recommended"
+            aria_color = Fore.GREEN
+        elif speed_mbps >= 5:
+            chunk_size = "2MB" 
+            concurrent = "4-8"
+            aria2 = "✓ Beneficial"
+            aria_color = Fore.CYAN
+        else:
+            chunk_size = "1MB"
+            concurrent = "2-4"
+            aria2 = "⚠ Limited benefit"
+            aria_color = Fore.YELLOW
+            
+        print(f"  • {Fore.CYAN}Chunk Size:{Style.RESET_ALL} {chunk_size}")
+        print(f"  • {Fore.CYAN}Concurrent Downloads:{Style.RESET_ALL} {concurrent}")
+        print(f"  • {Fore.CYAN}aria2c:{Style.RESET_ALL} {aria_color}{aria2}{Style.RESET_ALL}")
+        
+        print("\n  These settings will be applied automatically to optimize your downloads.")
+    
+    print(f"\n{border}")
+    
+    # Show retest instructions
+    print(f"\n{Fore.GREEN}Tip:{Style.RESET_ALL} Run {Fore.CYAN}--speedtest{Style.RESET_ALL} again anytime to refresh these results.\n")
+
+    
 @lru_cache(maxsize=None)
 def is_windows() -> bool:
     """Check if running on Windows platform with caching for performance"""
     return platform.system().lower() == "windows"
+
 
 def find_ffmpeg() -> Optional[str]:
     """Find FFmpeg in common locations or PATH with improved cross-platform support"""
@@ -238,6 +778,38 @@ def find_ffmpeg() -> Optional[str]:
             return location
     
     return None
+# New function to check if FFmpeg is valid at a specific location
+def validate_ffmpeg_path(ffmpeg_location: str) -> bool:
+    """
+    Validate that the specified ffmpeg_location contains valid FFmpeg binaries.
+    
+    Args:
+        ffmpeg_location: Path to directory containing FFmpeg binaries
+        
+    Returns:
+        bool: True if valid FFmpeg binaries found, False otherwise
+    """
+    if not ffmpeg_location or not os.path.exists(ffmpeg_location):
+        return False
+        
+    # Check for ffmpeg executable
+    ffmpeg_exec = 'ffmpeg.exe' if is_windows() else 'ffmpeg'
+    ffmpeg_path = os.path.join(ffmpeg_location, ffmpeg_exec)
+    
+    if not os.path.exists(ffmpeg_path):
+        return False
+        
+    # Test if executable works
+    try:
+        result = subprocess.run(
+            [ffmpeg_path, '-version'], 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            timeout=3
+        )
+        return result.returncode == 0
+    except (subprocess.SubprocessError,OSError):
+        return False
 
 def print_ffmpeg_instructions():
     """Print instructions for installing FFmpeg with platform-specific guidance"""
@@ -256,6 +828,173 @@ def print_ffmpeg_instructions():
     print("1. Add FFmpeg to your system PATH, or")
     print("2. Update config.json with the correct ffmpeg_location")
     print("\nFor detailed instructions, visit: https://www.wikihow.com/Install-FFmpeg-on-Windows")
+
+# New function to load and validate the configuration file
+def initialize_config(force_validation: bool = False) -> Dict[str, Any]:
+    """
+    Load and validate the configuration file, with intelligent fallbacks and auto-correction.
+    
+    Args:
+        force_validation: If True, validate FFmpeg path even if config exists
+        
+    Returns:
+        Dict containing validated configuration
+    """
+    config = {}
+    config_path = Path(CONFIG_FILE)
+    ffmpeg_validated = False
+    config_changed = False
+    
+    # Set up a spinner for config initialization
+    spinner = None
+    try:
+        from colorama import Fore, Style
+        spinner = SpinnerAnimation("Initializing configuration", style="dots")
+        spinner.start()
+    except (ImportError, NameError):
+        pass
+    
+    try:
+        # Step 1: Load existing config if available
+        if config_path.exists():
+            try:
+                with open(config_path, 'r') as f:
+                    config = json.load(f)
+                
+                # Ensure all default keys are present
+                for key, value in DEFAULT_CONFIG.items():
+                    if key not in config:
+                        config[key] = value
+                        config_changed = True
+                
+                # Ensure organization templates are complete
+                if 'organization_templates' in config:
+                    for key, value in DEFAULT_ORGANIZATION_TEMPLATES.items():
+                        if key not in config['organization_templates']:
+                            config['organization_templates'][key] = value
+                            config_changed = True
+                else:
+                    config['organization_templates'] = DEFAULT_ORGANIZATION_TEMPLATES.copy()
+                    config_changed = True
+                
+                if spinner:
+                    spinner.update_status("Configuration loaded")
+            except (json.JSONDecodeError, IOError) as e:
+                logging.error(f"Error loading config file: {e}")
+                config = DEFAULT_CONFIG.copy()
+                config_changed = True
+                if spinner:
+                    spinner.update_status("Creating new configuration")
+        else:
+            # No config file exists, create default
+            config = DEFAULT_CONFIG.copy()
+            config_changed = True
+            if spinner:
+                spinner.update_status("Creating new configuration")
+                
+        # Step 2: Validate FFmpeg path if needed
+        if force_validation or not config.get('ffmpeg_location') or not validate_ffmpeg_path(config['ffmpeg_location']):
+            if spinner:
+                spinner.update_status("Locating FFmpeg")
+                
+            ffmpeg_path = find_ffmpeg()
+            
+            if ffmpeg_path:
+                config['ffmpeg_location'] = ffmpeg_path
+                ffmpeg_validated = True
+                config_changed = True
+                if spinner:
+                    spinner.update_status(f"Found FFmpeg: {ffmpeg_path}")
+            else:
+                # Could not find a valid FFmpeg installation
+                if not config.get('ffmpeg_location', ''):
+                    if spinner:
+                        spinner.stop(clear=False, success=False)
+                        spinner = None  # Prevent stopping again in finally block
+                    print_ffmpeg_instructions()
+                    # Set to empty but don't raise error yet
+                    config['ffmpeg_location'] = ''
+                    config_changed = True
+        else:
+            # Already have a valid FFmpeg path in config
+            ffmpeg_validated = True
+            if spinner:
+                spinner.update_status("Using FFmpeg from config")
+                
+        # Step 3: Save updated config if changed
+        if config_changed:
+            try:
+                with open(config_path, 'w') as f:
+                    json.dump(config, f, indent=4)
+                if spinner:
+                    spinner.update_status("Configuration saved")
+            except IOError as e:
+                logging.error(f"Error saving config file: {e}")
+                if spinner:
+                    spinner.update_status("Error saving configuration")
+                    
+        # Final verification of critical settings
+        if 'video_output' in config and not os.path.exists(config['video_output']):
+            try:
+                os.makedirs(config['video_output'], exist_ok=True)
+            except OSError:
+                config['video_output'] = str(Path.home() / 'Videos')
+                config_changed = True
+                
+        if 'audio_output' in config and not os.path.exists(config['audio_output']):
+            try:
+                os.makedirs(config['audio_output'], exist_ok=True)
+            except OSError:
+                config['audio_output'] = str(Path.home() / 'Music')
+                config_changed = True
+                
+        # Step 4: Final save if needed after validation
+        if config_changed:
+            try:
+                with open(config_path, 'w') as f:
+                    json.dump(config, f, indent=4)
+            except IOError as e:
+                logging.error(f"Error saving final config: {e}")
+                
+        # Check if FFmpeg is available and raise error if not
+        if not ffmpeg_validated and not validate_ffmpeg_path(config['ffmpeg_location']):
+            if spinner:
+                spinner.stop(clear=False, success=False)
+                spinner = None  # Prevent stopping again in finally block
+            raise FileNotFoundError("FFmpeg is required but could not be found. Please install FFmpeg and update the config file.")
+                
+        return config
+            
+    finally:
+        # Always clean up the spinner if it exists
+        if spinner:
+            spinner.stop(clear=True, success=True)
+
+@contextmanager
+def timer(name: str = "", silent: bool = False):
+    """
+    Context manager for timing code execution with optional logging.
+    
+    Args:
+        name: Description of the timed operation
+        silent: If True, suppresses log output
+        
+    Example:
+        with timer("Media extraction"):
+            # code to time
+            
+    Yields:
+        None
+    """
+    start_time = time.time()
+    try:
+        yield
+    finally:
+        elapsed = time.time() - start_time
+        if not silent:
+            logging.info(f"{name} completed in {elapsed:.2f} seconds")
+        else:
+            logging.debug(f"{name} completed in {elapsed:.2f} seconds")
 
 class ColorProgressBar:
     """Enhanced progress bar with color support and performance optimizations"""
@@ -444,7 +1183,7 @@ def print_banner():
 ║  {Fore.GREEN}   /    |         {Fore.YELLOW}                                {Fore.CYAN}      ║
 ║  {Fore.GREEN}  *___/||         {Fore.YELLOW}                                {Fore.CYAN}      ║
 ╠{'═' * 58}╣
-║     {Fore.GREEN}■ {Fore.WHITE}Version: {Fore.YELLOW}1.6.0{Fore.WHITE}                                   {Fore.CYAN}  ║
+║     {Fore.GREEN}■ {Fore.WHITE}Version: {Fore.YELLOW}1.7.0{Fore.WHITE}                                   {Fore.CYAN}  ║
 ║     {Fore.GREEN}■ {Fore.WHITE}GitHub : {Fore.YELLOW}github.com/Rashed-alothman/Snatch{Fore.WHITE}        {Fore.CYAN} ║
 ╠{'═' * 58}╣
 ║  {Fore.YELLOW}Type {Fore.GREEN}help{Fore.YELLOW} or {Fore.GREEN}?{Fore.YELLOW} for commands  {Fore.WHITE}|  {Fore.YELLOW}Press {Fore.GREEN}Ctrl+C{Fore.YELLOW} to cancel  {Fore.CYAN}║
@@ -463,228 +1202,51 @@ def print_banner():
     print('\n')  # Add space below banner
 
 class SpinnerAnimation:
-    """Animated spinner for loading states with resource cleanup improvements"""
-    def __init__(self, message: str = "Processing"):
-        self.spinner = SPINNER_CHARS
-        self.message = message
-        self.running = False
-        self.thread = None
-        self._lock = threading.Lock()  # Thread safety
-
-    def spin(self):
-        """Spin animation with reduced CPU usage"""
-        while self.running:
-            for char in self.spinner:
-                if not self.running:
-                    break
-                with self._lock:
-                    print(f"\r{Fore.CYAN}{char} {self.message}...{Style.RESET_ALL}", end='', flush=True)
-                time.sleep(0.1)  # Reduced CPU usage
-
-    def start(self):
-        """Start spinner animation safely"""
-        with self._lock:
-            if not self.running:
-                self.running = True
-                self.thread = threading.Thread(target=self.spin, daemon=True)  # Make thread daemon
-                self.thread.start()
-
-    def stop(self):
-        """Stop spinner animation with proper resource cleanup"""
-        with self._lock:
-            self.running = False
-        
-        if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=1.0)  # Timeout to prevent hanging
-            
-        # Clear the spinner line
-        print('\r' + ' ' * (len(self.message) + 20) + '\r', end='')
-
-@lru_cache(maxsize=100)
-def fuzzy_match_command(input_cmd: str, valid_commands: tuple) -> Optional[str]:
-    """Find the closest matching command with caching for performance"""
-    matches = get_close_matches(input_cmd.lower(), valid_commands, n=1, cutoff=0.6)
-    return matches[0] if matches else None
-
-@contextmanager
-def timer(name: str = "Operation", silent: bool = False) -> Generator:
-    """Context manager to time operations for performance tracking"""
-    start_time = time.time()
-    try:
-        yield
-    finally:
-        elapsed = time.time() - start_time
-        if not silent:
-            print(f"{Fore.CYAN}⏱️ {name} completed in {elapsed:.2f} seconds{Style.RESET_ALL}")
-
-def get_available_memory() -> int:
-    """Get available system memory in bytes"""
-    return psutil.virtual_memory().available
-
-def is_memory_sufficient() -> bool:
-    """Check if system has sufficient memory"""
-    vm = psutil.virtual_memory()
-    return vm.percent < MAX_MEMORY_PERCENT
-
-def estimate_download_size(info: Dict[str, Any]) -> int:
-    """Estimate download size in bytes from media info"""
-    if 'filesize' in info and info['filesize']:
-        return info['filesize']
-    elif 'filesize_approx' in info and info['filesize_approx']:
-        return info['filesize_approx']
-    else:
-        # Estimate based on duration and format
-        duration = info.get('duration', 0)
-        if 'formats' in info:
-            for fmt in info['formats']:
-                if fmt.get('filesize'):
-                    return fmt['filesize']
-        
-        # Return a conservative estimate based on duration (3MB per minute)
-        return int(duration * 50000)  # ~3MB/minute
-
-@lru_cache(maxsize=1)
-def measure_network_speed(cache_ttl: int = 60, max_test_time: float = 5.0) -> float:
     """
-    Measure network speed in Mbps using adaptive sampling and multiple endpoints.
+    Animated spinner for displaying loading states with rich customization options.
     
-    Uses a multi-stage adaptive approach to accurately measure speeds from 1Mbps to 1Gbps:
-    1. First attempts a small download to quickly estimate approximate capacity
-    2. Based on initial result, adjusts sample size for more accurate measurement
-    3. Tests multiple CDNs to minimize geographic and routing bias
-    4. Results are cached to reduce redundant measurements
+    Features:
+    - Multiple spinner styles with color support
+    - Dynamic message updates and status tracking
+    - Thread-safe operations with proper resource cleanup
+    - Elapsed time tracking and adaptive terminal width handling
+    - Customizable appearance and behavior
     
-    Args:
-        cache_ttl: Seconds to cache result (avoids repeated testing)
-        max_test_time: Maximum seconds to spend testing speed
-        
-    Returns:
-        Network speed in Mbps (megabits per second)
-    """
-    # Use function attribute for caching with TTL
-    now = time.time()
-    if hasattr(measure_network_speed, 'cached_result'):
-        result, timestamp = measure_network_speed.cached_result
-        if now - timestamp < cache_ttl:
-            logging.debug(f"Using cached network speed: {result:.2f} Mbps")
-            return result
-
-    # List of reliable test endpoints with different sizes
-    test_endpoints = [
-        # Small payload (~100KB) for initial test
-        "https://httpbin.org/bytes/102400",
-        # Medium payload (~1MB) from reliable CDNs
-        "https://speed.cloudflare.com/__down?bytes=1048576",
-        "https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js",
-        # Large payload for high-speed connections
-        "https://proof.ovh.net/files/10Mb.dat"
-    ]
-    
-    # Adaptive testing parameters
-    timeout = 5.0            # Initial connection timeout
-    chunk_size = 65536       # Optimal chunk size (64KB)
-    min_bytes = 102400       # Minimum bytes to consider a valid test (100KB)
-    
-    speeds = []
-    start_test_time = time.time()
-    
-    # Attempt to measure using multiple endpoints
-    for url in test_endpoints:
-        # Don't exceed maximum allowed test time
-        if time.time() - start_test_time > max_test_time:
-            break
-            
+    Example:
+        spinner = SpinnerAnimation("Loading data", style="aesthetic", color="green")
+        spinner.start()
         try:
-            # Make request with appropriate timeout
-            session = requests.Session()
-            start = time.time()
-            
-            # Warm-up connection first to avoid measuring DNS/connection overhead
-            session.head(url, timeout=timeout)
-            
-            # Start actual measurement (subtract warm-up time)
-            start = time.time()
-            response = session.get(url, stream=True, timeout=timeout)
-            
-            if response.status_code != 200:
-                logging.debug(f"Speed test endpoint returned status {response.status_code}: {url}")
-                continue
-                
-            # Read data in chunks and measure
-            total_bytes = 0
-            try:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    total_bytes += len(chunk)
-                    
-                    # Early exit if we've downloaded enough on fast connections
-                    if total_bytes > 5 * 1024 * 1024:  # 5MB is plenty for speed test
-                        break
-                        
-                    # Early exit if test running longer than allowed
-                    if time.time() - start_test_time > max_test_time:
-                        break
-            finally:
-                # Always close the response to free resources
-                response.close()
-                
-            # Calculate speed if we got enough data for a valid measurement
-            if total_bytes >= min_bytes:
-                elapsed = time.time() - start
-                speed_mbps = (total_bytes * 8) / (elapsed * 1000 * 1000)  # Convert to Mbps
-                speeds.append(speed_mbps)
-                logging.debug(f"Speed test: {speed_mbps:.2f} Mbps ({total_bytes/1024:.1f}KB in {elapsed:.2f}s) from {url}")
-                
-                # For fast connections, skip remaining tests
-                if speed_mbps > 50:  # >50Mbps is already a good connection
-                    break
-                    
-        except requests.exceptions.ConnectTimeout:
-            logging.debug(f"Speed test connection timeout: {url}")
-            # Very slow connection detected
-            if not speeds:
-                speeds.append(0.5)  # Assume 0.5 Mbps on timeout
-                
-        except requests.exceptions.ReadTimeout:
-            logging.debug(f"Speed test read timeout: {url}")
-            # Partial data received but timed out indicates slow connection
-            if not speeds:
-                speeds.append(1.0)  # Assume 1.0 Mbps on read timeout
-                
-        except Exception as e:
-            logging.debug(f"Speed test error: {str(e)} with {url}")
-    
-    # Calculate the result
-    if speeds:
-        # Use median to avoid outliers affecting the result
-        # Median is more reliable than mean when dealing with varied measurements
-        result = sorted(speeds)[len(speeds)//2] if len(speeds) > 2 else sum(speeds)/len(speeds)
-    else:
-        # Conservative fallback based on typical mobile connection
-        result = 2.0  # 2 Mbps is a reasonable fallback
-        logging.warning("Speed test failed, using fallback value of 2.0 Mbps")
-    
-    # Cache the result
-    measure_network_speed.cached_result = (result, now)
-    
-    return result
-
-class EnhancedSpinnerAnimation:
-    """Advanced animated spinner with customization and message updates"""
-    def __init__(self, message: str = "Processing", style: str = "aesthetic", 
+            # Do some work
+            spinner.update_status("Processing files")
+            # Do more work
+        finally:
+            spinner.stop(clear=True, success=True)
+    """
+    def __init__(self, message: str = "Processing", style: str = "dots", 
                  color: str = "cyan", delay: float = 0.08):
+        # Style selection with fallbacks
         self.style = style.lower()
-        self.spinner = SPINNER_STYLES.get(self.style, SPINNER_STYLES["aesthetic"])
+        self.spinner = SPINNER_STYLES.get(self.style, SPINNER_STYLES["dots"])
         self.message = message
+        
+        # Color handling
         self.color_name = color.lower()
         self.color = getattr(Fore, color.upper(), Fore.CYAN)
+        
+        # Animation control
         self.delay = delay
         self.running = False
         self.thread = None
-        self._lock = threading.Lock()
+        
+        # Thread safety
+        self._lock = threading.RLock()
         self._paused = False
-        self._last_terminal_width = shutil.get_terminal_size().columns
+        
+        # State tracking
+        self._terminal_width = shutil.get_terminal_size().columns
         self._status_text = ""
         self._start_time = None
+        self._cursor_hidden = False
         
     def _get_formatted_message(self) -> str:
         """Format message with elapsed time and status"""
@@ -727,18 +1289,18 @@ class EnhancedSpinnerAnimation:
         """Change spinner style while running"""
         with self._lock:
             self.style = style.lower()
-            self.spinner = SPINNER_STYLES.get(self.style, SPINNER_STYLES["aesthetic"])
+            self.spinner = SPINNER_STYLES.get(self.style, SPINNER_STYLES["dots"])
 
     def spin(self) -> None:
-        """Spin animation with adaptive terminal width handling"""
+        """Core spinner animation function with adaptive terminal handling"""
         self._start_time = time.time()
         
         while self.running:
             try:
                 # Check if terminal size changed
                 current_width = shutil.get_terminal_size().columns
-                if (current_width != self._last_terminal_width):
-                    self._last_terminal_width = current_width
+                if (current_width != self._terminal_width):
+                    self._terminal_width = current_width
                 
                 # Handle pause state
                 if self._paused:
@@ -755,17 +1317,23 @@ class EnhancedSpinnerAnimation:
                         formatted_msg = self._get_formatted_message()
                     
                     # Ensure we don't exceed terminal width
-                    if len(formatted_msg) + 5 > self._last_terminal_width:
+                    if len(formatted_msg) + 5 > self._terminal_width:
                         # Truncate with ellipsis if needed
-                        max_len = self._last_terminal_width - 5
+                        max_len = self._terminal_width - 5
                         formatted_msg = formatted_msg[:max_len-3] + "..."
                     
                     # Print the spinner frame
                     print(f"\r{self.color}{char} {formatted_msg}{Style.RESET_ALL}", end='', flush=True)
                     time.sleep(self.delay)
             
-            except Exception:
+            except Exception as e:
                 # Prevent spinner from crashing the main program
+                try:
+                    logging.debug(f"Spinner error: {str(e)}")
+                except (AttributeError, NameError):
+                    # This handles cases where logging module isn't properly initialized
+                    # or when logging.debug isn't callable
+                    pass
                 time.sleep(0.5)
 
     def pause(self) -> None:
@@ -786,6 +1354,15 @@ class EnhancedSpinnerAnimation:
                 self._paused = False
                 self.thread = threading.Thread(target=self.spin, daemon=True)
                 self.thread.start()
+                
+                # Hide cursor if supported
+                try:
+                    if os.name == 'posix':
+                        print("\033[?25l", end='', flush=True)
+                        self._cursor_hidden = True
+                except (IOError, UnicodeError) as e:
+                    # Ignore errors when terminal doesn't support ANSI escape codes
+                    logging.debug(f"Failed to hide cursor: {e}")
 
     def stop(self, clear: bool = True, success: bool = None) -> None:
         """
@@ -799,11 +1376,20 @@ class EnhancedSpinnerAnimation:
             self.running = False
         
         if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=0.5)
+            self.thread.join(timeout=0.5)  # Use timeout to avoid hanging
+        
+        # Restore cursor if it was hidden
+        if self._cursor_hidden:
+            try:
+                print("\033[?25h", end='', flush=True)
+                self._cursor_hidden = False
+            except (IOError, UnicodeError) as e:
+                logging.debug(f"Failed to restore cursor: {e}")
+                
         
         if clear:
             # Clear the spinner line completely
-            print('\r' + ' ' * (self._last_terminal_width - 1) + '\r', end='')
+            print('\r' + ' ' * (self._terminal_width - 1) + '\r', end='')
         else:
             # Print final state with optional success/failure indicator
             formatted_msg = self._get_formatted_message()
@@ -865,11 +1451,8 @@ class DownloadCache:
                 return obj
             
         try:
-            # Create a serializable copy
-            serializable_info = make_serializable(info)
-
             with open(info_path, 'w') as f:
-                json.dump(info, f)
+                json.dump(make_serializable(info), f)
             # Update LRU ordering
             self.lru.pop(key, None)
             self.lru[key] = time.time()
@@ -1269,7 +1852,7 @@ class MetadataExtractor:
     
     def __init__(self):
         self.audio_extensions = {'.mp3', '.flac', '.m4a', '.ogg', '.opus', '.wav', '.aac'}
-        self.video_extensions = {'.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv'}
+        self.video_extensions = {'.mp4', webn_ext, '.mkv', '.avi', '.mov', '.flv'}
     
     def extract(self, filepath: str, info: Optional[Dict] = None) -> Dict[str, Any]:
         """
@@ -1415,11 +1998,11 @@ class MetadataExtractor:
 
             if file_type == 'MP3' or ext == '.mp3':
                 self._extract_mp3_tags(audio_file, metadata)
-            elif file_type == 'FLAC' or ext == '.flac':
+            elif file_type == 'FLAC' or ext == FLAC_EXT:
                 self._extract_flac_tags(audio_file, metadata)
             elif file_type in ('MP4', 'M4A') or ext in ('.mp4', '.m4a'):
                 self._extract_mp4_tags(audio_file, metadata)
-            elif file_type in ('OggVorbis', 'OggOpus') or ext in ('.ogg', '.opus'):
+            elif file_type in ('OggVorbis', 'OggOpus') or ext in ('.ogg', opus_ext):
                 self._extract_ogg_tags(audio_file, metadata)
             else:
                 # Generic tag extraction for other formats
@@ -1716,14 +2299,8 @@ class DownloadManager:
         # Initialize the download cache
         self.download_cache = DownloadCache()
         
-        # FFmpeg validation with better error handling
-        if not self.config.get('ffmpeg_location'):
-            ffmpeg_path = find_ffmpeg()
-            if (ffmpeg_path):
-                self.config['ffmpeg_location'] = ffmpeg_path
-            else:
-                print_ffmpeg_instructions()
-                raise FileNotFoundError("FFmpeg is required but not found. Please install FFmpeg and try again.")
+        # FFmpeg path is already validated during initialization_config
+        # No need for redundant validation here
         
         self.setup_logging()
         self.verify_paths()
@@ -1784,50 +2361,16 @@ class DownloadManager:
             root_logger.addHandler(file_handler)
         except Exception as e:
             logging.error("Failed to setup file logger: %s", e)
-        file_handler = logging.FileHandler(LOG_FILE)
+
     def verify_paths(self) -> None:
         """
-        Verify and create necessary paths with comprehensive validation.
+        Verify and create output directories. FFmpeg validation is handled during startup.
 
-        This method:
-        1. Validates FFmpeg location and executability
-        2. Creates output directories with appropriate permissions
-        3. Performs disk space validation
-        4. Falls back to safe defaults when necessary
-        5. Provides detailed error information for troubleshooting
-
-        Raises:
-            FileNotFoundError: If FFmpeg cannot be found or is not executable
-            PermissionError: If output directories cannot be accessed due to permissions
-            RuntimeError: If all fallback options fail
+        This method only checks for output directories and creates them if needed,
+        with appropriate fallbacks if the requested directories cannot be created.
         """
-        # Step 1: Verify FFmpeg location with executable check
-        if not os.path.exists(self.config['ffmpeg_location']):
-            logging.debug(f"FFmpeg not found at configured location: {self.config['ffmpeg_location']}")
-            ffmpeg_path = find_ffmpeg()
-            if ffmpeg_path:
-                logging.info(f"Found FFmpeg at alternate location: {ffmpeg_path}")
-                self.config['ffmpeg_location'] = ffmpeg_path
-            else:
-                raise FileNotFoundError(f"FFmpeg not found at {self.config['ffmpeg_location']} and could not be located automatically")
 
-        # Verify FFmpeg is executable by checking specific binary paths
-        ffmpeg_bin = os.path.join(self.config['ffmpeg_location'], 'ffmpeg' + ('.exe' if is_windows() else ''))
-        ffprobe_bin = os.path.join(self.config['ffmpeg_location'], 'ffprobe' + ('.exe' if is_windows() else ''))
-
-        if not os.path.exists(ffmpeg_bin):
-            raise FileNotFoundError(f"FFmpeg binary not found at {ffmpeg_bin}")
-        if not os.path.exists(ffprobe_bin):
-            raise FileNotFoundError(f"FFprobe binary not found at {ffprobe_bin}")
-
-        # Check executable permissions on Unix systems
-        if not is_windows():
-            if not os.access(ffmpeg_bin, os.X_OK):
-                raise PermissionError(f"FFmpeg binary at {ffmpeg_bin} is not executable. Try: chmod +x {ffmpeg_bin}")
-            if not os.access(ffprobe_bin, os.X_OK):
-                raise PermissionError(f"FFprobe binary at {ffprobe_bin} is not executable. Try: chmod +x {ffprobe_bin}")
-
-        # Step 2: Verify and create output directories
+        # Step 1: Verify and create output directories
         dir_map = {
             'video_output': ('Videos', "video files"),
             'audio_output': ('Music', "audio files"),
@@ -1846,7 +2389,7 @@ class DownloadManager:
                     # Verify write permissions with a canary file
                     self._verify_directory_writable(output_dir, key)
 
-                except (OSError, PermissionError) as e:
+                except (OSError) as e:
                     # Try user home directory as first fallback
                     fallback_dir = str(Path.home() / folder_name)
                     logging.warning(f"Failed to create {key} at {output_dir}: {str(e)}")
@@ -1859,7 +2402,7 @@ class DownloadManager:
                         self.config[key] = fallback_dir
                         logging.info(f"Using fallback directory for {content_type}: {fallback_dir}")
 
-                    except (OSError, PermissionError) as e2:
+                    except (OSError) as e2:
                         # Try temp directory as last resort
                         temp_dir = os.path.join(tempfile.gettempdir(), f"snatch_{folder_name.lower()}")
                         logging.warning(f"Failed to use fallback directory {fallback_dir}: {str(e2)}")
@@ -1911,7 +2454,7 @@ class DownloadManager:
             # Clean up
             os.remove(test_file)
             return True
-        except (OSError, PermissionError) as e:
+        except (OSError) as e:
             logging.error(f"Directory {directory} is not writable for {purpose}: {str(e)}")
             raise PermissionError(f"Cannot write to {directory} (needed for {purpose}): {str(e)}")
 
@@ -1926,7 +2469,7 @@ class DownloadManager:
         try:
             # Fast path: Skip processing for temporary fragment files
             filename = d.get('filename', '')
-            if filename and any(marker in os.path.basename(filename) for marker in ('.f', '.part', 'tmp')):
+            if filename and any(marker in os.path.basename(filename) for marker in ('.f', part_ext, 'tmp')):
                 return
 
             status = d['status']
@@ -1983,7 +2526,7 @@ class DownloadManager:
         # Only clear download session if this is a complete file, not a fragment
         filepath = d.get('filename', '')
         is_fragment = filepath and any(marker in os.path.basename(filepath) 
-                                      for marker in ('.f', '.part', 'tmp'))
+                                      for marker in ('.f', part_ext, 'tmp'))
 
         if not is_fragment and self.current_download_url:
             self.download_start_time = None
@@ -1999,7 +2542,7 @@ class DownloadManager:
                 ext = os.path.splitext(filepath)[1].lower()
 
                 # Skip filename cleanup for audio files to ensure post-processing works correctly
-                if ext in AUDIO_EXTENSIONS or ext == '.webm':
+                if ext in AUDIO_EXTENSIONS or ext == webn_ext:
                     logging.debug(f"Skipping filename cleanup for audio file: {filepath}")
                 else:
                     self._cleanup_filename(filepath)
@@ -2304,12 +2847,55 @@ class DownloadManager:
             if os.path.exists(output_file):
                 os.remove(output_file)
             return False
+    def measure_network_speed(timeout: float = 3.0) -> float:
+        """
+        Get network speed by using cached results from previous speed tests.
+        Simply returns the cached result if available, or a conservative default.
 
+        Args:
+            timeout: Ignored, kept for compatibility
+
+        Returns:
+            Network speed in Mbps (megabits per second)
+        """
+        # Check for cached speed test result
+        cache_file = os.path.join(CACHE_DIR, speedtestresult)
+        try:
+            if os.path.exists(cache_file):
+                with open(cache_file, 'r') as f:
+                    data = json.load(f)
+
+                # Use cached result if it exists (no expiration needed since run_speedtest handles that)
+                return data['speed_mbps']
+        except Exception:
+            pass
+        
+        # Return a conservative estimate if no cached result is available
+        return 5.0  # Assume 5 Mbps if no measurement exists
+    
     def get_download_options(self, url: str, audio_only: bool, resolution: Optional[str] = None,
                            format_id: Optional[str] = None, filename: Optional[str] = None,
                            audio_format: str = 'opus', no_retry: bool = False, throttle: Optional[str] = None,
-                           use_aria2c: bool = False, audio_channels: int = 2) -> Dict[str, Any]:
-        """Get download options with improved sanitization and adaptive format selection"""
+                           use_aria2c: bool = False, audio_channels: int = 2, *, test_all_formats: bool = False) -> Dict[str, Any]:
+        """
+        Get download options with optimized format selection and minimal temporary file creation.
+        
+        Args:
+            url: URL to download from
+            audio_only: Whether to download audio only
+            resolution: Target video resolution
+            format_id: Specific format ID to use
+            filename: Custom output filename
+            audio_format: Target audio format for conversion
+            no_retry: Disable retry on error
+            throttle: Download speed limit
+            use_aria2c: Use aria2c for downloading
+            audio_channels: Number of audio channels
+            test_all_formats: Whether to test all available formats (slow)
+            
+        Returns:
+            Dictionary of download options for yt-dlp
+        """
         # Determine output path with fallback
         try:
             output_path = self.config['audio_output'] if audio_only else self.config['video_output']
@@ -2336,7 +2922,7 @@ class DownloadManager:
             
         # Adaptive format selection: if video download and no resolution/format_id provided
         if not audio_only and resolution is None and not format_id:
-            speed = measure_network_speed()
+            speed = self.measure_network_speed()
             if speed < 1.0:
                 resolution = "480"
             elif speed < 3.0:
@@ -2368,7 +2954,7 @@ class DownloadManager:
             'retry_sleep_functions': {'http': lambda attempt: 5 * (2 ** (attempt - 1))}, # Exponential backoff
             'network_retries': 3,         # Retry on network errors
             'allow_unplayable_formats': False,  # Avoid formats that might cause merge issues
-            'check_formats': True,             # Verify formats before downloading
+            'check_formats': False, # Don't test all formats unless explicitly requested
             'quiet': True,  # Suppress verbose output for speed
             'no_warnings': False,  # Keep important warnings
             'postprocessor_args': [ 
@@ -2377,7 +2963,10 @@ class DownloadManager:
                 '-movflags', '+faststart',
                 '-max_muxing_queue_size', '9999' ],  # Faster processing
         }
-        
+            # Only test all formats if explicitly requested
+        if test_all_formats:
+            options['check_formats'] = True
+            logging.info("Testing all available formats (may be slow)")
         # For faster downloads with aria2c
         if use_aria2c:
             # For faster downloads
@@ -2449,7 +3038,7 @@ class DownloadManager:
         if format_id:
             options['format'] = format_id
         elif audio_only:
-            options['format'] = 'bestaudio/best'
+            options['format'] = bestaudio_ext
             options['extract_audio'] = True
             if audio_format == 'flac':
                 # Use a temporary .wav file as intermediate
@@ -2510,6 +3099,12 @@ class DownloadManager:
             else:
                 # For non-FLAC formats such as opus, wav, or m4a
                 # Set appropriate quality settings based on format
+                # Optimized format strings for other audio formats
+                # Use format selectors that prefer higher quality sources
+                # but don't require testing all formats
+                options['format'] = bestaudio_ext
+                options['extract_audio'] = True
+
                 if audio_format == 'opus':
                     preferredquality = '192'  # High quality for opus (128-256 is usually excellent)
                 elif audio_format == 'mp3':
@@ -2525,16 +3120,140 @@ class DownloadManager:
                     'key': 'FFmpegMetadata',
                     'add_metadata': True,
                 }]
-        elif resolution:
-            options['format'] = f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
         else:
-            options['format'] = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
-            if not audio_only:
-                
-                options['merge_output_format'] = 'mp4'
-                # Don't keep original streams
-                options['keepvideo'] = False
+            # Video downloads: optimized format selection without testing
+            if resolution:
+                # Use optimized format string that avoids testing all formats
+                # but still gets the desired resolution
+                format_str = (
+                f'bestvideo[height<={resolution}]+bestaudio/best[height<={resolution}]/best'
+            )
+            else:
+                format_str = (
+                'bestvideo[ext=mp4]+bestaudio[ext=m4a]/'
+                'bestvideo[ext=webm]+bestaudio[ext=webm]/'
+                'bestvideo+bestaudio/'
+                'best'
+            )
+                options['format'] = format_str
+                options['merge_output_format'] = 'mp4'  # Use MP4 as default output format for better compatibility
         return options
+    
+    def _get_optimal_format_ids(self, url: str, info_dict: Dict, audio_only: bool = False, resolution: Optional[str] = None) -> str:
+        """
+        Get optimal format IDs for the given URL without testing all formats.
+        
+        Args:
+            url: The URL to download
+            info_dict: The media info dictionary from yt-dlp
+            audio_only: Whether to download audio only
+            resolution: Target video resolution
+            
+        Returns:
+            Format ID string for yt-dlp
+        """
+        # If no formats available, return default format string
+        if 'formats' not in info_dict or not info_dict['formats']:
+            return 'bestvideo+bestaudio/best' if not audio_only else bestaudio_ext
+        
+        formats = info_dict['formats']
+        
+        # For audio-only downloads
+        if audio_only:
+            # Extract audio formats with quality metrics
+            audio_formats = []
+            for fmt in formats:
+                # Check if format is audio-only or has audio
+                if fmt.get('acodec') != 'none' and (fmt.get('vcodec') == 'none' or audio_only):
+                    # Calculate a quality score based on bitrate and other factors
+                    score = 0
+                    if fmt.get('abr'):  # Audio bitrate
+                        score += fmt.get('abr', 0) * 10
+                    if fmt.get('asr'):  # Audio sample rate
+                        score += fmt.get('asr', 0) / 1000
+                    
+                    # Preferred format bonuses
+                    if fmt.get('ext') in ['m4a', 'aac']:
+                        score += 500  # Prefer AAC formats
+                    elif fmt.get('ext') in ['opus']:
+                        score += 400  # Good quality-size trade-off
+                    elif fmt.get('ext') in ['vorbis', 'ogg']:
+                        score += 300
+                    elif fmt.get('ext') in ['mp3']:
+                        score += 200
+                    
+                    audio_formats.append((fmt, score))
+            
+            # Sort by score and take the best
+            if audio_formats:
+                audio_formats.sort(key=lambda x: x[1], reverse=True)
+                best_audio = audio_formats[0][0]
+                return f"{best_audio['format_id']}/bestaudio/best"
+            
+            # Fallback to default audio selector
+            return bestaudio_ext
+        
+        # For video downloads with resolution constraint
+        if resolution:
+            resolution_int = int(resolution)
+            
+            # Find best video format that meets resolution constraint
+            video_formats = []
+            for fmt in formats:
+                # Check if it's a video format
+                if fmt.get('vcodec') != 'none':
+                    # Check resolution constraint
+                    if fmt.get('height', 0) <= resolution_int:
+                        # Calculate quality score based on codecs, resolution, and fps
+                        score = 0
+                        score += fmt.get('height', 0) * 10  # Resolution is important
+                        score += fmt.get('fps', 0) * 5      # FPS is nice to have
+                        
+                        # Codec preferences
+                        if fmt.get('vcodec', '').startswith('avc') or fmt.get('vcodec', '') == 'h264':
+                            score += 300  # Most compatible
+                        elif fmt.get('vcodec', '').startswith(('vp9', 'av1')):
+                            score += 200  # Good quality but less compatible
+                        
+                        # Container preferences
+                        if fmt.get('ext') == 'mp4':
+                            score += 100  # Most compatible
+                        
+                        # Add bitrate factor
+                        if fmt.get('vbr'):
+                            score += min(fmt.get('vbr', 0) / 100, 30)  # Cap the influence
+                            
+                        video_formats.append((fmt, score))
+            
+            # Sort by score
+            if video_formats:
+                video_formats.sort(key=lambda x: x[1], reverse=True)
+                best_video = video_formats[0][0]
+                
+                # Now find best audio to pair with it
+                audio_formats = []
+                for fmt in formats:
+                    if fmt.get('acodec') != 'none' and fmt.get('vcodec') == 'none':
+                        # Calculate audio quality score
+                        score = 0
+                        if fmt.get('abr'):
+                            score += fmt.get('abr', 0) * 10
+                        
+                        # Prefer compatible containers
+                        if fmt.get('ext') == best_video.get('ext'):
+                            score += 500
+                        
+                        audio_formats.append((fmt, score))
+                
+                if audio_formats:
+                    audio_formats.sort(key=lambda x: x[1], reverse=True)
+                    best_audio = audio_formats[0][0]
+                    return f"{best_video['format_id']}+{best_audio['format_id']}/{best_video['format_id']}/best"
+        
+        # Default to smart format selection based on extension
+        # This avoids the need for testing while still giving good results
+        return 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best'
+    
     def _check_memory_pressure(self) -> None:
         """Monitor and respond to memory pressure during downloads"""
         try:
@@ -2609,7 +3328,7 @@ class DownloadManager:
 
         # Skip processing for temporary fragments
         if filename and any(marker in os.path.basename(filename) for marker in 
-                            ('.f', '.part', 'tmp')):
+                            ('.f', part_ext, 'tmp')):
             return
 
         if status == 'started':
@@ -2661,7 +3380,7 @@ class DownloadManager:
                 ext = os.path.splitext(filename)[1].lower()
 
                 # If this is the source file for a FLAC conversion, record its completion
-                if ext == '.webm' or ext == '.wav':
+                if ext == webn_ext or ext == '.wav':
                     flac_output = f"{filename}.flac"
                     if os.path.exists(flac_output):
                         # Transfer info dict reference for proper tracking
@@ -2669,7 +3388,7 @@ class DownloadManager:
                         logging.info(f"FLAC conversion succeeded: {flac_output}")
 
                 # Skip filename cleanup for audio files to preserve pipeline
-                if ext in AUDIO_EXTENSIONS or ext == '.webm':
+                if ext in AUDIO_EXTENSIONS or ext == webn_ext:
                     logging.debug(f"Skipping filename cleanup for {ext} file")
                 else:
                     # For video files, perform normal cleanup
@@ -2732,6 +3451,333 @@ class DownloadManager:
         except requests.RequestException as e:
             return False, f"Network error: {str(e)}"
     
+    def _cleanup_temporary_files(self) -> None:
+        """
+        Clean up temporary files created during downloads.
+        """
+        try:
+            # Get common temp directories
+            temp_dirs = [tempfile.gettempdir()]
+            # Add output directories
+            if 'audio_output' in self.config:
+                temp_dirs.append(self.config['audio_output'])
+            if 'video_output' in self.config:
+                temp_dirs.append(self.config['video_output'])
+
+            # Pattern for temporary files created by yt-dlp
+            patterns = [
+                r'.*\.temp\.\w+$',        # Temp files
+                r'.*\.part$',             # Partial downloads
+                r'.*\.ytdl$',             # yt-dlp temp files
+                r'.*\.download$',         # Download in progress
+                r'.*\.download\.\w+$',    # Partial fragment downloads
+                r'.*\.f\d+\.\w+$',        # Format fragment files
+            ]
+
+            # Compile patterns for efficiency
+            compiled_patterns = [re.compile(pattern) for pattern in patterns]
+
+            # Find and clean up temp files older than 1 hour
+            now = time.time()
+            max_age = 3600  # 1 hour in seconds
+            cleaned_files = 0
+            cleaned_bytes = 0
+
+            for temp_dir in temp_dirs:
+                if not os.path.exists(temp_dir):
+                    continue
+
+                for filename in os.listdir(temp_dir):
+                    # Skip non-matching files
+                    if not any(pattern.match(filename) for pattern in compiled_patterns):
+                        continue
+
+                    filepath = os.path.join(temp_dir, filename)
+
+                    try:
+                        # Check file age and size
+                        file_stat = os.stat(filepath)
+                        file_age = now - file_stat.st_mtime
+
+                        # Only delete older files to avoid interfering with active downloads
+                        if file_age > max_age:
+                            file_size = file_stat.st_size
+                            os.unlink(filepath)
+                            cleaned_files += 1
+                            cleaned_bytes += file_size
+                    except (OSError, IOError):
+                        # Skip files we can't access
+                        continue
+                    
+            if cleaned_files > 0:
+                logging.info(f"Cleaned up {cleaned_files} temporary files ({cleaned_bytes / (1024*1024):.2f} MB)")
+        except Exception as e:
+            logging.debug(f"Error cleaning temporary files: {e}")
+        
+    def estimate_download_size(self,info: dict) -> int:
+        """
+        Estimate download size from media info with fallback strategies.
+
+        This function intelligently estimates the size of a download using multiple
+        approaches from most accurate to least accurate:
+        1. Direct filesize from info dict
+        2. Format-specific filesize estimation
+        3. Duration-based estimation
+        4. Type-based conservative guess
+
+        Args:
+            info: Media info dictionary from yt-dlp
+
+        Returns:
+            Estimated size in bytes
+        """
+        # Check direct filesize first (most accurate)
+        if 'filesize' in info and info['filesize']:
+            return info['filesize']
+
+        if 'filesize_approx' in info and info['filesize_approx']:
+            return info['filesize_approx']
+
+        # Look at format entries for size info
+        if 'formats' in info:
+            # Try to find size in best format
+            formats = info['formats']
+
+            # Sort formats by preference: with filesize, higher resolution
+            def format_quality(fmt):
+                has_size = 1000000 if fmt.get('filesize') else 0
+                height = fmt.get('height', 0) or 0
+                return has_size + height
+
+            sorted_formats = sorted(formats, key=format_quality, reverse=True)
+
+            for fmt in sorted_formats:
+                if fmt.get('filesize'):
+                    return fmt['filesize']
+
+        # Estimate based on duration and bitrate
+        duration = info.get('duration', 0)
+        if duration > 0:
+            # For video, use resolution to estimate
+            height = info.get('height', 0)
+            if height > 0:
+                # Estimate bitrate based on resolution
+                if height >= 2160:  # 4K
+                    bitrate = 35000000  # ~35 Mbps
+                elif height >= 1080:  # Full HD
+                    bitrate = 8000000   # ~8 Mbps
+                elif height >= 720:   # HD
+                    bitrate = 5000000   # ~5 Mbps
+                else:  # SD
+                    bitrate = 2500000   # ~2.5 Mbps
+
+                # Calculate: bitrate (bits/sec) * duration (sec) / 8 bits per byte
+                return int(bitrate * duration / 8)
+
+            # For audio only
+            if info.get('audio_channels', 0) > 0 and not info.get('width'):
+                # Estimate based on format
+                if info.get('format', '').lower().find('flac') >= 0:
+                    bitrate = 900000  # ~900 kbps for FLAC
+                else:
+                    bitrate = 192000  # ~192 kbps for most lossy formats
+
+                return int(bitrate * duration / 8)
+
+        # Last resort: make a conservative guess based on type and some properties
+        is_audio = 'audio_channels' in info and info.get('width', 0) == 0
+        is_playlist = info.get('_type') == 'playlist'
+        is_high_quality = info.get('height', 0) >= 1080
+
+        if is_playlist:
+            # Rough estimate for a playlist: assume 10 items at 50MB each
+            return 10 * 50 * 1024 * 1024
+        elif is_audio:
+            # Rough estimate for audio: ~10MB for a song
+            return 10 * 1024 * 1024
+        elif is_high_quality:
+            # High quality video: ~200MB
+            return 200 * 1024 * 1024
+        else:
+            # Default conservative estimate
+            return 50 * 1024 * 1024
+
+    def is_memory_sufficient(self,threshold_mb: int = 1024) -> bool:
+        """
+        Check if system has sufficient memory for downloads.
+
+        This function evaluates both available memory and virtual memory
+        to determine if the system has enough resources for downloading.
+
+        Args:
+            threshold_mb: Minimum required memory in MB
+
+        Returns:
+            True if sufficient memory is available
+        """
+        try:
+            # Get memory info
+            mem = psutil.virtual_memory()
+            swap = psutil.swap_memory()
+
+            # Available physical memory in MB
+            avail_physical_mb = mem.available / (1024 * 1024)
+
+            # Available swap in MB
+            avail_swap_mb = swap.free / (1024 * 1024)
+
+            # Total available memory
+            total_available = avail_physical_mb + (avail_swap_mb * 0.5)  # Count swap at half value
+
+            # Memory is sufficient if:
+            # 1. Available physical memory > 80% of threshold, OR
+            # 2. Total available (counting swap at half value) > threshold
+            return (avail_physical_mb > threshold_mb * 0.8) or (total_available > threshold_mb)
+
+        except Exception as e:
+            # In case of error, assume sufficient (don't block downloads)
+            logging.debug(f"Memory check error: {e}")
+            return True
+
+    def get_available_memory(self) -> int:
+        """
+        Get available system memory in bytes with multi-platform support.
+
+        Returns:
+            Available memory in bytes
+        """
+        try:
+            mem = psutil.virtual_memory()
+            # Return available memory in bytes
+            return mem.available
+        except Exception as e:
+            logging.debug(f"Error getting available memory: {e}")
+            # Return conservative default (1GB) if detection fails
+            return 1 * 1024 * 1024 * 1024
+
+    def measure_network_speed(self,timeout: float = 3.0):
+        """
+        Get network speed by using cached results from previous speed tests.
+        Simply returns the cached result if available, or a conservative default.
+
+        Args:
+            timeout: Ignored, kept for compatibility
+
+        Returns:
+            Network speed in Mbps (megabits per second)
+        """
+        # Check for cached speed test result first
+        cache_file = os.path.join(CACHE_DIR, speedtestresult)
+        try:
+            if os.path.exists(cache_file):
+                with open(cache_file, 'r') as f:
+                    data = json.load(f)
+
+                    return data['speed_mbps']
+        except Exception:
+            pass
+        # Return a conservative estimate if all tests failed
+        return 5.0  # Assume 5 Mbps if measurement fails
+
+
+    def _check_speedtest_needed(self) -> float:
+        """
+        Check if a speed test is needed and prompt user if appropriate.
+
+        Returns:
+            float: Measured speed in Mbps, or 0 if no test was run
+        """
+        # Check for cached speed test result
+        cache_file = os.path.join(CACHE_DIR, speedtestresult)
+        now = time.time()
+
+        try:
+            if os.path.exists(cache_file):
+                with open(cache_file, 'r') as f:
+                    data = json.load(f)
+
+                # If test was run within the last day, use cached result without prompting
+                if now - data['timestamp'] < 86400:  # 24 hours
+                    return data['speed_mbps']
+        except Exception:
+            pass
+        
+        # No recent speed test found, prompt user
+        print(f"\n{Fore.CYAN}No recent network speed test found.{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}Running a speed test will help optimize your download settings.{Style.RESET_ALL}")
+
+        try:
+            choice = input(f"{Fore.GREEN}Run speed test now? (Y/n): {Style.RESET_ALL}").strip().lower()
+            if choice == '' or choice.startswith('y'):
+                return run_speedtest(detailed=False)
+
+            print(f"{Fore.YELLOW}Proceeding with default settings.{Style.RESET_ALL}")
+            return 0
+        except KeyboardInterrupt:
+            print(f"\n{Fore.YELLOW}Speed test skipped. Using default settings.{Style.RESET_ALL}")
+            return 0
+        
+    def _apply_speed_optimized_settings(self, speed_mbps: float, options: dict) -> None:
+        """
+        Apply optimized download settings based on measured network speed.
+
+        Args:
+            speed_mbps: Network speed in Mbps
+            options: Download options dictionary to modify
+        """
+        if speed_mbps <= 0:
+            return
+
+        # Determine optimal settings based on speed
+        if speed_mbps >= 50:  # Very fast connection
+            if self._check_aria2c_available() and not options.get('use_aria2c', False):
+                print(f"\n{Fore.GREEN}Enabling aria2c for faster downloads based on your network speed.{Style.RESET_ALL}")
+                options['use_aria2c'] = True
+
+            # Automatically select video resolution if not specified
+            if not options.get('resolution') and not options.get('audio_only', False):
+                # Fast enough for 4K
+                options['resolution'] = '2160'
+                print(f"{Fore.GREEN}Your connection supports 4K video. Selecting highest quality.{Style.RESET_ALL}")
+
+        elif speed_mbps >= 20:  # Fast connection
+            if self._check_aria2c_available() and not options.get('use_aria2c', False):
+                print(f"\n{Fore.GREEN}Enabling aria2c for faster downloads based on your network speed.{Style.RESET_ALL}")
+                options['use_aria2c'] = True
+
+            # Good for 1080p
+            if not options.get('resolution') and not options.get('audio_only', False):
+                options['resolution'] = '1080'
+                print(f"{Fore.GREEN}Your connection is good for 1080p video.{Style.RESET_ALL}")
+
+        elif speed_mbps >= 10:  # Decent connection
+            # Can handle 1080p but not 4K
+            if not options.get('resolution') and not options.get('audio_only', False):
+                options['resolution'] = '1080'
+                print(f"{Fore.GREEN}Your connection is suitable for 1080p video.{Style.RESET_ALL}")
+
+        elif speed_mbps >= 5:  # Medium connection
+            # Better for 720p
+            if not options.get('resolution') and not options.get('audio_only', False):
+                options['resolution'] = '720'
+                print(f"{Fore.YELLOW}Your connection is best suited for 720p video.{Style.RESET_ALL}")
+
+            # For audio downloads on slower connections, suggest opus instead of flac
+            if options.get('audio_only', False) and options.get('audio_format') == 'flac':
+                print(f"{Fore.YELLOW}Note: FLAC downloads may be slow on your connection. Consider using opus format.{Style.RESET_ALL}")
+
+        else:  # Slow connection
+            # Recommend 480p
+            if not options.get('resolution') and not options.get('audio_only', False):
+                options['resolution'] = '480'
+                print(f"{Fore.YELLOW}Your connection is slow. Using 480p video for better experience.{Style.RESET_ALL}")
+
+            # For slow connections, strongly recommend against flac
+            if options.get('audio_only', False) and options.get('audio_format') == 'flac':
+                print(f"{Fore.RED}Warning: FLAC downloads will be very slow on your connection.{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}Consider using opus or mp3 format instead.{Style.RESET_ALL}")
+
+
     def download(self, url: str, **kwargs) -> bool:
         """Download media with optimized metadata extraction, progress handling, and error management."""
         # Validate URL
@@ -2745,7 +3791,7 @@ class DownloadManager:
             return False
 
         # Check network connectivity with spinner feedback
-        network_spinner = EnhancedSpinnerAnimation("Checking network connection", style="dots", color="cyan")
+        network_spinner = SpinnerAnimation("Checking network connection", style="dots", color="cyan")
         network_spinner.start()
         is_connected, message = self.check_network_connectivity()
         if not is_connected:
@@ -2755,7 +3801,26 @@ class DownloadManager:
             return False
         else:
             network_spinner.stop(clear=True)
+            # Check if the user wants to test all formats (only if not explicitly set)
+        if 'test_all_formats' not in kwargs and not kwargs.get('non_interactive', False):
+            test_formats = False
+            if not kwargs.get('format_id'):  # Only need to ask if no specific format ID is given
+                try:
+                    choice = input(f"\n{Fore.CYAN}Test all available formats for best quality? (slower) (y/N): {Style.RESET_ALL}")
+                    test_formats = choice.strip().lower() == 'y'
+                    if test_formats:
+                        print(f"{Fore.YELLOW}Testing all formats may take longer but can find better quality...{Style.RESET_ALL}")
+                except KeyboardInterrupt:
+                    print("\nSkipping format testing.")
+            kwargs['test_all_formats'] = test_formats
 
+        # New: Check for speed test results and prompt if needed
+        if not kwargs.get('no_speedtest_prompt', False) and not kwargs.get('non_interactive', False):
+            speed_mbps = self._check_speedtest_needed()
+            if speed_mbps > 0:
+                # Apply optimized settings based on speed test
+                self._apply_speed_optimized_settings(speed_mbps, kwargs)
+            
         # Set current download URL for session tracking
         self.current_download_url = url
 
@@ -2781,9 +3846,12 @@ class DownloadManager:
         if not kwargs.get('use_aria2c', False) and self._check_aria2c_available():
             print(f"{Fore.CYAN}Using aria2c for faster downloads{Style.RESET_ALL}")
             kwargs['use_aria2c'] = True
-
+        
+        # Add fast mode by default, can be overridden with test_all_formats
+        fast_mode = not kwargs.get('test_all_formats', False)
+        
         # Start the info spinner and try to get media info (using cache if available)
-        info_spinner = EnhancedSpinnerAnimation("Analyzing media", style="aesthetic")
+        info_spinner = SpinnerAnimation("Analyzing media", style="aesthetic")
         info_spinner.start()
         time.sleep(0.3)  # Brief pause to allow spinner message display
 
@@ -2809,8 +3877,10 @@ class DownloadManager:
                     kwargs.get('no_retry', False),
                     kwargs.get('throttle'),
                     kwargs.get('use_aria2c', False),
-                    kwargs.get('audio_channels', 2)
-                )
+                    kwargs.get('audio_channels', 2),
+                    test_all_formats=kwargs.get('test_all_formats', False) 
+                )   
+                
                 # For video downloads, force merged MP4 output when possible
                 if not kwargs.get('audio_only', False):
                     ydl_opts['merge_output_format'] = 'mp4'
@@ -2851,9 +3921,18 @@ class DownloadManager:
         if info.get('_type') == 'playlist':
             return self._handle_playlist(url, info, **kwargs)
 
+            # OPTIMIZATION: If using fast mode, determine optimal format IDs now
+        explicit_format_id = kwargs.get('format_id')
+        if fast_mode and not explicit_format_id:
+            audio_only = kwargs.get('audio_only', False)
+            resolution = kwargs.get('resolution')
+            optimal_format = self._get_optimal_format_ids(url, info, audio_only, resolution)
+            kwargs['format_id'] = optimal_format
+            logging.debug(f"Selected optimal format: {optimal_format}")
+
         # Check system resource conditions based on estimated download size.
-        est_size = estimate_download_size(info)
-        if est_size > 500 * 1024 * 1024 and not is_memory_sufficient():
+        est_size = self.estimate_download_size(info)
+        if est_size > 500 * 1024 * 1024 and not self.is_memory_sufficient():
             print(f"{Fore.YELLOW}⚠️ Warning: System memory is low. Download may be slow or fail.{Style.RESET_ALL}")
             proceed = input(f"{Fore.CYAN}Continue anyway? (y/n): {Style.RESET_ALL}").lower().startswith('y')
             if not proceed:
@@ -2870,7 +3949,7 @@ class DownloadManager:
             kwargs.get('no_retry', False),
             kwargs.get('throttle'),
             kwargs.get('use_aria2c', False),
-            kwargs.get('audio_channels', 2)
+            kwargs.get('audio_channels', 2),
         )
         ydl_opts['http_chunk_size'] = self._adaptive_chunk_size()
 
@@ -2906,6 +3985,8 @@ class DownloadManager:
                 print(f"{Fore.YELLOW}Network error. Check your internet connection and try again.{Style.RESET_ALL}")
             return False
         finally:
+            # Clean up any temporary files that might have been created
+            self._cleanup_temporary_files()
             with self._download_lock:
                 self._active_downloads.discard(url)
             self.current_download_url = None
@@ -3161,7 +4242,7 @@ class DownloadManager:
         print(f"{Fore.CYAN}Starting batch download of {total} items...{Style.RESET_ALL}")
         
         # Determine optimal concurrency based on system resources
-        available_memory = get_available_memory()
+        available_memory = self.get_available_memory()
         memory_based_limit = max(1, int(available_memory / (500 * 1024 * 1024)))  # ~500MB per download
         
         # Balance between config, memory limitations and CPU cores
@@ -3208,6 +4289,41 @@ class DownloadManager:
                         logging.debug(f"Failed to remove fragment file: {e}")
         except Exception as e:
             logging.debug(f"Error during fragment cleanup: {e}")
+    def fuzzy_match_command(self,input_cmd: str, valid_commands: tuple) -> str:
+        """
+        Match user input to a valid command using fuzzy matching.
+
+        This function helps users by matching their input to the closest valid command,
+        providing a more forgiving command interface that handles typos and variations.
+
+        Args:
+            input_cmd: The user's input command
+            valid_commands: Tuple of valid commands to match against
+
+        Returns:
+            The matched command or the original input if no good match found
+        """
+        # Direct match - return immediately
+        if input_cmd in valid_commands:
+            return input_cmd
+
+        # Check for command prefix match (e.g. "dow" -> "download")
+        prefix_matches = [cmd for cmd in valid_commands if cmd.startswith(input_cmd)]
+        if prefix_matches:
+            return prefix_matches[0]  # Return the first prefix match
+
+        # Check for close matches using difflib
+        matches = get_close_matches(input_cmd, valid_commands, n=1, cutoff=0.6)
+        if matches:
+            return matches[0]
+
+        # Check for substring match (e.g. "load" in "download")
+        substring_matches = [cmd for cmd in valid_commands if input_cmd in cmd]
+        if substring_matches:
+            return substring_matches[0]  # Return the first substring match
+
+        # No good match found, return original
+        return input_cmd
     
     def interactive_mode(self) -> None:
         """Interactive mode for user-friendly operation with improved command dispatch and error handling."""
@@ -3252,7 +4368,11 @@ class DownloadManager:
                 if command.lower() in ('help', '?'):
                     print(EXAMPLES)
                     continue
-                
+                # Speed test command
+                if command.lower() in ('speedtest', 'speed', 'test'):
+                    run_speedtest()
+                    continue
+
                 # If the input looks like a URL, parse potential options.
                 if "://" in command:
                     parts = command.split(maxsplit=1)
@@ -3283,7 +4403,7 @@ class DownloadManager:
                     continue
                     
                 # Use fuzzy matching to adjust the command.
-                matched_command = fuzzy_match_command(command.lower(), self.valid_commands)
+                matched_command = self.fuzzy_match_command(command.lower(), self.valid_commands)
                 if matched_command:
                     command = matched_command
 
@@ -3334,10 +4454,10 @@ class DownloadManager:
     def _adaptive_chunk_size(self) -> int:
         """Dynamically determine optimal chunk size based on available memory"""
         # Get available memory in bytes
-        available_memory = get_available_memory()
+        available_memory = self.get_available_memory()
         
         # Check network speed to adjust chunk size
-        network_speed = measure_network_speed()
+        network_speed = self.measure_network_speed()
 
         # Calculate optimal chunk size based on both network speed and memory
         # Higher speeds need larger chunks to reduce overhead
@@ -3690,17 +4810,30 @@ def test_functionality() -> bool:
     """Run basic tests to verify functionality"""
     print(f"{Fore.CYAN}Running basic tests...{Style.RESET_ALL}")
     try:
-        # Test FFmpeg detection
-        ffmpeg_path = find_ffmpeg()
-        if not ffmpeg_path:
-            print(f"{Fore.RED}FFmpeg not found!{Style.RESET_ALL}")
-            return False
-        print(f"{Fore.GREEN}FFmpeg found at: {ffmpeg_path}{Style.RESET_ALL}")
+        # Test configuration initialization
+        print(f"{Fore.CYAN}Testing configuration...{Style.RESET_ALL}")
+        config = initialize_config(force_validation=True)
         
+                # Check if FFmpeg is available in the config
+        if not config.get('ffmpeg_location') or not validate_ffmpeg_path(config['ffmpeg_location']):
+            print(f"{Fore.RED}FFmpeg not found or invalid!{Style.RESET_ALL}")
+            return False
+        # Wait briefly for background validation to complete
+        for _ in range(10):  # Wait up to 1 second
+            if _ffmpeg_validated:
+                break
+            time.sleep(0.1)
+        if _ffmpeg_validated:
+            print(f"{Fore.GREEN}FFmpeg found at: {config['ffmpeg_location']}{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.YELLOW}FFmpeg validation still in progress...{Style.RESET_ALL}")
+
+        print(f"{Fore.GREEN}FFmpeg found at: {config['ffmpeg_location']}{Style.RESET_ALL}")
 
         print(f"{Fore.GREEN}yt-dlp version: {yt_dlp.version.__version__}{Style.RESET_ALL}")
         
         # Test download manager
+        print(f"{Fore.CYAN}Testing download manager...{Style.RESET_ALL}")
         config = load_config()
         manager = DownloadManager(config)
         manager.interactive_mode()
@@ -3718,6 +4851,10 @@ def main() -> None:
         print(f'Snatch v{VERSION}')
         sys.exit(0)
     
+    if '--speedtest' in sys.argv:
+        run_speedtest()
+        sys.exit(0)
+
     if '--test' in sys.argv:
         print(f"\n{Fore.CYAN}╔{'═' * 40}╗")
         print("║          Snatch Test Suite              ║")
@@ -3730,7 +4867,8 @@ def main() -> None:
         
     if "--interactive" in sys.argv or "-i" in sys.argv:
         try:
-            config = load_config()
+            # Use async initialization to avoid UI delay
+            config = initialize_config_async()
             manager = DownloadManager(config)
             manager.interactive_mode()
             sys.exit(0)
@@ -3740,7 +4878,8 @@ def main() -> None:
     
     if len(sys.argv) == 1:
         try:
-            config = load_config()
+            # Use async initialization to avoid UI delay
+            config = initialize_config_async()
             manager = DownloadManager(config)
             manager.interactive_mode()
             sys.exit(0)
@@ -3781,8 +4920,15 @@ def main() -> None:
     # Audio channels option
     parser.add_argument('--audio-channels', type=int, choices=[2, 8], default=2, help='Audio channels: 2 (stereo) or 8 (7.1 surround)')
     parser.add_argument('--non-interactive', action='store_true', help='Disable interactive prompts')
+    # New option to force FFmpeg validation
+    parser.add_argument('--validate-ffmpeg', action='store_true', help='Force validation of FFmpeg path')
+    # New option to apply all config updates
+    parser.add_argument('--update-config', action='store_true', help='Apply all recommended configuration updates')
+    parser.add_argument('--speedtest', action='store_true', help='Run network speed test to optimize download settings')
+    parser.add_argument('--test-formats', action='store_true', help='Test all available formats (slower but may find better quality)')
+    parser.add_argument('--fast', action='store_true', help='Use fast format selection (default)')
     args = parser.parse_args()
-    
+
     if args.version:
         print(f'Snatch v{VERSION}')
         sys.exit(0)
@@ -3803,7 +4949,16 @@ def main() -> None:
         logging.getLogger().setLevel(logging.DEBUG)
         print(f"{Fore.CYAN}Verbose mode enabled. Detailed logging active.{Style.RESET_ALL}")
     
-    config = load_config()
+    # Initialize and validate configuration
+    force_validation = args.validate_ffmpeg or args.update_config
+    try:
+        # Use async initialization for better UX
+        config = initialize_config_async(force_validation=force_validation)
+    except FileNotFoundError as e:
+        print(f"{Fore.RED}Error: {str(e)}")
+        print(f"{Fore.RED}Please install FFmpeg and try again, or specify a valid path in config.json")
+        sys.exit(1)
+    
     # Add verbose and detailed_progress setting to config
     config['verbose'] = args.verbose
     config['detailed_progress'] = args.detailed_progress
@@ -3825,8 +4980,17 @@ def main() -> None:
         content_type = 'audio' if args.audio_only else 'video'
         config['organization_templates'][content_type] = args.org_template
     
-    manager = DownloadManager(config)
+    # Initialize the download manager with our validated config
+    try:
+        manager = DownloadManager(config)
+    except Exception as e:
+        print(f"{Fore.RED}Error initializing download manager: {str(e)}")
+        sys.exit(1)
     
+    # Check for config updates in the background
+    if not args.update_config:  # Don't show if already applying updates
+        check_for_updates()
+
     # Show system stats if requested
     if args.system_stats:
         display_system_stats()
@@ -3852,7 +5016,9 @@ def main() -> None:
             'throttle': args.throttle,
             'use_aria2c': args.aria2c,  # Make sure aria2c is passed properly
             'audio_channels': args.audio_channels,  # Pass audio channels configuration
-            'non_interactive': args.non_interactive  # Pass non-interactive flag
+            'non_interactive': args.non_interactive,  # Pass non-interactive flag
+            'test_all_formats': args.test_formats  # Add the new option
+            
         }
         
         start_time = time.time()
