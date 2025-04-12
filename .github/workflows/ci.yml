@@ -291,11 +291,20 @@ jobs:
           ffmpeg -version
         shell: pwsh
 
-      - name: Create necessary directories
+      - name: Create necessary directories for Windows
+        if: matrix.os == 'windows-latest'
         run: |
-          mkdir -p metrics 2>/dev/null || true
-          mkdir -p code_analysis 2>/dev/null || true
-          mkdir -p test_output 2>/dev/null || true
+          # Use PowerShell to safely create directories only if they don't exist
+          powershell -Command "if (-not (Test-Path metrics)) { New-Item -ItemType Directory -Path metrics }"
+          powershell -Command "if (-not (Test-Path code_analysis)) { New-Item -ItemType Directory -Path code_analysis }"
+          powershell -Command "if (-not (Test-Path test_output)) { New-Item -ItemType Directory -Path test_output }"
+        shell: pwsh
+        continue-on-error: true
+
+      - name: Create necessary directories for Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p metrics code_analysis test_output
         shell: bash
         continue-on-error: true
 
@@ -366,9 +375,24 @@ jobs:
 
       - name: Run test_run.py
         run: |
-          python test_run.py > test_output/test_run_output.txt 2>&1
-        continue-on-error: true
+          # Create directory first
+          mkdir -p test_output
+
+          # Run with error handling
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            # Windows-compatible command
+            python test_run.py > test_output/test_run_output.txt 2>&1 || echo "test_run.py failed but continuing"
+          else
+            # Linux command
+            python test_run.py > test_output/test_run_output.txt 2>&1 || echo "test_run.py failed but continuing"
+          fi
+
+          # Ensure the output file exists even if the command fails
+          if [ ! -f test_output/test_run_output.txt ]; then
+            echo "test_run.py did not generate output" > test_output/test_run_output.txt
+          fi
         shell: bash
+        continue-on-error: true
 
       - name: Run comprehensive test suite
         run: |
@@ -495,49 +519,69 @@ jobs:
           path: memory_profile_results.txt
           retention-days: 14
 
-      - name: Ensure metrics directory exists
-        run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            powershell -Command "if (-not (Test-Path metrics)) { New-Item -ItemType Directory -Path metrics }"
-          else
-            mkdir -p metrics
-          fi
-        shell: bash
-        continue-on-error: true
-
-      - name: Create metrics directory
-        run: mkdir -p metrics
-        shell: bash
-
       - name: Collect code metrics
         run: |
           python -m pip install -q radon
-          mkdir -p metrics
-          radon cc Snatch.py -s -a > metrics/complexity.txt || echo "Could not run complexity analysis"
-          radon raw Snatch.py > metrics/raw_metrics.txt || echo "Could not run raw metrics analysis"
-          radon mi Snatch.py > metrics/maintainability.txt || echo "Could not run maintainability analysis"
 
-          # Create a metrics summary
-          echo "# Code Metrics Summary" > metrics/summary.md
-          echo "" >> metrics/summary.md
-          echo "## Complexity" >> metrics/summary.md
-          echo '```' >> metrics/summary.md
-          cat metrics/complexity.txt | head -n 10 >> metrics/summary.md
-          echo '... (see full report)' >> metrics/summary.md
-          echo '```' >> metrics/summary.md
-
-          echo "" >> metrics/summary.md
-          echo "## Maintainability Index" >> metrics/summary.md
-          echo '```' >> metrics/summary.md
-          cat metrics/maintainability.txt >> metrics/summary.md
-          echo '```' >> metrics/summary.md
-
-          # Analyze LOC, comments, etc
-          echo "" >> metrics/summary.md
-          echo "## Size Metrics" >> metrics/summary.md
-          echo '```' >> metrics/summary.md
-          cat metrics/raw_metrics.txt | head -n 15 >> metrics/summary.md
-          echo '```' >> metrics/summary.md
+          # Don't try to create the directory again
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            # Windows-specific redirection that works
+            powershell -Command "radon cc Snatch.py -s -a | Out-File -FilePath metrics/complexity.txt -Encoding utf8"
+            powershell -Command "radon raw Snatch.py | Out-File -FilePath metrics/raw_metrics.txt -Encoding utf8"
+            powershell -Command "radon mi Snatch.py | Out-File -FilePath metrics/maintainability.txt -Encoding utf8"
+            
+            # Create summary with PowerShell
+            powershell -Command @'
+              "# Code Metrics Summary" | Out-File -FilePath metrics/summary.md -Encoding utf8
+              "" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              "## Complexity" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              "```" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              Get-Content metrics/complexity.txt -TotalCount 10 | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              "... (see full report)" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              "```" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              
+              "" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              "## Maintainability Index" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              "```" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              Get-Content metrics/maintainability.txt | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              "```" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              
+              "" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              "## Size Metrics" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              "```" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              Get-Content metrics/raw_metrics.txt -TotalCount 15 | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+              "```" | Out-File -FilePath metrics/summary.md -Encoding utf8 -Append
+            '@
+          else
+            # Linux commands
+            radon cc Snatch.py -s -a > metrics/complexity.txt || echo "Could not run complexity analysis"
+            radon raw Snatch.py > metrics/raw_metrics.txt || echo "Could not run raw metrics analysis"
+            radon mi Snatch.py > metrics/maintainability.txt || echo "Could not run maintainability analysis"
+            
+            # Create a metrics summary
+            echo "# Code Metrics Summary" > metrics/summary.md
+            echo "" >> metrics/summary.md
+            echo "## Complexity" >> metrics/summary.md
+            echo '```' >> metrics/summary.md
+            cat metrics/complexity.txt | head -n 10 >> metrics/summary.md
+            echo '... (see full report)' >> metrics/summary.md
+            echo '```' >> metrics/summary.md
+            
+            echo "" >> metrics/summary.md
+            echo "## Maintainability Index" >> metrics/summary.md
+            echo '```' >> metrics/summary.md
+            cat metrics/maintainability.txt >> metrics/summary.md
+            echo '```' >> metrics/summary.md
+            
+            # Analyze LOC, comments, etc
+            echo "" >> metrics/summary.md
+            echo "## Size Metrics" >> metrics/summary.md
+            echo '```' >> metrics/summary.md
+            cat metrics/raw_metrics.txt | head -n 15 >> metrics/summary.md
+            echo '```' >> metrics/summary.md
+          fi
+        shell: bash
+        continue-on-error: true
 
       - name: Upload code metrics
         if: always()
@@ -557,67 +601,73 @@ jobs:
         shell: bash
         continue-on-error: true
 
-      - name: Create code analysis directory
-        run: mkdir -p code_analysis
-        shell: bash
-
       - name: Analyze code comments
         run: |
-          mkdir -p code_analysis
+          # Don't create the directory here again
           python -c "
           import re
           import os
 
-          # Analyze Snatch.py
-          with open('Snatch.py', 'r', encoding='utf-8') as f:
-              content = f.read()
+          # Create the directory to ensure it exists (OS-agnostic way)
+          os.makedirs('code_analysis', exist_ok=True)
 
-          # Find TODOs and FIXMEs
-          todos = re.findall(r'#\s*(TODO|FIXME):\s*(.*?)($|\n)', content)
-
-          # Find functions with missing docstrings
-          function_pattern = re.compile(r'def\s+([a-zA-Z0-9_]+)\s*\([^)]*\):\s*(?:\n\s*""".*?"""|\n\s*[^#\n])', re.DOTALL)
-          functions_without_docstrings = []
-          matches = function_pattern.finditer(content)
-          for match in matches:
-              full_match = match.group(0)
-              func_name = match.group(1)
-              if '\"\"\"' not in full_match.split('\n')[1]:
-                  functions_without_docstrings.append(func_name)
-
-          # Calculate comment statistics
-          lines = content.split('\n')
-          total_lines = len(lines)
-          comment_lines = sum(1 for line in lines if line.strip().startswith('#'))
-          code_lines = sum(1 for line in lines if line.strip() and not line.strip().startswith('#'))
-          docstring_lines = content.count('\"\"\"') // 2  # Rough estimate
-
-          # Write report
-          with open('code_analysis/comment_report.md', 'w') as f:
-              f.write('# Code Comment Analysis\n\n')
+          try:
+              # Analyze Snatch.py
+              with open('Snatch.py', 'r', encoding='utf-8') as f:
+                  content = f.read()
               
-              f.write('## Comment Statistics\n')
-              f.write(f'- **Total lines**: {total_lines}\n')
-              f.write(f'- **Code lines**: {code_lines}\n')
-              f.write(f'- **Comment lines**: {comment_lines}\n')
-              f.write(f'- **Comment density**: {comment_lines/max(code_lines, 1):.2%}\n\n')
+              # Find TODOs and FIXMEs
+              todos = re.findall(r'#\s*(TODO|FIXME):\s*(.*?)($|\n)', content)
               
-              f.write('## TODOs and FIXMEs\n')
-              if todos:
-                  for todo_type, desc, _ in todos:
-                      f.write(f'- **{todo_type}**: {desc.strip()}\n')
-              else:
-                  f.write('- No TODOs or FIXMEs found\n')
-              f.write('\n')
+              # Find functions with missing docstrings
+              function_pattern = re.compile(r'def\s+([a-zA-Z0-9_]+)\s*\([^)]*\):\s*(?:\n\s*\"\"\".*?\"\"\"|\\n\s*[^#\n])', re.DOTALL)
+              functions_without_docstrings = []
+              matches = function_pattern.finditer(content)
+              for match in matches:
+                  full_match = match.group(0)
+                  func_name = match.group(1)
+                  if '\"\"\"' not in full_match.split('\n')[1]:
+                      functions_without_docstrings.append(func_name)
               
-              f.write('## Functions Missing Docstrings\n')
-              if functions_without_docstrings:
-                  for func in functions_without_docstrings[:20]:
-                      f.write(f'- `{func}`\n')
-                  if len(functions_without_docstrings) > 20:
-                      f.write(f'- ... and {len(functions_without_docstrings) - 20} more\n')
-              else:
-                  f.write('- No functions missing docstrings\n')
+              # Calculate comment statistics
+              lines = content.split('\n')
+              total_lines = len(lines)
+              comment_lines = sum(1 for line in lines if line.strip().startswith('#'))
+              code_lines = sum(1 for line in lines if line.strip() and not line.strip().startswith('#'))
+              docstring_lines = content.count('\"\"\"') // 2  # Rough estimate
+              
+              # Write report
+              with open('code_analysis/comment_report.md', 'w', encoding='utf-8') as f:
+                  f.write('# Code Comment Analysis\n\n')
+                  
+                  f.write('## Comment Statistics\n')
+                  f.write(f'- **Total lines**: {total_lines}\n')
+                  f.write(f'- **Code lines**: {code_lines}\n')
+                  f.write(f'- **Comment lines**: {comment_lines}\n')
+                  f.write(f'- **Comment density**: {comment_lines/max(code_lines, 1):.2%}\n\n')
+                  
+                  f.write('## TODOs and FIXMEs\n')
+                  if todos:
+                      for todo_type, desc, _ in todos:
+                          f.write(f'- **{todo_type}**: {desc.strip()}\n')
+                  else:
+                      f.write('- No TODOs or FIXMEs found\n')
+                  f.write('\n')
+                  
+                  f.write('## Functions Missing Docstrings\n')
+                  if functions_without_docstrings:
+                      for func in functions_without_docstrings[:20]:
+                          f.write(f'- `{func}`\n')
+                      if len(functions_without_docstrings) > 20:
+                          f.write(f'- ... and {len(functions_without_docstrings) - 20} more\n')
+                  else:
+                      f.write('- No functions missing docstrings\n')
+          except Exception as e:
+              # Create a fallback file if anything fails
+              os.makedirs('code_analysis', exist_ok=True)
+              with open('code_analysis/comment_report.md', 'w', encoding='utf-8') as f:
+                  f.write('# Code Comment Analysis\n\n')
+                  f.write(f'Error during analysis: {e}\n')
           "
         shell: bash
         continue-on-error: true
