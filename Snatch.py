@@ -63,6 +63,8 @@ def _run_background_init(config: dict) -> None:
     global _ffmpeg_validated, _background_init_complete, _config_updates_available, _update_messages
     
     try:
+        # Initialize _update_messages to an empty list if we're going to use it
+        global _ffmpeg_validated, _background_init_complete, _config_updates_available, _update_messages
         # Check if FFmpeg version is outdated by comparing version number
         if config.get('ffmpeg_location') and validate_ffmpeg_path(config['ffmpeg_location']):
             _ffmpeg_validated = True
