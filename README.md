@@ -14,7 +14,7 @@
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
-![CI Status](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Rashed-alothman/f2ae0a272ff1f011523e43f8c5abad65/raw/snatch-ci-status.json)
+
 <p align="center">
    <img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Rashed-alothman/f2ae0a272ff1f011523e43f8c5abad65/raw/snatch-ci-status.json"/>
    <img src="https://github.com/Rashed-alothman/Snatch/actions/workflows/codeql.yml/badge.svg" alt="CodeQL Status" />
