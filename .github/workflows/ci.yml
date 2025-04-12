@@ -1,0 +1,257 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+    paths:
+      - 'Snatch.py'
+      - 'setup.py'
+      - 'setup_ffmpeg.py'
+      - 'tests/**'
+      - 'requirements.txt'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ "main", "develop" ]
+    paths:
+      - 'Snatch.py'
+      - 'setup.py'
+      - 'setup_ffmpeg.py'
+      - 'tests/**'
+      - 'requirements.txt'
+      - '.github/workflows/**'
+  schedule:
+    - cron: '0 0 * * 0'  # Run weekly on Sundays
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  lint:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'  # Enable pip caching
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8 black isort mypy pylint pydocstyle pycodestyle
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install -e .
+    
+    - name: Check formatting with Black
+      run: black --check Snatch.py setup.py setup_ffmpeg.py tests/
+      
+    - name: Check imports with isort
+      run: isort --check-only --profile black Snatch.py setup.py setup_ffmpeg.py tests/
+    
+    - name: Lint with flake8
+      run: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 Snatch.py setup.py setup_ffmpeg.py tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        # Exit-zero treats all errors as warnings
+        flake8 Snatch.py setup.py setup_ffmpeg.py tests/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Type checking with mypy
+      run: |
+        mypy --ignore-missing-imports Snatch.py setup.py setup_ffmpeg.py
+      continue-on-error: true
+      
+    - name: Check with pylint
+      run: |
+        pylint --disable=all --enable=unused-import,unused-variable,unused-argument,undefined-variable Snatch.py setup.py setup_ffmpeg.py
+      continue-on-error: true
+    
+    - name: Check docstrings with pydocstyle
+      run: |
+        pydocstyle Snatch.py
+      continue-on-error: true
+    
+    - name: Generate linting reports
+      run: |
+        mkdir -p reports
+        flake8 Snatch.py setup.py setup_ffmpeg.py tests/ --output-file=reports/flake8.txt
+        pylint Snatch.py setup.py setup_ffmpeg.py -f json > reports/pylint.json || true
+    
+    - name: Upload linting reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: linting-reports
+        path: reports/
+  
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    needs: lint
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+        exclude:
+          # Optionally exclude some combinations to save CI minutes
+          - os: macos-latest
+            python-version: '3.8'
+      fail-fast: false
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov pytest-xdist pytest-timeout pytest-mock
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install -e .
+      shell: bash
+    
+    - name: Install FFmpeg (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+    
+    - name: Install FFmpeg (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install ffmpeg
+        
+    - name: Install FFmpeg (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        choco install ffmpeg -y
+        
+    - name: Verify FFmpeg installation
+      run: |
+        ffmpeg -version
+      shell: bash
+    
+    - name: Run unit tests
+      run: |
+        pytest tests/unit --cov=. --cov-report=xml --junitxml=test-results.xml -v
+      
+    - name: Run integration tests
+      run: |
+        pytest tests/integration --cov=. --cov-append --cov-report=xml -v --timeout=300
+    
+    - name: Test edge cases and performance
+      run: |
+        pytest tests/performance --cov=. --cov-append --cov-report=xml -v -xvs
+      continue-on-error: true  # Performance tests may be flaky
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-${{ matrix.os }}-${{ matrix.python-version }}
+        path: test-results.xml
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: ${{ matrix.os }},python${{ matrix.python-version }}
+        name: ${{ matrix.os }}-python${{ matrix.python-version }}
+        fail_ci_if_error: false
+    
+    - name: Generate HTML coverage report
+      run: |
+        pip install coverage
+        coverage html
+    
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report-${{ matrix.os }}-${{ matrix.python-version }}
+        path: htmlcov/
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install bandit safety
+    
+    - name: Run Bandit security scanner
+      run: |
+        bandit -r Snatch.py setup.py setup_ffmpeg.py -f json -o bandit-results.json
+      continue-on-error: true
+    
+    - name: Check dependencies for vulnerabilities
+      run: |
+        safety check -r requirements.txt --output json --save safety-results.json
+      continue-on-error: true
+    
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-scan-results
+        path: |
+          bandit-results.json
+          safety-results.json
+
+  build:
+    name: Build Package
+    needs: [test, security-scan]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for proper versioning
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build wheel setuptools twine check-manifest
+    
+    - name: Verify MANIFEST.in
+      run: check-manifest
+      continue-on-error: true
+    
+    - name: Build package
+      run: |
+        python -m build
+    
+    - name: Check package with twine
+      run: |
+        twine check dist/*
+    
+    - name: Store built package
+      uses: actions/upload-artifact@v3
+      with:
+        name: dist
+        path: dist/
+    
+    - name: Verify install from wheel
+      run: |
+        pip install dist/*.whl
+        python -c "import Snatch; print(f'Successfully imported version {Snatch.__version__}')"
