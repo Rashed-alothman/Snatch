@@ -220,7 +220,7 @@ jobs:
       - name: Upload code quality reports
         uses: actions/upload-artifact@v4
         with:
-          name: code-quality-reports
+          name: code-quality-reports-${{ github.run_number }}
           path: reports/
           retention-days: 14
 
@@ -388,6 +388,17 @@ jobs:
         shell: bash
         continue-on-error: true
 
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_number }}
+          path: |
+            coverage_report/
+            coverage.xml
+            coverage_summary.md
+          retention-days: 14
+
       - name: Test performance critical functions
         run: |
           cat > tests/test_performance_critical.py << 'EOL'
@@ -457,6 +468,14 @@ jobs:
           python -m pytest tests/test_performance_critical.py -v
         shell: bash
         continue-on-error: true
+
+      - name: Upload memory profile results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-profile-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_number }}
+          path: memory_profile_results.txt
+          retention-days: 14
 
       - name: Test cross-platform path handling
         run: |
@@ -546,19 +565,11 @@ jobs:
         shell: bash
         continue-on-error: true
 
-      - name: Upload memory profile results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: memory-profile-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: memory_profile_results.txt
-          retention-days: 14
-
       - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: coverage-report-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_number }}
           path: |
             coverage_report/
             coverage.xml
@@ -599,7 +610,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: code-metrics
+          name: code-metrics-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_number }}
           path: metrics/
           retention-days: 14
 
@@ -760,7 +771,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: code-comment-analysis-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: code-comment-analysis-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_number }}
           path: code_analysis/
           retention-days: 14
 
@@ -856,7 +867,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-summary-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: build-summary-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_number }}
           path: build_summary.md
           retention-days: 14
 
@@ -869,7 +880,7 @@ jobs:
       - name: Upload security scan results
         uses: actions/upload-artifact@v4
         with:
-          name: dependency-scan-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: dependency-scan-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_number }}
           path: safety-report.txt
           retention-days: 14
 
@@ -877,7 +888,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: test-results-${{ matrix.os }}-py${{ matrix.python-version }}-${{ github.run_number }}
           path: |
             test_output/
             .pytest_cache/
@@ -934,7 +945,7 @@ jobs:
       - name: Upload patch files
         uses: actions/upload-artifact@v4
         with:
-          name: code-fixes
+          name: code-fixes-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
             snatch_fixes.patch
             code_fixes_explanation.md
@@ -1016,7 +1027,7 @@ jobs:
       - name: Store built package
         uses: actions/upload-artifact@v4
         with:
-          name: dist-packages
+          name: dist-packages-${{ github.run_id }}-${{ github.run_number }}-${{ github.run_attempt }}
           path: dist/
           retention-days: 30
 
@@ -1063,7 +1074,7 @@ jobs:
       - name: Upload documentation
         uses: actions/upload-artifact@v4
         with:
-          name: documentation
+          name: documentation-${{ github.sha }}-${{ github.run_number }}-${{ github.run_attempt }}
           path: docs/
           retention-days: 30
 
