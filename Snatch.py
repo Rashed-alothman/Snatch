@@ -1,44 +1,46 @@
-import sys
-import os
-import yt_dlp
+# Standard library imports
 import argparse
-import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
-from typing import Optional, List, Dict, Any, Union, Tuple, Callable
+import gc
+import hashlib
 import json
+import logging
+import math
+import os
+import platform
+import re
+import shutil
+import signal
+import socket
+import sys
+import tempfile
 import textwrap
-import mutagen
-from mutagen.mp3 import MP3
-from mutagen.flac import FLAC
-import subprocess
-from tqdm import tqdm
 import threading
 import time
-from colorama import init, Fore, Style
-from difflib import get_close_matches
-import shutil
-import re
-import platform
-import signal
-from functools import lru_cache
-import psutil  # Add this import for system resource monitoring
+import unicodedata
 import urllib.parse
-import hashlib
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 from contextlib import contextmanager, suppress
-from typing import Optional, List, Dict, Any, Union, Tuple, Callable, Generator, Iterator
-from collections import OrderedDict  # New import
-import requests  # New import
-# Import additional libraries for metadata handling
+from datetime import datetime
+from difflib import get_close_matches
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Callable, Dict, Generator, Iterator, List, Optional, Tuple, Union
+
+# Third-party imports
+import mutagen
+import psutil  
+import requests  
+import yt_dlp
+import subprocess
+from colorama import Fore, Style, init
+from mutagen.flac import FLAC
 from mutagen.id3 import ID3
+from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 from mutagen.oggvorbis import OggVorbis
-from datetime import datetime
-import unicodedata
-import tempfile  # New import for temporary files
-import socket  # Import socket module for network connectivity check 
-import math  # Import math for mathematical operations
+from tqdm import tqdm
+
 
 # Initialize colorama for Windows support with autoreset for cleaner code
 init(autoreset=True)
@@ -1457,7 +1459,7 @@ class DownloadCache:
             self.lru.pop(key, None)
             self.lru[key] = time.time()
             self._cleanup_if_needed()  # Evict if capacity exceeded
-        except IOError:
+        except IOError as e: # Fixed exception handler
             logging.debug(f"Failed to save cache info: {str(e)}")
             
             
@@ -2673,7 +2675,7 @@ class DownloadManager:
         
         return True
 
-    def _verify_flac_quality(self, audio):
+    def _verify_flac_quality(self, audio)-> bool:
         """Verify FLAC quality and metadata with early returns for performance"""
         # Additional quality checks
         minimum_bitrate = 400000  # 400kbps minimum for FLAC
@@ -2685,7 +2687,8 @@ class DownloadManager:
         if not audio.info.total_samples or not audio.info.length:
             logging.error("Invalid FLAC stream info")
             return False
-
+        
+        return True
     def verify_audio_file(self, filepath: str) -> bool:
         """Enhanced audio file verification with faster checks and better error handling"""
         if not os.path.exists(filepath):
@@ -2715,16 +2718,7 @@ class DownloadManager:
             # Complete verification using existing methods
             if not self._verify_flac_properties(audio) or not self._verify_flac_quality(audio):
                 return False
-
-            # Verify FLAC stream markers
-            with open(filepath, 'rb') as f:
-                header = f.read(4)
-                if header != b'fLaC':
-                    logging.error("Invalid FLAC signature")
-                    return False
-
             return True
-
         except Exception as e:
             logging.error(f"FLAC verification error: {str(e)}")
             return False
@@ -2847,31 +2841,6 @@ class DownloadManager:
             if os.path.exists(output_file):
                 os.remove(output_file)
             return False
-    def measure_network_speed(timeout: float = 3.0) -> float:
-        """
-        Get network speed by using cached results from previous speed tests.
-        Simply returns the cached result if available, or a conservative default.
-
-        Args:
-            timeout: Ignored, kept for compatibility
-
-        Returns:
-            Network speed in Mbps (megabits per second)
-        """
-        # Check for cached speed test result
-        cache_file = os.path.join(CACHE_DIR, speedtestresult)
-        try:
-            if os.path.exists(cache_file):
-                with open(cache_file, 'r') as f:
-                    data = json.load(f)
-
-                # Use cached result if it exists (no expiration needed since run_speedtest handles that)
-                return data['speed_mbps']
-        except Exception:
-            pass
-        
-        # Return a conservative estimate if no cached result is available
-        return 5.0  # Assume 5 Mbps if no measurement exists
     
     def get_download_options(self, url: str, audio_only: bool, resolution: Optional[str] = None,
                            format_id: Optional[str] = None, filename: Optional[str] = None,
@@ -3261,7 +3230,7 @@ class DownloadManager:
             # Take action if memory usage is high
             if vm.percent > 90: # Changed from 80% to 90%
                 # Force garbage collection
-                import gc
+                
                 gc.collect()
 
                 # Clear caches
@@ -3451,68 +3420,6 @@ class DownloadManager:
         except requests.RequestException as e:
             return False, f"Network error: {str(e)}"
     
-    def _cleanup_temporary_files(self) -> None:
-        """
-        Clean up temporary files created during downloads.
-        """
-        try:
-            # Get common temp directories
-            temp_dirs = [tempfile.gettempdir()]
-            # Add output directories
-            if 'audio_output' in self.config:
-                temp_dirs.append(self.config['audio_output'])
-            if 'video_output' in self.config:
-                temp_dirs.append(self.config['video_output'])
-
-            # Pattern for temporary files created by yt-dlp
-            patterns = [
-                r'.*\.temp\.\w+$',        # Temp files
-                r'.*\.part$',             # Partial downloads
-                r'.*\.ytdl$',             # yt-dlp temp files
-                r'.*\.download$',         # Download in progress
-                r'.*\.download\.\w+$',    # Partial fragment downloads
-                r'.*\.f\d+\.\w+$',        # Format fragment files
-            ]
-
-            # Compile patterns for efficiency
-            compiled_patterns = [re.compile(pattern) for pattern in patterns]
-
-            # Find and clean up temp files older than 1 hour
-            now = time.time()
-            max_age = 3600  # 1 hour in seconds
-            cleaned_files = 0
-            cleaned_bytes = 0
-
-            for temp_dir in temp_dirs:
-                if not os.path.exists(temp_dir):
-                    continue
-
-                for filename in os.listdir(temp_dir):
-                    # Skip non-matching files
-                    if not any(pattern.match(filename) for pattern in compiled_patterns):
-                        continue
-
-                    filepath = os.path.join(temp_dir, filename)
-
-                    try:
-                        # Check file age and size
-                        file_stat = os.stat(filepath)
-                        file_age = now - file_stat.st_mtime
-
-                        # Only delete older files to avoid interfering with active downloads
-                        if file_age > max_age:
-                            file_size = file_stat.st_size
-                            os.unlink(filepath)
-                            cleaned_files += 1
-                            cleaned_bytes += file_size
-                    except (OSError, IOError):
-                        # Skip files we can't access
-                        continue
-                    
-            if cleaned_files > 0:
-                logging.info(f"Cleaned up {cleaned_files} temporary files ({cleaned_bytes / (1024*1024):.2f} MB)")
-        except Exception as e:
-            logging.debug(f"Error cleaning temporary files: {e}")
         
     def estimate_download_size(self,info: dict) -> int:
         """
@@ -3655,7 +3562,7 @@ class DownloadManager:
             # Return conservative default (1GB) if detection fails
             return 1 * 1024 * 1024 * 1024
 
-    def measure_network_speed(self,timeout: float = 3.0):
+    def measure_network_speed(self,timeout: float = 3.0) -> float:
         """
         Get network speed by using cached results from previous speed tests.
         Simply returns the cached result if available, or a conservative default.
@@ -3666,18 +3573,95 @@ class DownloadManager:
         Returns:
             Network speed in Mbps (megabits per second)
         """
+        logging.debug(f"Measuring network speed with timeout={timeout}s")
+
         # Check for cached speed test result first
         cache_file = os.path.join(CACHE_DIR, speedtestresult)
+        now = time.time()
         try:
             if os.path.exists(cache_file):
                 with open(cache_file, 'r') as f:
                     data = json.load(f)
-
-                    return data['speed_mbps']
+                    # Use cached result if less than 1 hour old
+                    if now - data['timestamp'] < 3600:
+                        return data['speed_mbps']
         except Exception:
             pass
-        # Return a conservative estimate if all tests failed
-        return 5.0  # Assume 5 Mbps if measurement fails
+        # No cached result or cache expired - perform a quick speed test with timeout constraint
+        spinner = SpinnerAnimation("Testing network speed", style="dots", color="cyan")
+        spinner.start()
+
+        speeds = []
+        start_time = time.time()
+        max_test_time = min(timeout, 8.0)  # Respect the provided timeout, but cap at 8 seconds
+        logging.debug(f"Using max test time of {max_test_time}s")
+        # Define a small test endpoint for quick measurement
+        test_endpoints = [
+        "https://httpbin.org/stream-bytes/51200",  # 50KB - very quick test
+        "https://speed.cloudflare.com/__down?bytes=524288"  # 512KB - quick but more accurate
+    ]   
+        for url in test_endpoints:
+            # Check if we've exceeded our timeout
+            if time.time() - start_time >= max_test_time:
+                spinner.update_status(f"Reached timeout limit of {timeout}s")
+                break
+            spinner.update_status(f"Testing speed with {url}")
+            logging.debug(f"Testing endpoint: {url}")
+            try:
+                # Create a session with a timeout constraint
+                session = requests.Session()
+                # Measure download speed with the specified timeout
+                start = time.time()
+                response = session.get(url, stream=True, timeout=min(timeout/2, 2.0))
+
+                if response.status_code == 200:
+                    total_bytes = 0
+                    for chunk in response.iter_content(chunk_size=8192):
+                        total_bytes += len(chunk)
+                        # Early exit if we're approaching the timeout
+                        if time.time() - start_time >= max_test_time * 0.8:
+                            logging.debug("Approaching timeout, stopping download early")
+                            break
+                    # Calculate speed
+                    elapsed = time.time() - start
+                    if elapsed > 0 and total_bytes > 0:
+                        mbps = (total_bytes * 8) / (elapsed * 1000 * 1000)
+                        speeds.append(mbps)
+                        logging.debug(f"Speed test result: {mbps:.2f} Mbps ({total_bytes} bytes in {elapsed:.2f}s)")
+                        spinner.update_status(f"Measured: {mbps:.2f} Mbps")
+                    else:
+                        logging.debug(f"Invalid measurement: {total_bytes} bytes in {elapsed:.2f}s")
+                else:
+                    logging.debug(f"HTTP error: {response.status_code}")
+                response.close()
+            except requests.RequestException as e:
+                logging.debug(f"Request error testing {url}: {type(e).__name__}: {str(e)}")
+                spinner.update_status(f"Connection error: {e.__class__.__name__}")
+                continue
+        spinner.stop(clear=True)
+        if speeds:
+            speed = sum(speeds) / len(speeds)
+            logging.debug(f"Final speed calculated from {len(speeds)} samples: {speed:.2f} Mbps")
+        else:
+            # Fallback if all tests failed
+            speed = 5.0  # Conservative estimate
+            logging.debug(f"No speed measurements succeeded, using fallback value: {speed} Mbps")
+        # Cache the result
+        try:
+            os.makedirs(CACHE_DIR, exist_ok=True)
+            with open(cache_file, 'w') as f:
+                cache_data = {
+                'timestamp': time.time(),
+                'speed_mbps': speed,
+                'samples': speeds,
+                'timeout_used': timeout
+            }
+                json.dump(cache_data, f)
+                logging.debug(f"Cached speed test result: {speed:.2f} Mbps")
+        except Exception as e:
+            # Ignore cache write failures
+            logging.debug(f"Failed to cache speed test result: {e}")
+        return speed
 
 
     def _check_speedtest_needed(self) -> float:
@@ -3895,7 +3879,7 @@ class DownloadManager:
                         if info:
                             # Update spinner status (with display=False to avoid duplicate printing)
                             if info.get('_type') != 'playlist':
-                                info_spinner.update_status("Processing media info")
+                                info_spinner.update_status("Processing media information")
                             else:
                                 info_spinner.update_status("Processing playlist")
                             serializable_info = self._display_media_info(info, display=False)
@@ -4095,8 +4079,8 @@ class DownloadManager:
         
     def _handle_playlist(self, url: str, info: Dict[str, Any], **kwargs) -> bool:
         """Handle playlist downloads with better UX and resource management"""
-        entries = info.get('entries', [])
-        entry_count = len(list(entries))
+        entries = list(info.get('entries', []))
+        entry_count = len(entries)
         
         if entry_count == 0:
             print(f"{Fore.YELLOW}Playlist contains no videos{Style.RESET_ALL}")
@@ -4431,8 +4415,10 @@ class DownloadManager:
                     # For opus, also give the option for channel configuration
                     url = prompt_url()
                     audio_channels = 2  # Default to stereo for opus
-                    # Only prompt if non_interactive flag is not set
-                    if not getattr(self, 'non_interactive', False):
+
+                    # Check if running in non-interactive mode (attribute might not be set)
+                    is_non_interactive = hasattr(self, 'non_interactive') and self.non_interactive
+                    if not is_non_interactive:
                         audio_channels = prompt_audio_channels()
                     self.download(url, audio_only=True, audio_format='opus', audio_channels=audio_channels)
                 elif command.startswith('list') or command.startswith('sites'):
@@ -4450,7 +4436,7 @@ class DownloadManager:
                 break
             except Exception as e:
                 print(f"{Fore.RED}An error occurred: {str(e)}{Style.RESET_ALL}")
-
+            
     def _adaptive_chunk_size(self) -> int:
         """Dynamically determine optimal chunk size based on available memory"""
         # Get available memory in bytes
@@ -4476,6 +4462,7 @@ class DownloadManager:
         Returns 0 if parsing fails.
         """
         if not throttle:
+            logging.warning("Throttle rate is empty or None, using unlimited speed.")
             return 0
             
         try:
@@ -4499,7 +4486,7 @@ class DownloadManager:
                     
             return int(value)
         except Exception:
-            logging.warning(f"Could not parse throttle rate: {throttle, "using unlimited speed:"}")
+            logging.warning(f"Could not parse throttle rate: {throttle}, using unlimited speed.")
             return 0
             
     def _check_aria2c_available(self) -> bool:
@@ -5511,7 +5498,7 @@ class DetailedProgressDisplay:
         self.downloaded = 0                 # Current downloaded bytes
         self.title = title                  # Display title
         self.start_time = 0                 # Start time (set on first display)
-        
+        self._lock = threading.RLock()       # Thread-safe lock for shared state
         # Display settings
         self.detailed = detailed            # Whether to show detailed stats
         self.show_eta = show_eta            # Whether to show ETA
@@ -5622,8 +5609,11 @@ class DetailedProgressDisplay:
                 # Calculate speed for this sample interval
                 sample_speed = bytes_since_sample / time_since_sample
                 
-                # Add to samples list
-                self._speed_samples.append(sample_speed)
+                with self._lock:  # Add lock protection for thread-safe list modification
+                    self._speed_samples.append(sample_speed)
+                    # Limit samples list size
+                    if len(self._speed_samples) > self._max_samples:
+                        self._speed_samples.pop(0)
                 
                 # Limit samples list size
                 if len(self._speed_samples) > self._max_samples:
