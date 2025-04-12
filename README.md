@@ -14,7 +14,9 @@
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
 
+
 <p align="center">
+   <img src="https://github.com/Rashed-alothman/Snatch/actions/workflows/codeql.yml/badge.svg" alt="CodeQL Status" />
   <img src="https://img.shields.io/badge/version-1.7.0-blue" alt="Version 1.7.0" />
   <img src="https://img.shields.io/badge/python-3.7+-yellow" alt="Python 3.7+" />
   <img src="https://img.shields.io/badge/platforms-Windows%20|%20macOS%20|%20Linux-green" alt="Platforms" />
