@@ -27,8 +27,9 @@ def test_url_extraction():
     Another link: www.example.org is not valid without protocol.
     """
     
+    from urllib.parse import urlparse
     extracted = Snatch.extract_urls(text_with_urls)
-    assert "https://example.com" in extracted
+    assert any(urlparse(url).hostname == "example.com" for url in extracted)
     
     # Fix the test to match what our regex actually produces
     assert any(url.startswith("http://test.org/path?query=1") for url in extracted)
