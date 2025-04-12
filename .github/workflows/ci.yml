@@ -291,19 +291,11 @@ jobs:
           ffmpeg -version
         shell: pwsh
 
-      - name: Create directories
+      - name: Create necessary directories
         run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            mkdir -p metrics code_analysis test_output 2>nul || true
-            if [ ! -f memory_profile_results.txt ]; then
-              echo "# Memory Profile Results" > memory_profile_results.txt
-            fi
-          else
-            mkdir -p metrics code_analysis test_output
-            if [ ! -f memory_profile_results.txt ]; then
-              echo "# Memory Profile Results" > memory_profile_results.txt
-            fi
-          fi
+          mkdir -p metrics 2>/dev/null || true
+          mkdir -p code_analysis 2>/dev/null || true
+          mkdir -p test_output 2>/dev/null || true
         shell: bash
         continue-on-error: true
 
@@ -505,10 +497,10 @@ jobs:
 
       - name: Ensure metrics directory exists
         run: |
-          if [ ! -d metrics ]; then
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            powershell -Command "if (-not (Test-Path metrics)) { New-Item -ItemType Directory -Path metrics }"
+          else
             mkdir -p metrics
-            echo "# Code Metrics Summary" > metrics/summary.md
-            echo "No metrics were generated during testing." >> metrics/summary.md
           fi
         shell: bash
         continue-on-error: true
