@@ -17,6 +17,7 @@
 
 <p align="center">
    <img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Rashed-alothman/f2ae0a272ff1f011523e43f8c5abad65/raw/snatch-ci-status.json"/>
+   <img src=https://github.com/Rashed-alothman/Snatch/actions/workflows/ci.yml/badge.svg>
    <img src="https://github.com/Rashed-alothman/Snatch/actions/workflows/codeql.yml/badge.svg" alt="CodeQL Status" />
   <img src="https://img.shields.io/badge/version-1.7.0-blue" alt="Version 1.7.0" />
   <img src="https://img.shields.io/badge/python-3.7+-yellow" alt="Python 3.7+" />
