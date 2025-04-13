@@ -72,6 +72,9 @@ def _run_background_init(config: dict) -> None:
     """
     global _ffmpeg_validated, _background_init_complete, _config_updates_available, _update_messages
 
+    # Initialize the variable before using it
+    any_updates_found = False
+    
     try:
         # Initialize _update_messages to an empty list if we're going to use it
         # Check if FFmpeg version is outdated by comparing version number
@@ -101,7 +104,7 @@ def _run_background_init(config: dict) -> None:
                                 f"FFmpeg version {version} detected. Consider updating to version 4.0 or newer for better performance."
                             )
                             _config_updates_available = True
-                            any_updates_found = False
+                            any_updates_found = True
             except Exception as e:
                 logging.debug(f"FFmpeg version check failed: {e}")
 
@@ -127,7 +130,7 @@ def _run_background_init(config: dict) -> None:
                 "Added new configuration options. Check your config for new features."
             )
             _config_updates_available = True
-            any_updates_found = False
+            any_updates_found = True
 
             # Save updated config in the background
             try:
@@ -402,113 +405,7 @@ EXAMPLES = """
 """
 
 
-def _cleanup_temporary_files(self) -> None:
-    """
-    Clean up temporary files created during downloads with robust error handling
-    for locked files and permission issues.
-    """
-    try:
-        # Get common temp directories
-        temp_dirs = [tempfile.gettempdir()]
-        # Add output directories
-        if "audio_output" in self.config:
-            temp_dirs.append(self.config["audio_output"])
-        if "video_output" in self.config:
-            temp_dirs.append(self.config["video_output"])
 
-        # Pattern for temporary files created by yt-dlp
-        patterns = [
-            r".*\.temp\.\w+$",  # Temp files
-            r".*\.part$",  # Partial downloads
-            r".*\.ytdl$",  # yt-dlp temp files
-            r".*\.download$",  # Download in progress
-            r".*\.download\.\w+$",  # Partial fragment downloads
-            r".*\.f\d+\.\w+$",  # Format fragment files
-            r".*tmp\w+\.tmp$",  # Windows-style temp files
-        ]
-
-        # Compile patterns for efficiency
-        compiled_patterns = [re.compile(pattern) for pattern in patterns]
-
-        # Find and clean up temp files older than 1 hour
-        now = time.time()
-        max_age = 3600  # 1 hour in seconds
-        cleaned_files = 0
-        cleaned_bytes = 0
-        failed_files = []
-
-        for temp_dir in temp_dirs:
-            if not os.path.exists(temp_dir):
-                continue
-
-            for filename in os.listdir(temp_dir):
-                # Skip non-matching files
-                if not any(pattern.match(filename) for pattern in compiled_patterns):
-                    continue
-
-                filepath = os.path.join(temp_dir, filename)
-
-                try:
-                    # Check file age and size
-                    file_stat = os.stat(filepath)
-                    file_age = now - file_stat.st_mtime
-
-                    # Only delete older files to avoid interfering with active downloads
-                    if file_age > max_age:
-                        file_size = file_stat.st_size
-
-                        # Try different deletion methods for Windows vs POSIX systems
-                        try:
-                            # First attempt: standard deletion
-                            os.unlink(filepath)
-                            cleaned_files += 1
-                            cleaned_bytes += file_size
-                        except PermissionError:
-                            # Windows-specific: Try using system commands for locked files
-                            if os.name == "nt":
-                                try:
-                                    subprocess.run(
-                                        ["cmd", "/c", "del", "/f", "/q", filepath],
-                                        stderr=subprocess.PIPE,
-                                        stdout=subprocess.PIPE,
-                                        timeout=2,
-                                    )
-                                    if not os.path.exists(filepath):
-                                        cleaned_files += 1
-                                        cleaned_bytes += file_size
-                                    else:
-                                        failed_files.append(filepath)
-                                except Exception:
-                                    failed_files.append(filepath)
-                            else:
-                                failed_files.append(filepath)
-                except (OSError, IOError):
-                    # Skip files we can't access
-                    failed_files.append(filepath)
-
-        if cleaned_files > 0:
-            logging.info(
-                f"Cleaned up {cleaned_files} temporary files ({cleaned_bytes / (1024*1024):.2f} MB)"
-            )
-
-        # Log failed deletions in debug mode
-        if failed_files:
-            for failed in failed_files:
-                logging.debug(f'Unable to delete temporary file "{failed}"')
-
-            # Print warning for interactive mode feedback if there are failures
-            if len(failed_files) <= 3:  # Only show if the list is short
-                for failed in failed_files:
-                    print(
-                        f'{Fore.YELLOW}WARNING: Unable to delete temporary file "{failed}"{Style.RESET_ALL}'
-                    )
-            else:
-                print(
-                    f"{Fore.YELLOW}WARNING: Unable to delete {len(failed_files)} temporary files{Style.RESET_ALL}"
-                )
-
-    except Exception as e:
-        logging.debug(f"Error cleaning temporary files: {e}")
 
 
 def run_speedtest(detailed: bool = True) -> float:
@@ -3426,7 +3323,113 @@ class DownloadManager:
                     "mp4"  # Use MP4 as default output format for better compatibility
                 )
         return options
-
+    def _cleanup_temporary_files(self) -> None:
+        """
+        Clean up temporary files created during downloads with robust error handling
+        for locked files and permission issues.
+        """
+        try:
+            # Get common temp directories
+            temp_dirs = [tempfile.gettempdir()]
+            # Add output directories
+            if "audio_output" in self.config:
+                temp_dirs.append(self.config["audio_output"])
+            if "video_output" in self.config:
+                temp_dirs.append(self.config["video_output"])
+    
+            # Pattern for temporary files created by yt-dlp
+            patterns = [
+                r".*\.temp\.\w+$",  # Temp files
+                r".*\.part$",  # Partial downloads
+                r".*\.ytdl$",  # yt-dlp temp files
+                r".*\.download$",  # Download in progress
+                r".*\.download\.\w+$",  # Partial fragment downloads
+                r".*\.f\d+\.\w+$",  # Format fragment files
+                r".*tmp\w+\.tmp$",  # Windows-style temp files
+            ]
+    
+            # Compile patterns for efficiency
+            compiled_patterns = [re.compile(pattern) for pattern in patterns]
+    
+            # Find and clean up temp files older than 1 hour
+            now = time.time()
+            max_age = 3600  # 1 hour in seconds
+            cleaned_files = 0
+            cleaned_bytes = 0
+            failed_files = []
+    
+            for temp_dir in temp_dirs:
+                if not os.path.exists(temp_dir):
+                    continue
+                
+                for filename in os.listdir(temp_dir):
+                    # Skip non-matching files
+                    if not any(pattern.match(filename) for pattern in compiled_patterns):
+                        continue
+                    
+                    filepath = os.path.join(temp_dir, filename)
+    
+                    try:
+                        # Check file age and size
+                        file_stat = os.stat(filepath)
+                        file_age = now - file_stat.st_mtime
+    
+                        # Only delete older files to avoid interfering with active downloads
+                        if file_age > max_age:
+                            file_size = file_stat.st_size
+    
+                            # Try different deletion methods for Windows vs POSIX systems
+                            try:
+                                # First attempt: standard deletion
+                                os.unlink(filepath)
+                                cleaned_files += 1
+                                cleaned_bytes += file_size
+                            except PermissionError:
+                                # Windows-specific: Try using system commands for locked files
+                                if os.name == "nt":
+                                    try:
+                                        subprocess.run(
+                                            ["cmd", "/c", "del", "/f", "/q", filepath],
+                                            stderr=subprocess.PIPE,
+                                            stdout=subprocess.PIPE,
+                                            timeout=2,
+                                        )
+                                        if not os.path.exists(filepath):
+                                            cleaned_files += 1
+                                            cleaned_bytes += file_size
+                                        else:
+                                            failed_files.append(filepath)
+                                    except Exception:
+                                        failed_files.append(filepath)
+                                else:
+                                    failed_files.append(filepath)
+                    except (OSError, IOError):
+                        # Skip files we can't access
+                        failed_files.append(filepath)
+    
+            if cleaned_files > 0:
+                logging.info(
+                    f"Cleaned up {cleaned_files} temporary files ({cleaned_bytes / (1024*1024):.2f} MB)"
+                )
+    
+            # Log failed deletions in debug mode
+            if failed_files:
+                for failed in failed_files:
+                    logging.debug(f'Unable to delete temporary file "{failed}"')
+    
+                # Print warning for interactive mode feedback if there are failures
+                if len(failed_files) <= 3:  # Only show if the list is short
+                    for failed in failed_files:
+                        print(
+                            f'{Fore.YELLOW}WARNING: Unable to delete temporary file "{failed}"{Style.RESET_ALL}'
+                        )
+                else:
+                    print(
+                        f"{Fore.YELLOW}WARNING: Unable to delete {len(failed_files)} temporary files{Style.RESET_ALL}"
+                    )
+    
+        except Exception as e:
+            logging.debug(f"Error cleaning temporary files: {e}")
     def _get_optimal_format_ids(
         self,
         url: str,
