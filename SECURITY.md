@@ -10,9 +10,9 @@ If you believe you have discovered a security vulnerability, please email us imm
 
 ## Response Process
 
-1. We will acknowledge receipt of your report within 72 hours.
-2. A dedicated team will assess the impact and severity of the vulnerability.
-3. We will work on a fix and coordinate the public disclosure to ensure that users can protect themselves.
+1. i will acknowledge receipt of your report within 72 hours.
+2. i will try assess the impact and severity of the vulnerability.
+3. i  will try to work on a fix and coordinate the public disclosure to ensure that users can protect themselves.
 
 ## Additional Guidelines
 
