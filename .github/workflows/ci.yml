@@ -776,10 +776,10 @@ jobs:
           path: build_summary.md
           retention-days: 14
 
-      - name: Check for vulnerable dependencies
+      - name: scan for vulnerable dependencies
         run: |
           pip install safety
-          safety check -r requirements.txt --output text > safety-report.txt || echo "Vulnerabilities found, see report"
+          safety scan -r requirements.txt --output text > safety-report.txt || echo "Vulnerabilities found, see report"
         continue-on-error: true
 
       - name: Upload security scan results
