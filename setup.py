@@ -1,191 +1,101 @@
-#!/usr/bin/env python
-import os
-import sys
-import subprocess
-import platform
-import shutil
+from setuptools import setup, find_packages
 from pathlib import Path
 
-def print_colored(text, color):
-    """Print colored text if colorama is available"""
-    colors = {
-        'green': '\033[92m',
-        'yellow': '\033[93m',
-        'red': '\033[91m',
-        'blue': '\033[94m',
-        'end': '\033[0m'
-    }
-    
-    try:
-        print(f"{colors.get(color, '')}{text}{colors['end']}")
-    except:
-        print(text)
+# Read version from __init__.py
+init_path = Path(__file__).parent / "modules" / "__init__.py"
+with open(init_path) as f:
+    for line in f:
+        if line.startswith("__version__"):
+            version = line.split("=")[1].strip().strip('"\'')
+            break
 
-def is_admin():
-    """Check if running with admin privileges"""
-    try:
-        if platform.system() == "Windows":
-            import ctypes
-            return ctypes.windll.shell32.IsUserAnAdmin() != 0
-        else:
-            return os.geteuid() == 0
-    except:
-        return False
+# Read README for long description
+readme_path = Path(__file__).parent / "README.md"
+long_description = ""
+if readme_path.exists():
+    with open(readme_path, encoding="utf-8") as f:
+        long_description = f.read()
 
-def install_dependencies():
-    """Install Python dependencies"""
-    print_colored("\n[Step 1/4] Installing dependencies...", "blue")
-    
-    # Check if pip is available
-    try:
-        subprocess.run([sys.executable, '-m', 'pip', '--version'], check=True, stdout=subprocess.PIPE)
-    except:
-        print_colored("Error: pip not found. Please install pip first.", "red")
-        return False
-    
-    # Create requirements list
-    requirements = [
-        "yt-dlp>=2023.12.30",
+setup(
+    name="snatch-dl",
+    version=version,
+    description="A versatile media downloader with p2p support",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    author="Rashed AL-Othman",
+    author_email="Rashed.m.alothman@gmail.com",
+    url="https://github.com/Rashed-alothman/Snatch",
+    license="MIT",
+    keywords=["download", "media", "p2p", "youtube", "video"],
+    packages=find_packages(include=["modules", "modules.*"]),
+    package_data={
+        "modules": [
+            "config/*.json",
+            "data/*.txt",
+        ],
+    },
+    # Core dependencies
+    install_requires=[
+        "yt-dlp>=2025.4.30",
+        "ffmpeg>=1.4",
         "mutagen>=1.47.0",
+        "psutil>=7.0.0",
+        
+        # HTTP and networking
+        "requests>=2.32.3",
+        "urllib3>=2.4.0",
+        "certifi>=2025.4.26",
+        "charset-normalizer>=3.4.2",
+        "idna>=3.10",
+        
+        # CLI interface and formatting
+        "typer>=0.15.3",
+        "click>=8.1.8",
+        "rich>=14.0.0",
         "colorama>=0.4.6",
         "tqdm>=4.66.1",
-        "requests>=2.31.0",
-        "psutil>=5.9.0",
-        "requests>=2.31.0"
-    ]
-    
-    # Write to requirements.txt
-    req_path = Path("requirements.txt")
-    try:
-        with open(req_path, 'w') as f:
-            f.write("\n".join(requirements))
-    except:
-        print_colored("Warning: Could not write requirements.txt. Continuing anyway...", "yellow")
-    
-    # Install dependencies
-    try:
-        subprocess.run([sys.executable, '-m', 'pip', 'install', '--upgrade'] + requirements, check=True)
-        print_colored("✓ Dependencies installed successfully!", "green")
-        return True
-    except Exception as e:
-        print_colored(f"Error installing dependencies: {str(e)}", "red")
-        print_colored("Try running as administrator or with --user flag", "yellow")
-        return False
-
-def setup_ffmpeg():
-    """Install FFmpeg using the setup script"""
-    print_colored("\n[Step 2/4] Setting up FFmpeg...", "blue")
-    
-    # Check if setup_ffmpeg.py exists
-    if not os.path.exists("setup_ffmpeg.py"):
-        print_colored("Error: setup_ffmpeg.py not found.", "red")
-        return False
-    
-    # Run the FFmpeg setup script
-    try:
-        subprocess.run([sys.executable, 'setup_ffmpeg.py'], check=True)
-        print_colored("✓ FFmpeg setup completed!", "green")
-        return True
-    except Exception as e:
-        print_colored(f"Error setting up FFmpeg: {str(e)}", "red")
-        return False
-
-def create_launcher():
-    """Create launcher files for easier startup"""
-    print_colored("\n[Step 3/4] Creating launcher files...", "blue")
-    
-    try:
-        # Create batch file for Windows
-        if platform.system() == "Windows":
-            with open("Snatch.bat", "w") as f:
-                f.write('@echo off\n')
-                f.write('echo Starting Snatch...\n')
-                f.write(f'"{sys.executable}" "{os.path.abspath("Snatch.py")}"\n')
-                f.write('if %ERRORLEVEL% NEQ 0 pause\n')
-            print_colored("✓ Created Snatch.bat - Double-click to run the app!", "green")
-            
-        # Create shell script for Unix-like systems
-        else:
-            with open("snatch.sh", "w") as f:
-                f.write('#!/bin/bash\n')
-                f.write('echo "Starting Snatch..."\n')
-                f.write(f'"{sys.executable}" "{os.path.abspath("Snatch.py")}"\n')
-            
-            # Make the script executable
-            os.chmod("snatch.sh", 0o755)
-            print_colored("✓ Created snatch.sh - Run with ./snatch.sh", "green")
-            
-        return True
-    except Exception as e:
-        print_colored(f"Error creating launcher: {str(e)}", "red")
-        print_colored("You can still run the app with: python Snatch.py", "yellow")
-        return False
-
-def check_installation():
-    """Verify that everything is working"""
-    print_colored("\n[Step 4/4] Verifying installation...", "blue")
-    
-    # Check for main script
-    if not os.path.exists("Snatch.py"):
-        print_colored("Error: Snatch.py not found.", "red")
-        return False
-    
-    # Try to run a basic test
-    try:
-        subprocess.run([sys.executable, 'Snatch.py', '--version'], check=True, stdout=subprocess.PIPE)
-        print_colored("✓ Installation verified successfully!", "green")
-        return True
-    except Exception as e:
-        print_colored(f"Error: {str(e)}", "red")
-        return False
-
-def main():
-    print_colored("\n=== Snatch Setup Wizard ===", "blue")
-    
-    # Check for admin rights
-    if not is_admin() and platform.system() == "Windows":
-        print_colored("Warning: Running without administrator privileges. Some features might not work.", "yellow")
-    
-    # Install dependencies
-    if not install_dependencies():
-        if input("Continue anyway? (y/n): ").lower() != 'y':
-            return False
-    
-    # Setup FFmpeg
-    if not setup_ffmpeg():
-        if input("Continue anyway? (y/n): ").lower() != 'y':
-            return False
-    
-    # Create launcher
-    create_launcher()
-    
-    # Check installation
-    if check_installation():
-        print_colored("\n=== Setup Complete! ===", "green")
-        print_colored("\nHow to run Snatch:", "blue")
+        "shellingham>=1.5.0",
         
-        if platform.system() == "Windows":
-            print_colored("1. Double-click Snatch.bat file", "yellow")
-            print_colored("   OR", "blue")
-            print_colored("2. Run: python Snatch.py", "yellow")
-        else:
-            print_colored("1. Run: ./snatch.sh", "yellow")
-            print_colored("   OR", "blue")
-            print_colored("2. Run: python Snatch.py", "yellow")
-            
-        print_colored("\nFor interactive mode:", "blue")
-        print_colored("  python Snatch.py --interactive", "yellow")
+        # Markdown processing
+        "markdown-it-py>=3.0.0",
+        "mdurl>=0.1.2",
+        "Pygments>=2.19.1",
         
-        return True
-    else:
-        print_colored("\n=== Setup Failed ===", "red")
-        print_colored("Please check the errors above and try again.", "yellow")
-        return False
+        # Utilities
+        "python-json-logger>=2.0.4",
+        "asgiref>=3.8.1",
+        "typing_extensions>=4.13.2",
 
-if __name__ == "__main__":
-    try:
-        success = main()
-        sys.exit(0 if success else 1)
-    except KeyboardInterrupt:
-        print_colored("\nSetup cancelled by user.", "yellow")
-        sys.exit(1)
+        # P2P and DHT support
+        "cryptography>=44.0.3",
+        "pyp2p>=0.8.3",
+    ],
+    
+    entry_points={
+        "console_scripts": [
+            "snatch=modules.cli:main",
+        ],
+    },
+    
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Environment :: Console",
+        "Intended Audience :: End Users/Desktop",
+        "License :: OSI Approved :: MIT License", 
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Topic :: Internet :: File Transfer Protocol (FTP)",
+        "Topic :: Multimedia :: Video",
+        "Topic :: Internet :: WWW/HTTP :: Downloaders",
+    ],
+    
+    python_requires=">=3.8",
+    project_urls={
+        "Documentation": "https://github.com/Rashed-alothman/Snatch/wiki",
+        "Source": "https://github.com/Rashed-alothman/Snatch",
+        "Issue Tracker": "https://github.com/Rashed-alothman/Snatch/issues",
+    },
+)

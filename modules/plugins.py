@@ -1,0 +1,1 @@
+#plugin discovery & hook registry
