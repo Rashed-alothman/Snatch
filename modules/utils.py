@@ -270,6 +270,29 @@ class FileOrganizer:
             return None
 
 
+def format_size(size: float) -> str:
+    """
+    Format a size in bytes to a human-readable string.
+    
+    Args:
+        size: Size in bytes
+        
+    Returns:
+        Formatted string like "1.23 MB" or "123 KB"
+    """
+    if size <= 0:
+        return "0 B"
+        
+    units = ['B', 'KB', 'MB', 'GB', 'TB']
+    unit_index = 0
+    
+    while size >= 1024 and unit_index < len(units) - 1:
+        size /= 1024
+        unit_index += 1
+        
+    precision = 0 if unit_index == 0 else 2
+    return f"{size:.{precision}f} {units[unit_index]}"
+
 def format_speed(speed: float) -> str:
     """
     Return a human-friendly speed string.

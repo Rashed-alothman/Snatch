@@ -15,6 +15,7 @@ import os
 import re
 import gc
 import asyncio
+import statistics  # Add missing import
 from typing import (
     Any,
     Callable,
@@ -62,6 +63,90 @@ bestaudio_ext = (
     "bestaudio[ext=wav]/bestaudio[ext=flac]/"
     "bestaudio"
 )
+
+# Audio codec constants
+CODEC_OPUS = "libopus" 
+CODEC_MP3 = "libmp3lame"
+CODEC_FLAC = "flac"
+CODEC_AAC = "aac"
+
+# Quality settings
+QUALITY_HIGH = "high"
+QUALITY_MAX = "max"
+QUALITY_LOSSLESS = "lossless"
+
+quality_settings = {
+    QUALITY_HIGH: {
+        CODEC_OPUS: "192k",
+        CODEC_MP3: "320k", 
+        CODEC_AAC: "192k"
+    },
+    QUALITY_MAX: {
+        CODEC_OPUS: "256k",
+        CODEC_MP3: "320k",
+        CODEC_AAC: "256k"
+    },
+    QUALITY_LOSSLESS: {
+        CODEC_FLAC: "0"
+    }
+}
+
+# Audio format constants and requirements
+AUDIO_FORMATS = {
+    "opus": {
+        "min_sample_rate": 48000,
+        "optimal_bitrate": 192000,
+        "channels": [1, 2, 8],  # Mono, stereo, 7.1
+        "codec": CODEC_OPUS
+    },
+    "mp3": {
+        "min_sample_rate": 44100,
+        "optimal_bitrate": 320000,
+        "channels": [2],  # Stereo only
+        "codec": CODEC_MP3
+    },
+    "flac": {
+        "min_sample_rate": 44100,
+        "min_bit_depth": 16,
+        "optimal_bit_depth": 24,
+        "channels": [2, 8],  # Stereo or 7.1
+        "codec": CODEC_FLAC
+    },
+    "m4a": {
+        "min_sample_rate": 44100,
+        "optimal_bitrate": 256000,
+        "channels": [2],  # Stereo only
+        "codec": CODEC_AAC
+    }
+}
+
+class AudioConversionError(Exception):
+    """Custom exception for audio conversion failures."""
+    pass
+
+def _handle_conversion_error(self, error: Exception, output_file: str) -> None:
+    """Handle audio conversion errors with appropriate logging and cleanup."""
+    error_msg = str(error)
+    logging.error(f"Audio conversion failed: {error_msg}")
+    
+    # Clean up any partial output
+    if os.path.exists(output_file):
+        try:
+            os.remove(output_file)
+        except OSError as e:
+            logging.error(f"Failed to remove failed conversion output: {e}")
+            
+    # Check specific error conditions
+    if "Invalid data found" in error_msg:
+        logging.error("Input file appears to be corrupt or invalid")
+    elif "Sample rate" in error_msg:
+        logging.error("Sample rate conversion failed")
+    elif "Permission denied" in error_msg:
+        logging.error("Permission error accessing audio files")
+    else:
+        logging.error("Unknown conversion error occurred")
+        
+    raise AudioConversionError(f"Conversion failed: {error_msg}")
 
 def clean_filename(filename: str) -> str:
     """
@@ -678,25 +763,37 @@ class DownloadManager:
     """Enhanced download manager with improved performance and resource management"""
 
     def __init__(self, config: Dict[str, Any]):
+        """Initialize download manager with robust session handling."""
         if config is None:
             raise ValueError("Configuration cannot be None")
             
-        self.config = config.copy()  # Make a copy to avoid modifying original
+        self.config = config.copy()
         
-        # Validate required config fields
-        required_fields = ["video_output", "audio_output"]
-        missing_fields = [field for field in required_fields if not config.get(field)]
-        if missing_fields:
-            raise ValueError(f"Missing required configuration fields: {', '.join(missing_fields)}")
-            
-        # Initialize components with null checks
-        self.session_manager = SessionManager()
+        # Create necessary directories
+        for dir_key in ["video_output", "audio_output"]:
+            if path := config.get(dir_key):
+                os.makedirs(path, exist_ok=True)
+            else:
+                raise ValueError(f"Missing required configuration field: {dir_key}")
+        
+        # Set up session management
+        self.session_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sessions")
+        os.makedirs(self.session_dir, exist_ok=True)
+        
+        # Initialize session manager with session file path
+        session_file = os.path.join(self.session_dir, "download_sessions.json")
+        self.session_manager = SessionManager(session_file=session_file)
+        
+        # Initialize other components
         self.download_cache = DownloadCache()
         self.download_stats = DownloadStats(keep_history=True)
         self.file_organizer = FileOrganizer(config)
         
-        self.current_download_url = None  # New attribute for current download URL
-        # Initialize error handling settings
+        # Download tracking
+        self.current_download_url = None
+        self.download_start_time = None
+        
+        # Error handling settings
         self.max_retries = config.get("max_retries", MAX_RETRIES)
         self.retry_delay = config.get("retry_delay", RETRY_SLEEP_BASE)
         self.exponential_backoff = config.get("exponential_backoff", True)
@@ -706,10 +803,11 @@ class DownloadManager:
         self._active_downloads = 0
         self._download_lock = threading.RLock()
         
-        # Track failed URLs for smart retry
+        # Failure tracking
         self._failed_attempts = {}
         self._failed_lock = threading.RLock()
-        # Store info_dict for post-processing
+        
+        # Current download info
         self._current_info_dict = {}
 
     def progress_hook(self, d: Dict[str, Any]) -> None:
@@ -835,8 +933,9 @@ class DownloadManager:
         audio_channels: int = 2,
         resume: bool = False,
         test_all_formats: bool = False,
+        no_cache: bool = False  # Add support for no_cache option
     ) -> Dict[str, Any]:
-        """Get optimized download options."""
+        """Get optimized download options with enhanced flexibility."""
         # Get base output configuration
         options = self._get_base_output_config(audio_only, filename)
         
@@ -858,6 +957,11 @@ class DownloadManager:
         if test_all_formats:
             options["check_formats"] = True
             logging.info("Testing all available formats (may be slower)")
+            
+        # Handle caching options
+        if no_cache:
+            options["no_cache"] = True
+            options["rm_cache_dir"] = True
             
         return options
 
@@ -947,206 +1051,316 @@ class DownloadManager:
 
     def _get_audio_format_options(self, audio_format: str, audio_channels: int) -> Dict[str, Any]:
         """Get audio format specific options."""
-        options = {
-            "format": bestaudio_ext,
-            "extract_audio": True,
-            "postprocessor_args": {
-                "FFmpegExtractAudio": ["-acodec", "copy"],
-                "FFmpegMetadata": ["-id3v2_version", "3"]
-            }
-        }
-        
-        # Configure format-specific options
-        if audio_format == "flac":
-            return self._get_flac_options(audio_channels, options)
-        else:
-            return self._get_other_audio_options(audio_format, options)
-
-    def _get_flac_options(self, audio_channels: int, base_options: Dict[str, Any]) -> Dict[str, Any]:
-        """Configure FLAC-specific options."""
-        if audio_channels == 8:  # 7.1 surround
-            ffmpeg_args = [
-                "-c:a", "flac",
-                "-compression_level", "8",
-                "-sample_fmt", "s32",
-                "-ar", "96000",
-                "-ac", "8",
-                "-bits_per_raw_sample", "24",
-                "-vn",
-                "-af", "aformat=channel_layouts=7.1,loudnorm=I=-16:TP=-1.5:LRA=11:linear=true:dual_mono=false",
-                "-metadata", "encoded_by=Snatch",
-                "-metadata", "SURROUND=7.1",
-                "-metadata", "CHANNELS=8",
-                "-metadata", "BITDEPTH=24",
-                "-metadata", "SAMPLERATE=96000"
-            ]
-        else:  # Stereo FLAC
-            ffmpeg_args = [
-                "-c:a", "flac",
-                "-compression_level", "8",
-                "-sample_fmt", "s32",
-                "-ar", "48000",
-                "-ac", str(audio_channels),
-                "-bits_per_raw_sample", "24",
-                "-vn",
-                "-af", "loudnorm=I=-14:TP=-2:LRA=7,aresample=resampler=soxr:precision=24:dither_method=triangular",
-                "-metadata", "encoded_by=Snatch"
-            ]
-
-        base_options["postprocessors"] = [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "flac",
-                "preferredquality": "0",
-                "nopostoverwrites": True
+        quality_settings = {
+            "high": {
+                "opus": "192k",
+                "mp3": "320k",
+                "m4a": "192k",
+                "flac": "0"  # Lossless
             },
-            {
-                "key": "FFmpegMetadata",
-                "add_metadata": True
+            "max": {
+                "opus": "256k",
+                "mp3": "320k",
+                "m4a": "256k",
+                "flac": "0"  # Lossless
             }
-        ]
-        base_options["postprocessor_args"]["FFmpegExtractAudio"] = ffmpeg_args
-        
-        return base_options
-
-    def _get_other_audio_options(self, audio_format: str, base_options: Dict[str, Any]) -> Dict[str, Any]:
-        """Configure options for non-FLAC audio formats."""
-        quality_map = {
-            "opus": "192",  # High quality for opus
-            "mp3": "320",   # Maximum quality for mp3
-            "m4a": "192",   # High quality for m4a
-            "wav": "0",     # Lossless
-            "flac": "0"     # Lossless
         }
-
-        base_options["postprocessors"] = [
-            {
+        
+        options = {
+            "format": "bestaudio/best",
+            "extract_audio": True,
+            "postprocessors": [{
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": audio_format,
-                "preferredquality": quality_map.get(audio_format, "0"),
+                "preferredquality": quality_settings["max"].get(audio_format, "0"),
                 "nopostoverwrites": True
-            },
-            {
-                "key": "FFmpegMetadata",
-                "add_metadata": True
-            }
+            }]
+        }
+        
+        # Add advanced FFmpeg options for better quality
+        ffmpeg_args = []
+        
+        if audio_format == "flac":
+            ffmpeg_args.extend([
+                "-acodec", "flac",
+                "-compression_level", "12",
+                "-sample_fmt", "s32",
+                "-ar", "96000" if audio_channels == 8 else "48000",
+                "-bits_per_raw_sample", "24"
+            ])
+            
+        elif audio_format == "opus":
+            ffmpeg_args.extend([
+                "-acodec", "libopus",
+                "-b:a", quality_settings["max"]["opus"],
+                "-vbr", "on",
+                "-compression_level", "10"
+            ])
+            
+        elif audio_format == "mp3":
+            ffmpeg_args.extend([
+                "-acodec", "libmp3lame",
+                "-q:a", "0",
+                "-b:a", quality_settings["max"]["mp3"],
+                "-joint_stereo", "1"
+            ])
+            
+        elif audio_format == "m4a":
+            ffmpeg_args.extend([
+                "-acodec", "aac",
+                "-b:a", quality_settings["max"]["m4a"],
+                "-movflags", "+faststart",
+                "-profile:a", "aac_low"
+            ])
+
+        # Add channel-specific options
+        if audio_channels == 8:  # 7.1 surround
+            ffmpeg_args.extend([
+                "-ac", "8",
+                "-channel_layout", "7.1",
+                "-af", "aresample=resampler=soxr:precision=28:dither_method=triangular_hp:filter_size=256"
+            ])
+        else:  # stereo
+            ffmpeg_args.extend([
+                "-ac", "2",
+                "-channel_layout", "stereo",
+                "-af", "aresample=resampler=soxr:precision=24:dither_method=triangular_hp:filter_size=128"
+            ])
+            
+        if ffmpeg_args:
+            if "postprocessor_args" not in options:
+                options["postprocessor_args"] = {}
+            options["postprocessor_args"]["FFmpegExtractAudio"] = ffmpeg_args
+        
+        # Add metadata postprocessor without the problematic metadata field
+        options["postprocessors"].append({
+            "key": "FFmpegMetadata",
+            "add_metadata": True
+        })
+        
+        return options
+
+    def _get_flac_options(self, audio_channels: int, base_options: Dict[str, Any]) -> Dict[str, Any]:
+        """Configure FLAC-specific options for maximum quality."""
+        options = base_options.copy()
+        
+        ffmpeg_args = [
+            "-acodec", CODEC_FLAC, 
+            "-compression_level", "12",
+            "-sample_fmt", "s32"
         ]
         
-        return base_options
-    def measure_network_speed(self, timeout: float = 3.0) -> float:
-        """
-        Get network speed by using cached results from previous speed tests.
-        Simply returns the cached result if available, or a conservative default.
-
-        Args:
-            timeout: Ignored, kept for compatibility
-
-        Returns:
-            Network speed in Mbps (megabits per second)
-        """
-        logging.debug(f"Measuring network speed with timeout={timeout}s")
-
-        # Check for cached speed test result first
-        cache_file = os.path.join(CACHE_DIR, speedtestresult)
-        now = time.time()
-        try:
-            if os.path.exists(cache_file):
-                with open(cache_file, "r") as f:
-                    data = json.load(f)
-                    # Use cached result if less than 1 hour old
-                    if now - data["timestamp"] < 3600:
-                        return data["speed_mbps"]
-        except Exception:
-            pass
-        # No cached result or cache expired - perform a quick speed test with timeout constraint
-        spinner = Spinner("Testing network speed", style="dots", color="cyan")
-        spinner.start()
-
-        speeds = []
-        start_time = time.time()
-        max_test_time = min(
-            timeout, 8.0
-        )  # Respect the provided timeout, but cap at 8 seconds
-        logging.debug(f"Using max test time of {max_test_time}s")
-        # Define a small test endpoint for quick measurement
-        test_endpoints = [
-            "https://httpbin.org/stream-bytes/51200",  # 50KB - very quick test
-            "https://speed.cloudflare.com/__down?bytes=524288",  # 512KB - quick but more accurate
-        ]
-        for url in test_endpoints:
-            # Check if we've exceeded our timeout
-            if time.time() - start_time >= max_test_time:
-                spinner.update_status(f"Reached timeout limit of {timeout}s")
-                break
-            spinner.update_status(f"Testing speed with {url}")
-            logging.debug(f"Testing endpoint: {url}")
-            try:
-                # Create a session with a timeout constraint
-                session = requests.Session()
-                # Measure download speed with the specified timeout
-                start = time.time()
-                response = session.get(url, stream=True, timeout=min(timeout / 2, 2.0))
-
-                if response.status_code == 200:
-                    total_bytes = 0
-                    for chunk in response.iter_content(chunk_size=8192):
-                        total_bytes += len(chunk)
-                        # Early exit if we're approaching the timeout
-                        if time.time() - start_time >= max_test_time * 0.8:
-                            logging.debug(
-                                "Approaching timeout, stopping download early"
-                            )
-                            break
-                    # Calculate speed
-                    elapsed = time.time() - start
-                    if elapsed > 0 and total_bytes > 0:
-                        mbps = (total_bytes * 8) / (elapsed * 1000 * 1000)
-                        speeds.append(mbps)
-                        logging.debug(
-                            f"Speed test result: {mbps:.2f} Mbps ({total_bytes} bytes in {elapsed:.2f}s)"
-                        )
-                        spinner.update_status(f"Measured: {mbps:.2f} Mbps")
-                    else:
-                        logging.debug(
-                            f"Invalid measurement: {total_bytes} bytes in {elapsed:.2f}s"
-                        )
-                else:
-                    logging.debug(f"HTTP error: {response.status_code}")
-                response.close()
-            except requests.RequestException as e:
-                logging.debug(
-                    f"Request error testing {url}: {type(e).__name__}: {str(e)}"
+        if audio_channels == 8:  # 7.1 surround
+            ffmpeg_args.extend([
+                "-ac", "8",
+                "-channel_layout", "7.1",
+                "-ar", "96000",  # High sample rate for surround
+                "-af", (
+                    "aformat=channel_layouts=7.1,"
+                    "aresample=resampler=soxr:precision=28:dither_method=triangular_hp:filter_size=256,"
+                    "loudnorm=I=-16:TP=-1.5:LRA=11"
                 )
-                spinner.update_status(f"Connection error: {e.__class__.__name__}")
-                continue
-        spinner.stop(clear=True)
-        if speeds:
-            speed = sum(speeds) / len(speeds)
-            logging.debug(
-                f"Final speed calculated from {len(speeds)} samples: {speed:.2f} Mbps"
-            )
-        else:
-            # Fallback if all tests failed
-            speed = 5.0  # Conservative estimate
-            logging.debug(
-                f"No speed measurements succeeded, using fallback value: {speed} Mbps"
-            )
-        # Cache the result
+            ])
+        else:  # stereo
+            ffmpeg_args.extend([
+                "-ac", "2", 
+                "-channel_layout", "stereo",
+                "-ar", "48000",  # Standard high quality
+                "-af", (
+                    "aformat=channel_layouts=stereo,"
+                    "aresample=resampler=soxr:precision=24:dither_method=triangular_hp,"
+                    "loudnorm=I=-14:TP=-1:LRA=9"
+                )
+            ])
+            
+        options["postprocessor_args"] = {"FFmpegExtractAudio": ffmpeg_args}
+        
+        # Add metadata postprocessor
+        options["postprocessors"].append({
+            "key": "FFmpegMetadata",
+            "add_metadata": True
+        })
+        
+        return options
+
+    def _validate_audio_file(self, filepath: str, expected_format: str) -> bool:
+        """Validate audio file format and quality."""
         try:
-            os.makedirs(CACHE_DIR, exist_ok=True)
-            with open(cache_file, "w") as f:
-                cache_data = {
-                    "timestamp": time.time(),
-                    "speed_mbps": speed,
-                    "samples": speeds,
-                    "timeout_used": timeout,
-                }
-                json.dump(cache_data, f)
-                logging.debug(f"Cached speed test result: {speed:.2f} Mbps")
+            audio = mutagen.File(filepath)
+            if not audio or not audio.info:
+                logging.error(f"Failed to read audio file: {filepath}")
+                return False
+                
+            if not self._validate_basic_audio(audio, filepath):
+                return False
+                
+            if not self._validate_format_specific(audio, expected_format):
+                return False
+                
+            return True
+            
         except Exception as e:
-            # Ignore cache write failures
-            logging.debug(f"Failed to cache speed test result: {e}")
-        return speed
+            logging.error(f"Audio validation error: {str(e)}")
+            return False
+
+    def _validate_basic_audio(self, audio: Any, filepath: str) -> bool:
+        """Validate basic audio properties."""
+        # Check file size
+        filesize = os.path.getsize(filepath)
+        if filesize < 1024:  # 1KB minimum
+            logging.error(f"File too small: {filesize} bytes")
+            return False
+            
+        # Check duration
+        duration = getattr(audio.info, "length", 0)
+        if duration <= 0:
+            logging.error("Invalid duration")
+            return False
+            
+        return True
+
+    def _validate_format_specific(self, audio: Any, format: str) -> bool:
+        """Validate format-specific audio properties."""
+        sample_rate = getattr(audio.info, "sample_rate", 0)
+        bit_depth = getattr(audio.info, "bits_per_raw_sample", 0)
+        
+        if format == "flac":
+            if not isinstance(audio, FLAC):
+                logging.error("Not a valid FLAC file")
+                return False
+            if sample_rate < 44100:
+                logging.error(f"Sample rate too low: {sample_rate}")
+                return False
+            if bit_depth < 16:
+                logging.error(f"Bit depth too low: {bit_depth}")
+                return False
+                
+        elif format == "opus":
+            if sample_rate < 48000:
+                logging.warning(f"Opus sample rate lower than optimal: {sample_rate}")
+                
+        elif format == "mp3":
+            if not hasattr(audio.info, "bitrate") or audio.info.bitrate < 320000:
+                logging.warning("MP3 bitrate lower than maximum quality")
+                
+        return True
+
+    def extract_info(self, url: str) -> Optional[Dict[str, Any]]:
+        """Extract comprehensive information about media from a URL."""
+        if not url:
+            logging.error("No URL provided for info extraction")
+            return None
+
+        try:
+            yt_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+                'format': 'best',
+                'extract_info': True,
+                'write_all_thumbnails': False,
+                'writesubtitles': False,
+                'writeautomaticsub': False,
+                'socket_timeout': 10,
+                'retries': 3
+            }
+            
+            with yt_dlp.YoutubeDL(yt_opts) as ydl:
+                try:
+                    info_dict = ydl.extract_info(url, download=False)
+                    if not info_dict:
+                        logging.error("Failed to extract info: No data returned")
+                        return None
+
+                    # Validate essential fields
+                    if not all(info_dict.get(key) for key in ['title', 'id']):
+                        logging.error("Missing essential info fields")
+                        return None
+                        
+                    # Add additional useful fields
+                    info_dict['download_url'] = url
+                    info_dict['extraction_timestamp'] = int(time.time())
+                    
+                    # Extract audio-specific info safely
+                    audio_info = {
+                        'codec': None,
+                        'bitrate': None,
+                        'sample_rate': None,
+                        'channels': None
+                    }
+                    
+                    if 'formats' in info_dict:
+                        audio_formats = [f for f in info_dict['formats'] 
+                                       if f.get('acodec') and f.get('acodec') != 'none']
+                        if audio_formats:
+                            best_audio = max(audio_formats, 
+                                          key=lambda x: float(x.get('abr', 0) or 0))
+                            audio_info.update({
+                                'codec': best_audio.get('acodec'),
+                                'bitrate': best_audio.get('abr'),
+                                'sample_rate': best_audio.get('asr'),
+                                'channels': best_audio.get('audio_channels')
+                            })
+                    
+                    info_dict['audio_info'] = audio_info
+                    return info_dict
+                    
+                except yt_dlp.utils.DownloadError as de:
+                    logging.error(f"Download error during info extraction: {str(de)}")
+                    return None
+                    
+        except Exception as e:
+            logging.error(f"Error extracting info: {str(e)}")
+            return None
+
+    def _test_endpoint_speed(self, url: str, timeout: float) -> Optional[float]:
+        """Test download speed from a single endpoint."""
+        try:
+            start = time.time()
+            response = requests.get(url, timeout=timeout, stream=True)
+            response.raise_for_status()
+            
+            # Read in chunks to simulate actual download
+            chunk_size = 8192
+            total_size = 0
+            
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if time.time() - start > timeout:
+                    break
+                total_size += len(chunk)
+                
+            duration = time.time() - start
+            if duration > 0:
+                return total_size * 8 / duration  # Convert to bits per second
+                
+        except Exception as e:
+            logging.debug(f"Speed test failed for {url}: {e}")
+            
+        return None
+
+    def measure_network_speed(self, timeout: float = 3.0) -> float:
+        """Measure network download speed using multiple test endpoints."""
+        endpoints = [
+            "https://httpbin.org/stream-bytes/51200",
+            "https://speed.cloudflare.com/__down?bytes=1048576",
+            "https://speed.hetzner.de/100MB.bin"
+        ]
+        
+        speeds = []
+        for url in endpoints:
+            speed = self._test_endpoint_speed(url, timeout)
+            if speed:
+                speeds.append(speed)
+                
+            if len(speeds) >= 2:  # Got enough samples
+                break
+                
+        if not speeds:
+            logging.warning("Speed test failed, using conservative estimate")
+            return 1_000_000  # 1 Mbps fallback
+            
+        # Use median speed to avoid outliers
+        return statistics.median(speeds)
 
     def _get_video_format_options(self, resolution: Optional[str]) -> Dict[str, Any]:
         """Get video format options based on resolution."""
@@ -1241,35 +1455,67 @@ class DownloadManager:
         return results
         
     async def download(self, url: str, **kwargs) -> bool:
-        """Download media with optimized metadata extraction, progress handling, and error management."""
-        # Validate URL
+        """Download media with comprehensive error handling and progress tracking."""
         if not url or not any(url.startswith(p) for p in ('http://', 'https://')):
             print(f"{Fore.RED}Invalid URL: {url}{Style.RESET_ALL}")
             return False
 
-        # Prepare download options with dynamic chunk size
-        ydl_opts = self.get_download_options(
-            audio_only=kwargs.get("audio_only", False),
-            resolution=kwargs.get("resolution"),
-            format_id=kwargs.get("format_id"),
-            filename=kwargs.get("filename"),
-            audio_format=kwargs.get("audio_format", "opus"),
-            no_retry=kwargs.get("no_retry", False),
-            throttle=kwargs.get("throttle"),
-            use_aria2c=kwargs.get("use_aria2c", False),
-            audio_channels=kwargs.get("audio_channels", 2),
-            resume=kwargs.get("resume", False),  # Pass resume parameter
-            test_all_formats=kwargs.get("test_all_formats", False)
-        )
-
         try:
+            # Set current URL for tracking
+            self.current_download_url = url
+            self.download_start_time = time.time()            # Show download options menu and get user choices
+            options = await self._show_download_options_and_get_choices(url)
+            if not options:
+                return False
+                
+            # Update kwargs with user choices
+            kwargs.update(options)
+            
+            # Prepare download options
+            try:
+                ydl_opts = self.get_download_options(**kwargs)
+            except TypeError as e:
+                if 'unexpected keyword argument' in str(e):
+                    # Remove unsupported arguments and retry
+                    valid_kwargs = {k: v for k, v in kwargs.items() 
+                                 if k in self.get_download_options.__code__.co_varnames}
+                    ydl_opts = self.get_download_options(**valid_kwargs)
+                else:
+                    raise
+            
+            # Ensure session directory exists
+            os.makedirs(self.session_dir, exist_ok=True)
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                error_code = ydl.download([url])
-                return error_code == 0
+                try:
+                    error_code = await ydl.download([url])
+                    success = error_code == 0
+                    
+                    if success:
+                        self.session_manager.update_session(url, 100, {"status": "completed"})
+                    else:
+                        self.session_manager.update_session(url, 0, {"error": "Download failed"})
+                        
+                    return success
+                    
+                except yt_dlp.utils.DownloadError as de:
+                    error_msg = str(de)
+                    logging.error(f"Download error for {url}: {error_msg}")
+                    self.session_manager.update_session(url, 0, {"error": error_msg})
+                    return False
+                    
         except Exception as e:
-            logging.error(f"Download failed for {url}: {str(e)}")
-            self.session_manager.update_session(url, 0, {"error": str(e)})
+            error_msg = str(e)
+            logging.error(f"Download failed for {url}: {error_msg}")
+            try:
+                self.session_manager.update_session(url, 0, {"error": error_msg})
+            except Exception as se:
+                logging.error(f"Failed to update session: {se}")
             return False
+            
+        finally:
+            self.current_download_url = None
+            self.download_start_time = None
 
     async def interactive_mode(self) -> None:
         """Interactive download mode with improved UX"""
@@ -1351,6 +1597,116 @@ class DownloadManager:
             result = await run_speedtest()
             progress.update(task, completed=100)
         return result
+
+    def _get_user_choice(self, options: Dict[str, Tuple[str, str]], prompt: str) -> str:
+        """Get a valid user choice from the given options."""
+        while True:
+            choice = input(f"\n{Fore.GREEN}{prompt}:{Style.RESET_ALL} ").strip()
+            if choice in options:
+                return choice
+            print(f"{Fore.RED}Invalid choice. Please select {'-'.join(options.keys())}.{Style.RESET_ALL}")
+
+    def _display_options(self, title: str, options: Dict[str, Tuple[str, str]], emoji: str = "") -> None:
+        """Display a set of options with consistent formatting."""
+        print(f"\n{Fore.YELLOW}{emoji} {title}:{Style.RESET_ALL}")
+        for key, (name, desc) in options.items():
+            print(f"{Fore.CYAN}{key}.{Style.RESET_ALL} {name:<6} [{desc}]")
+
+    def _show_header(self, console: Console, title: str, duration: int) -> None:
+        """Display the header for download options."""
+        console.print(f"\n{Fore.CYAN}┌{'─'*48}┐{Style.RESET_ALL}")
+        console.print(f"{Fore.CYAN}│{Style.RESET_ALL} {Fore.GREEN}Download Options for:{Style.RESET_ALL}")
+        console.print(f"{Fore.CYAN}│{Style.RESET_ALL} {title[:45] + '...' if len(title) > 45 else title}")
+        console.print(f"{Fore.CYAN}│{Style.RESET_ALL} Duration: {time.strftime('%H:%M:%S', time.gmtime(duration))}")
+        console.print(f"{Fore.CYAN}└{'─'*48}┘{Style.RESET_ALL}\n")
+
+    def _show_selections(self, console: Console, choices: Dict[str, Any]) -> None:
+        """Display the final selections."""
+        console.print(f"\n{Fore.CYAN}┌{'─'*48}┐{Style.RESET_ALL}")
+        console.print(f"{Fore.CYAN}│{Style.RESET_ALL} {Fore.GREEN}Selected Options:{Style.RESET_ALL}")
+        for key, value in choices.items():
+            console.print(f"{Fore.CYAN}│{Style.RESET_ALL} {key.replace('_', ' ').title()}: {value}")
+        console.print(f"{Fore.CYAN}└{'─'*48}┘{Style.RESET_ALL}\n")
+
+    async def _show_download_options_and_get_choices(self, url: str) -> Dict[str, Any]:
+        """
+        Display download options menu and get user choices.
+        
+        Returns:
+            Dict containing user's choices for format, quality, and channel options
+        """
+        console = Console()
+        choices = {}
+        
+        # Extract info for available formats
+        info = self.extract_info(url)
+        if not info:
+            return choices
+        
+        title = info.get('title', 'Unknown Title')
+        duration = info.get('duration', 0)
+        
+        # Show header
+        self._show_header(console, title, duration)
+
+        # Audio format selection
+        audio_formats = {
+            "1": ("FLAC", "Lossless, Best Quality"),
+            "2": ("Opus", "High Quality, Efficient"),
+            "3": ("MP3", "320kbps, High Compatibility"),
+            "4": ("M4A", "AAC, Good Quality"),
+        }
+        
+        self._display_options("Audio Format", audio_formats, "🎵")
+        audio_choice = self._get_user_choice(audio_formats, "Select audio format (1-4)")
+        choices['audio_format'] = audio_formats[audio_choice][0].lower()
+
+        # Channel options
+        channel_options = {
+            "1": ("stereo", "Stereo (2.0)"),
+            "2": ("surround", "Surround (7.1) [FLAC Only]")
+        }
+        
+        self._display_options("Channel Options", channel_options, "📢")
+        while True:
+            channel_choice = self._get_user_choice(channel_options, "Select channel option (1-2)")
+            # Only allow surround if FLAC was chosen
+            if channel_choice == "2" and choices['audio_format'] != 'flac':
+                print(f"{Fore.RED}Surround sound is only available with FLAC format.{Style.RESET_ALL}")
+                continue
+            choices['channels'] = channel_options[channel_choice][0]
+            break
+
+        # Video options if available
+        if info.get('formats'):
+            video_formats = [f for f in info['formats'] if f.get('vcodec') != 'none']
+            if video_formats:
+                video_qualities = {
+                    "1": ("2160p", "4K Ultra HD"),
+                    "2": ("1080p", "Full HD"),
+                    "3": ("720p", "HD"),
+                    "4": ("480p", "SD"),
+                    "5": ("auto", "Auto (Based on network speed)")
+                }
+                
+                self._display_options("Video Quality", video_qualities, "🎥")
+                video_choice = self._get_user_choice(video_qualities, "Select video quality (1-5)")
+                choices['video_quality'] = video_qualities[video_choice][0]
+
+        # Additional options
+        subtitle_options = {
+            "1": ("Yes", "Download subtitles if available"),
+            "2": ("No", "Skip subtitles")
+        }
+        
+        self._display_options("Additional Options", subtitle_options, "⚙️")
+        subtitle_choice = self._get_user_choice(subtitle_options, "Download subtitles? (1-2)")
+        choices['download_subtitles'] = subtitle_choice == "1"
+
+        # Show final selections
+        self._show_selections(console, choices)
+        
+        return choices
 
     def _post_process_hook(self, d: Dict[str, Any]) -> None:
         """Hook for handling post-processing with improved audio handling and error recovery."""
@@ -1568,3 +1924,4 @@ class DownloadManager:
                 'error': error,
                 'timestamp': time.time()
             }
+

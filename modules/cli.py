@@ -182,14 +182,65 @@ def system_info():
     display_system_stats()
 
 @app.command()
-def interactive():
-    """Start interactive download mode"""
+def interactive(
+    audio_only: bool = typer.Option(False, "--audio-only", "-a", help="Start in audio-only mode"),
+    output_dir: str = typer.Option(None, "--output-dir", "-o", help="Default output directory"),
+    audio_format: str = typer.Option("opus", "--audio-format", help="Default audio format [opus|mp3|flac|wav|m4a]"),
+    detailed_progress: bool = typer.Option(True, "--detailed-progress/--no-progress", help="Show detailed download progress"),
+    organize: bool = typer.Option(None, "--organize/--no-organize", help="Enable/disable file organization"),
+    non_interactive: bool = typer.Option(False, "--non-interactive", help="Disable interactive prompts"),
+    audio_channels: int = typer.Option(2, "--audio-channels", help="Audio channels: 2 (stereo) or 8 (7.1 surround)"),
+    org_template: str = typer.Option(None, "--org-template", help='Custom organization template (e.g. "{uploader}/{year}/{title}")'),
+    resume: bool = typer.Option(False, "--resume", help="Resume interrupted downloads"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Skip using cached info"),
+    no_retry: bool = typer.Option(False, "--no-retry", help="Do not retry failed downloads"),
+    throttle: str = typer.Option(None, "--throttle", help="Limit download speed (e.g., 500KB/s)"),
+    aria2c: bool = typer.Option(False, "--aria2c", help="Use aria2c for downloading"),
+):
+    """Start interactive download mode with a rich UI"""
     try:
+        # Initialize configuration with CLI options
         config = initialize_config_async()
-        manager = DownloadManager(config)
-        manager.interactive_mode()
+        if config is None:
+            rich.print("[red]Failed to initialize configuration.[/red]")
+            raise typer.Exit(1)
+            
+        # Update config with interactive-specific options
+        config.update({
+            "audio_only": audio_only,
+            "audio_format": audio_format,
+            "detailed_progress": detailed_progress,
+            "organize": organize if organize is not None else config.get("organize", False),
+            "non_interactive": non_interactive,
+            "audio_channels": audio_channels,
+            "resume": resume,
+            "no_cache": no_cache,
+            "no_retry": no_retry,
+            "throttle": throttle,
+            "use_aria2c": aria2c,
+        })
+        
+        # Handle output directory
+        if output_dir:
+            if audio_only:
+                config["audio_output"] = output_dir
+            else:
+                config["video_output"] = output_dir
+                
+        # Handle organization template
+        if org_template:
+            content_type = "audio" if audio_only else "video"
+            config["organization_templates"][content_type] = org_template
+                
+        # Start interactive mode
+        from .interactive_mode import start_interactive_mode
+        start_interactive_mode(config)
+        
+    except KeyboardInterrupt:
+        rich.print("\n[yellow]Interactive mode cancelled.[/yellow]")
+        raise typer.Exit(0)
     except Exception as e:
-        rich.print(f"[red]Error starting interactive mode: {str(e)}[/red]")
+        rich.print(f"[red]Error in interactive mode: {str(e)}[/red]")
         raise typer.Exit(1)
 
 @app.command()
