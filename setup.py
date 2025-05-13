@@ -52,9 +52,11 @@ setup(
         "typer>=0.15.3",
         "click>=8.1.8",
         "rich>=14.0.0",
+        "pyfiglet>=1.0.2",
         "colorama>=0.4.6",
         "tqdm>=4.66.1",
         "shellingham>=1.5.0",
+        "prompt_toolkit>=3.0.43",
         
         # Markdown processing
         "markdown-it-py>=3.0.0",
@@ -64,11 +66,41 @@ setup(
         # Utilities
         "python-json-logger>=2.0.4",
         "asgiref>=3.8.1",
-        "typing_extensions>=4.13.2",
-
-        # P2P and DHT support
+        "typing_extensions>=4.13.2",        # P2P and DHT support
         "cryptography>=44.0.3",
+        "future>=1.0.0",
         "pyp2p>=0.8.3",
+        "twisted>=24.11.0",
+        "cffi>=1.17.1",
+        "attrs>=25.3.0",
+        "service_identity>=24.1.0",
+        "netifaces>=0.11.0",
+        "miniupnpc>=2.3.2",
+        "u-msgpack-python>=2.8.0",  # Required by pyp2p
+        "storjkademlia>=0.7.4",  # Required by pyp2p
+
+        # Additional dependencies
+        "hyperlink>=21.0.0",
+        "imageio>=2.37.0",
+        "imageio-ffmpeg>=0.6.0",
+        "incremental>=24.7.2",
+        "iniconfig>=2.1.0",
+        "ipaddress>=1.0.23",
+        "moviepy>=2.1.2",
+        "netifaces>=0.11.0",
+        "ntplib>=0.4.0",
+        "numpy>=2.2.5",
+        "packaging>=25.0",
+        "pillow>=10.4.0",
+        "pluggy>=1.5.0",
+        "proglog>=0.1.12",
+        "pycparser>=2.22",
+        "pydub>=0.25.1",
+        "pyroute2>=0.9.2",
+        "Twisted>=24.11.0",
+        "wcwidth>=0.2.13",
+        "zope.interface>=7.2",
+        "future>=1.0.0",
     ],
     
     entry_points={
