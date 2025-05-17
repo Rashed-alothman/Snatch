@@ -8,47 +8,12 @@ import logging
 import shutil
 import tqdm
 import time
-import re
 import os
+import math
 import sys
+import json
 
 logger = logging.getLogger(__name__)
-def print_banner():
-    """Display an enhanced colorful welcome banner with snake logo and performance optimizations"""
-    terminal_width = shutil.get_terminal_size().columns
-    banner = f"""
-{Fore.CYAN}╔{'═' * 58}╗
-║  {Fore.GREEN}             ____  {Fore.YELLOW}               _        _      {Fore.CYAN}      ║
-║  {Fore.GREEN}    _____  / ___| {Fore.YELLOW}_ __    __ _  | |_   __| |__   {Fore.CYAN}       ║
-║  {Fore.GREEN}   |_____| \\___ \\ {Fore.YELLOW}| '_ \\  / _` | | __| / _` / /   {Fore.CYAN}      ║
-║  {Fore.GREEN}   |_____| |___) |{Fore.YELLOW}| | | || (_| | | |_ | (_| \\ \\   {Fore.CYAN}      ║
-║  {Fore.GREEN}           |____/ {Fore.YELLOW}|_| |_| \\__,_|  \\__| \\__,_/_/   {Fore.CYAN}      ║
-║  {Fore.GREEN}    /^ ^\\   ___  {Fore.YELLOW}                                  {Fore.CYAN}     ║
-║  {Fore.GREEN}   / 0 0 \\ / _ \\ {Fore.YELLOW}        Download Anything!       {Fore.CYAN}      ║
-║  {Fore.GREEN}   V\\ Y /V / (_) |{Fore.YELLOW}                                {Fore.CYAN}      ║
-║  {Fore.GREEN}    / - \\  \\___/ {Fore.YELLOW}      ~ Videos & Music ~        {Fore.CYAN}       ║
-║  {Fore.GREEN}   /    |         {Fore.YELLOW}                                {Fore.CYAN}      ║
-║  {Fore.GREEN}  *___/||         {Fore.YELLOW}                                {Fore.CYAN}      ║
-╠{'═' * 58}╣
-║     {Fore.GREEN}■ {Fore.WHITE}Version: {Fore.YELLOW}1.7.0{Fore.WHITE}                                   {Fore.CYAN}  ║
-║     {Fore.GREEN}■ {Fore.WHITE}GitHub : {Fore.YELLOW}github.com/Rashed-alothman/Snatch{Fore.WHITE}        {Fore.CYAN} ║
-╠{'═' * 58}╣
-║  {Fore.YELLOW}Type {Fore.GREEN}help{Fore.YELLOW} or {Fore.GREEN}?{Fore.YELLOW} for commands  {Fore.WHITE}|  {Fore.YELLOW}Press {Fore.GREEN}Ctrl+C{Fore.YELLOW} to cancel  {Fore.CYAN}║
-╚{'═' * 58}╝{Style.RESET_ALL}"""
-
-    # Calculate padding for centering
-    lines = banner.split("\n")
-    max_content_width = max(
-        (len(re.sub(r"\x1b\[[0-9;]+m", "", line)) for line in lines if line), default=0
-    )
-    padding = max(0, (terminal_width - max_content_width) // 2)
-
-    # Print banner with padding
-    print("\n" * 2)  # Add some space above banner
-    for line in banner.split("\n"):
-        if line:
-            print(" " * padding + line)
-    print("\n")  # Add space below banner
 
 class DetailedProgressDisplay:
     """
@@ -488,7 +453,83 @@ class DetailedProgressDisplay:
 
         # Update display (throttled internally)
         self.display()
+class HolographicProgress(DetailedProgressDisplay):
+    """Premium progress display with holographic effects and enhanced visuals"""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.holo_colors = ["#00ffff", "#ff00ff", "#9400d3"]  # Cyan, Magenta, Purple
+        self.shimmer_phase = 0
+        self.border_style = "bold cyan"
+        self.box = "round"
+        
+    def _get_progress_bar(self, percent: float) -> str:
+        """Generate holographic progress bar with light effects"""
+        bar_width = min(self.bar_size, max(10, self.max_width - 30))
+        filled_width = int(bar_width * percent / 100)
+        
+        # Create gradient effect
+        gradient_bar = []
+        for i in range(filled_width):
+            color_idx = int((i / filled_width) * (len(self.holo_colors)-1))
+            gradient_bar.append(f"[{self.holo_colors[color_idx]}]█[/]")
+        
+        # Add shimmer effect
+        if self.shimmer_phase % 3 == 0 and filled_width > 3:
+            gradient_bar[-2] = "[white]▓[/]"
+        self.shimmer_phase += 1
+        
+        # Remaining space
+        remaining = "[bright_black]░[/]" * (bar_width - filled_width)
+        
+        return (
+            f"[{self.border_style}]╭[/]" + 
+            "".join(gradient_bar) + 
+            remaining +
+            f"[{self.border_style}]╮[/]\n" +
+            f"[{self.border_style}]╰[/] {percent:5.1f}% [bright_black]◀[/]"
+        )
 
+    def _format_title(self) -> str:
+        """Create shimmering title effect"""
+        title = f"🌀 {self.title}"
+        shimmer_text = ""
+        for i, char in enumerate(title):
+            phase = (self.shimmer_phase + i) % len(self.holo_colors)
+            shimmer_text += f"[{self.holo_colors[phase]}]{char}[/]"
+        return shimmer_text
+
+    def display(self) -> None:
+        """Overridden display with holographic effects"""
+        # Add border padding
+        self.max_width -= 4  # Account for border characters
+        super().display()
+        self.max_width += 4
+
+    def _format_display_header(self) -> None:
+        """Holographic header formatting"""
+        print(f"\n[{self.border_style}]╔{'═' * (self.term_width-2)}╗[/]")
+        title_line = self._format_title().center(self.term_width-4)
+        print(f"[{self.border_style}]║[/] {title_line} [{self.border_style}]║[/]")
+        print(f"[{self.border_style}]╚{'═' * (self.term_width-2)}╝[/]\n")
+
+    def _format_speed(self, speed: float) -> str:
+        """Animated speed display"""
+        if speed > 1e6:  # MB/s range
+            return f"[blink]⚡[/] [cyan]{super()._format_speed(speed)}[/]"
+        return f"[cyan]{super()._format_speed(speed)}[/]"
+
+    def finish(self, success: bool = True) -> None:
+        """Add special effects on completion"""
+        if success:
+            end_msg = "[blink]✅ Download Complete![/]"
+            self.holo_colors = ["#00ff00", "#00ffff", "#00ff00"]  # Green shimmer
+        else:
+            end_msg = "[blink]❌ Download Failed![/]"
+            self.holo_colors = ["#ff0000", "#ff4500", "#ff0000"]  # Red shimmer
+        
+        super().finish(success)
+        print(f"\n[end_msg]", end="")
 class ColorProgressBar:
     """Enhanced progress bar with color support and performance optimizations"""
 
@@ -824,3 +865,472 @@ class Spinner:
             self.thread.join()
         sys.stdout.write("\r" + " " * (len(self.message) + 2) + "\r")
         sys.stdout.flush()
+
+class DownloadStats:
+    """
+    Enhanced download statistics tracker with optimized monitoring and comprehensive reporting.
+
+    This implementation features:
+    - Memory-efficient statistics tracking using running aggregates
+    - Comprehensive performance metrics (avg/median/peak speeds)
+    - Time-series analysis capabilities
+    - Thread-safe operation for concurrent downloads
+    - Export capabilities for further analysis
+    - Adaptive visualization based on terminal capabilities
+    """
+
+    def __init__(self, keep_history: bool = False, history_limit: int = 100):
+        # Core statistics with optimized memory usage
+        self.total_downloads = 0
+        self.successful_downloads = 0
+        self.failed_downloads = 0
+        self.total_bytes = 0
+        self.total_time = 0.0
+        self.start_time = time.time()
+
+        # Performance tracking with running aggregates
+        self.peak_speed = 0.0
+        self._speed_sum = 0.0
+        self._squared_speed_sum = 0.0  # For calculating variance/std dev
+
+        # Thread safety
+        self._lock = threading.RLock()
+
+        # Optional history tracking for time-series analysis
+        self.keep_history = keep_history
+        self.history_limit = history_limit
+        self.download_history = [] if keep_history else None
+
+        # Terminal capabilities detection for optimal display
+        self.term_width = min(shutil.get_terminal_size().columns, 100)
+
+        # Cached properties for efficient repeated access
+        self._cached = {}
+        self._last_cache_time = 0
+        self._cache_ttl = 1.0  # Recalculate values after 1 second
+
+    def add_download(
+        self, success: bool, size_bytes: int = 0, duration: float = 0.0
+    ) -> None:
+        """
+        Record a completed download with thread-safe statistics updates.
+
+        Args:
+            success: Whether the download completed successfully
+            size_bytes: Size of the downloaded file in bytes
+            duration: Duration of the download in seconds
+        """
+        with self._lock:
+            self.total_downloads += 1
+
+            # Clear cache on new data
+            self._cached.clear()
+
+            if success:
+                self.successful_downloads += 1
+
+                if size_bytes > 0 and duration > 0:
+                    # Update aggregated statistics
+                    self.total_bytes += size_bytes
+                    self.total_time += duration
+
+                    # Calculate speed and update running statistics
+                    speed = size_bytes / max(
+                        duration, 0.001
+                    )  # Prevent division by zero
+                    self._speed_sum += speed
+                    self._squared_speed_sum += speed * speed
+                    self.peak_speed = max(self.peak_speed, speed)
+
+                    # Store history if enabled
+                    if self.keep_history:
+                        self.download_history.append(
+                            {
+                                "timestamp": time.time(),
+                                "size": size_bytes,
+                                "duration": duration,
+                                "speed": speed,
+                            }
+                        )
+
+                        # Auto-prune history to limit memory usage
+                        if len(self.download_history) > self.history_limit:
+                            self.download_history = self.download_history[
+                                -self.history_limit :
+                            ]
+            else:
+                self.failed_downloads += 1
+
+    @property
+    def average_speed(self) -> float:
+        """Calculate average download speed with minimal computational overhead."""
+        with self._lock:
+            # Use cached value if available and recent
+            if (
+                "average_speed" in self._cached
+                and time.time() - self._last_cache_time < self._cache_ttl
+            ):
+                return self._cached["average_speed"]
+
+            if self.successful_downloads == 0:
+                return 0.0
+
+            # Two calculation methods:
+            # 1. Based on individual download speeds (more accurate)
+            # 2. Based on aggregate bytes/time (fallback)
+            if self.keep_history and self.download_history:
+                avg_speed = self._speed_sum / self.successful_downloads
+            elif self.total_time > 0:
+                avg_speed = self.total_bytes / self.total_time
+            else:
+                avg_speed = 0.0
+
+            # Cache the result
+            self._cached["average_speed"] = avg_speed
+            self._last_cache_time = time.time()
+            return avg_speed
+
+    @property
+    def median_speed(self) -> float:
+        """Calculate median download speed (central tendency with outlier resistance)."""
+        with self._lock:
+            if (
+                "median_speed" in self._cached
+                and time.time() - self._last_cache_time < self._cache_ttl
+            ):
+                return self._cached["median_speed"]
+
+            if (
+                not self.keep_history
+                or not self.download_history
+                or len(self.download_history) == 0
+            ):
+                return self.average_speed
+
+            speeds = sorted(item["speed"] for item in self.download_history)
+            n = len(speeds)
+
+            # Calculate true median
+            if n % 2 == 0:
+                median = (speeds[n // 2 - 1] + speeds[n // 2]) / 2
+            else:
+                median = speeds[n // 2]
+
+            self._cached["median_speed"] = median
+            return median
+
+    @property
+    def std_deviation(self) -> float:
+        """Calculate standard deviation of download speeds (for consistency analysis)."""
+        with self._lock:
+            if self.successful_downloads < 2:
+                return 0.0
+
+            # Calculate variance using the computational formula:
+            # var = E(X²) - (E(X))²
+            mean_speed = self._speed_sum / self.successful_downloads
+            mean_squared = self._squared_speed_sum / self.successful_downloads
+            variance = mean_squared - (mean_speed * mean_speed)
+
+            # Handle numerical precision issues that can cause small negative values
+            if variance <= 0:
+                return 0.0
+
+            return math.sqrt(variance)
+
+    @property
+    def success_rate(self) -> float:
+        """Calculate percentage of successful downloads."""
+        with self._lock:
+            if self.total_downloads == 0:
+                return 0.0
+            return (self.successful_downloads / self.total_downloads) * 100
+
+    @property
+    def session_duration(self) -> float:
+        """Get total duration of the download session in seconds."""
+        return time.time() - self.start_time
+
+    def _format_size(self, bytes_value: float) -> str:
+        """Format file size in human-readable units."""
+        if bytes_value == 0:
+            return "0 B"
+
+        units = ["B", "KB", "MB", "GB", "TB"]
+        unit_index = 0
+
+        while bytes_value >= 1024 and unit_index < len(units) - 1:
+            bytes_value /= 1024
+            unit_index += 1
+
+        precision = 0 if unit_index == 0 else 2
+        return f"{bytes_value:.{precision}f} {units[unit_index]}"
+
+    def _format_speed(self, speed: float) -> str:
+        """Format speed with appropriate units and precision."""
+        return f"{self._format_size(speed)}/s"
+
+    def _format_time(self, seconds: float) -> str:
+        """Format time duration in a human-readable format."""
+        if seconds < 60:
+            return f"{seconds:.1f} seconds"
+
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        if hours > 0:
+            return f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
+        else:
+            return f"{int(minutes)}m {int(seconds)}s"
+
+    def display(self, detailed: bool = False, graph: bool = False) -> None:
+        """
+        Display formatted download statistics with optional detailed analysis.
+
+        Args:
+            detailed: Show additional statistics and analysis
+            graph: Display visual performance graphs (when supported)
+        """
+        with self._lock:
+            bar_length = min(50, self.term_width - 30)
+
+            # Calculate core statistics
+            avg_speed = self.average_speed
+
+            # Header
+            print(f"\n{Fore.CYAN}{'═' * self.term_width}")
+            print(
+                f"{Fore.GREEN}{'DOWNLOAD STATISTICS SUMMARY':^{self.term_width}}{Style.RESET_ALL}"
+            )
+            print(f"{Fore.CYAN}{'═' * self.term_width}{Style.RESET_ALL}\n")
+
+            # Core metrics
+            print(
+                f"  {Fore.YELLOW}Session Duration:{Style.RESET_ALL} {self._format_time(self.session_duration)}"
+            )
+            print(
+                f"  {Fore.YELLOW}Total Downloads:{Style.RESET_ALL} {self.total_downloads}"
+            )
+            print(
+                f"  {Fore.YELLOW}Successful:{Style.RESET_ALL} {self.successful_downloads} "
+                + f"({self.success_rate:.1f}%)"
+            )
+            print(f"  {Fore.YELLOW}Failed:{Style.RESET_ALL} {self.failed_downloads}")
+
+            if self.successful_downloads > 0:
+                print(
+                    f"\n  {Fore.YELLOW}Total Downloaded:{Style.RESET_ALL} {self._format_size(self.total_bytes)}"
+                )
+                print(
+                    f"  {Fore.YELLOW}Average Speed:{Style.RESET_ALL} {self._format_speed(avg_speed)}"
+                )
+                print(
+                    f"  {Fore.YELLOW}Peak Speed:{Style.RESET_ALL} {self._format_speed(self.peak_speed)}"
+                )
+
+                # Create visual speed bar (relative to peak)
+                if avg_speed > 0:
+                    ratio = min(1.0, avg_speed / (self.peak_speed or 1))
+                    filled_len = int(bar_length * ratio)
+                    speed_bar = f"{Fore.GREEN}{'█' * filled_len}{Style.RESET_ALL}{'░' * (bar_length - filled_len)}"
+                    print(f"\n  Speed: {speed_bar} {ratio*100:.1f}% of peak")
+
+            # Detailed statistics
+            if detailed and self.successful_downloads > 1:
+                print(f"\n{Fore.CYAN}{'─' * self.term_width}")
+                print(f"{Fore.GREEN}DETAILED METRICS{Style.RESET_ALL}")
+
+                # Show more advanced statistics
+                print(
+                    f"\n  {Fore.YELLOW}Median Speed:{Style.RESET_ALL} {self._format_speed(self.median_speed)}"
+                )
+                print(
+                    f"  {Fore.YELLOW}Speed Deviation:{Style.RESET_ALL} {self._format_speed(self.std_deviation)}"
+                )
+                print(
+                    f"  {Fore.YELLOW}Download Efficiency:{Style.RESET_ALL} "
+                    + f"{self.total_bytes / (self.total_time or 1) / avg_speed * 100:.1f}%"
+                )
+
+                # Time-series analysis for trend detection
+                if self.keep_history and len(self.download_history) >= 5:
+                    print(f"\n  {Fore.YELLOW}Download Rate Trend:{Style.RESET_ALL}")
+
+                    # Calculate trend by comparing first and last third of downloads
+                    history = self.download_history
+                    third_size = max(1, len(history) // 3)
+
+                    early_speeds = [item["speed"] for item in history[:third_size]]
+                    recent_speeds = [item["speed"] for item in history[-third_size:]]
+
+                    early_avg = sum(early_speeds) / len(early_speeds)
+                    recent_avg = sum(recent_speeds) / len(recent_speeds)
+
+                    change_pct = (
+                        ((recent_avg / early_avg) - 1) * 100 if early_avg > 0 else 0
+                    )
+
+                    if change_pct > 10:
+                        trend = f"{Fore.GREEN}Improving ({change_pct:.1f}%↑){Style.RESET_ALL}"
+                    elif change_pct < -10:
+                        trend = f"{Fore.RED}Declining ({abs(change_pct):.1f}%↓){Style.RESET_ALL}"
+                    else:
+                        trend = (
+                            f"{Fore.YELLOW}Stable ({change_pct:+.1f}%){Style.RESET_ALL}"
+                        )
+
+                    print(f"    {trend}")
+
+                    # Visual trend graph if requested
+                    if graph and self.term_width >= 80:
+                        self._draw_trend_graph()
+
+            # Footer
+            print(f"\n{Fore.CYAN}{'═' * self.term_width}{Style.RESET_ALL}")
+
+    def _draw_trend_graph(self, height: int = 5) -> None:
+        """Draw a simple ASCII trend graph of download speeds over time."""
+        if not self.keep_history or len(self.download_history) < 5:
+            return
+
+        # Get speed values and normalize
+        speeds = [item["speed"] for item in self.download_history]
+        max_speed = max(speeds)
+        if max_speed <= 0:
+            return
+
+        # Create graph width based on terminal
+        width = min(self.term_width - 8, len(speeds))
+
+        # Sample points to fit width
+        if len(speeds) > width:
+            sample_rate = len(speeds) / width
+            sampled_speeds = []
+            for i in range(width):
+                start_idx = int(i * sample_rate)
+                end_idx = int((i + 1) * sample_rate)
+                segment = speeds[start_idx : max(start_idx + 1, end_idx)]
+                sampled_speeds.append(sum(segment) / len(segment))
+            speeds = sampled_speeds
+
+        # Draw the graph
+        print(f"\n    Speed over time ({self._format_speed(max_speed)} max):")
+        print(f"    {Fore.CYAN}┌{'─' * width}┐{Style.RESET_ALL}")
+
+        for h in range(height - 1, -1, -1):
+            row = "    " + f"{Fore.CYAN}│{Style.RESET_ALL}"
+            for speed in speeds:
+                # Calculate if this point should be plotted in this row
+                threshold = max_speed * (h / (height - 1)) if height > 1 else 0
+                if speed >= threshold:
+                    row += f"{Fore.GREEN}█{Style.RESET_ALL}"
+                else:
+                    row += " "
+            row += f"{Fore.CYAN}│{Style.RESET_ALL}"
+            print(row)
+
+        print(f"    {Fore.CYAN}└{'─' * width}┘{Style.RESET_ALL}")
+        print(f"    {Fore.CYAN}Start{' ' * (width - 9)}End{Style.RESET_ALL}")
+
+    def export(self, format_type: str = "json", filename: str = None) -> bool:
+        """
+        Export statistics to a file for further analysis.
+
+        Args:
+            format_type: Export format ('json' or 'csv')
+            filename: Target filename, or auto-generated if None
+
+        Returns:
+            Success status
+        """
+        if not filename:
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            filename = f"download_stats_{timestamp}.{format_type}"
+
+        try:
+            if format_type.lower() == "json":
+                return self._export_json(filename)
+            elif format_type.lower() == "csv":
+                return self._export_csv(filename)
+            else:
+                logging.error(f"Unsupported export format: {format_type}")
+                return False
+        except Exception as e:
+            logging.error(f"Failed to export statistics: {str(e)}")
+            return False
+
+    def _export_json(self, filename: str) -> bool:
+        """Export statistics as JSON."""
+        with self._lock:
+            data = {
+                "timestamp": time.time(),
+                "date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "session_duration": self.session_duration,
+                "downloads": {
+                    "total": self.total_downloads,
+                    "successful": self.successful_downloads,
+                    "failed": self.failed_downloads,
+                    "success_rate": self.success_rate,
+                },
+                "data": {
+                    "total_bytes": self.total_bytes,
+                    "total_time": self.total_time,
+                },
+                "performance": {
+                    "average_speed": self.average_speed,
+                    "median_speed": self.median_speed,
+                    "peak_speed": self.peak_speed,
+                    "std_deviation": self.std_deviation,
+                },
+            }
+
+            # Include download history if available
+            if self.keep_history and self.download_history:
+                data["history"] = self.download_history
+
+            with open(filename, "w") as f:
+                json.dump(data, f, indent=2)
+
+            print(f"{Fore.GREEN}Statistics exported to {filename}{Style.RESET_ALL}")
+            return True
+
+    def _export_csv(self, filename: str) -> bool:
+        """Export download history as CSV for spreadsheet analysis."""
+        if not self.keep_history or not self.download_history:
+            print(
+                f"{Fore.YELLOW}No download history to export to CSV.{Style.RESET_ALL}"
+            )
+            return False
+
+        import csv
+
+        with open(filename, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                ["Timestamp", "Size (bytes)", "Duration (s)", "Speed (B/s)"]
+            )
+
+            for item in self.download_history:
+                writer.writerow(
+                    [
+                        time.strftime(
+                            "%Y-%m-%d %H:%M:%S", time.localtime(item["timestamp"])
+                        ),
+                        item["size"],
+                        item["duration"],
+                        item["speed"],
+                    ]
+                )
+
+        print(f"{Fore.GREEN}Download history exported to {filename}{Style.RESET_ALL}")
+        return True
+
+    def reset(self) -> None:
+        """Reset all statistics while maintaining the same start time."""
+        with self._lock:
+            # Preserve the original start time but reset everything else
+            original_start = self.start_time
+            self.__init__(
+                keep_history=self.keep_history, history_limit=self.history_limit
+            )
+            self.start_time = original_start

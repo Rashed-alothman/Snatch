@@ -1,46 +1,28 @@
-#orchestrates downloads, high‑level API
-import urllib.parse
-import subprocess
-import threading
-import tempfile
-import requests
-import logging
-import shutil
-import psutil
-import socket
-import time
-import math
-import json
+# HTTP/P2P session abstraction, proxy logic
 import os
+import sys
+import logging
+import requests
+import threading
+import shutil
+import json
+import time
 import re
-import gc
 import asyncio
-import statistics  # Add missing import
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generator,
-    Iterator,
-    List,
-    Optional,
-    Tuple,
-    Union,
-)
-
-from .defaults import (LOG_FILE,AUDIO_EXTENSIONS,VIDEO_EXTENSIONS,part_ext,webn_ext,FLAC_EXT,opus_ext,bestaudio_ext,speedtestresult,CACHE_DIR,EXAMPLES,MAX_RETRIES,RETRY_SLEEP_BASE,MAX_MEMORY_PERCENT)
-from .progress import SpinnerAnimation as Spinner, ColorProgressBar as ProgressBar, DetailedProgressDisplay, print_banner
-from .utils import FileOrganizer ,sanitize_filename, calculate_speed,format_speed,list_supported_sites, display_system_stats
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
-from contextlib import contextmanager, suppress
-from .session import SessionManager,run_speedtest
-from .logging_config import ColoramaFormatter
-from .metadata import MetadataExtractor
-from difflib import get_close_matches
-from collections import OrderedDict
-from .cache import DownloadCache
+import inspect
+import math
+import statistics
+import psutil
 from pathlib import Path
-from .common_utils import is_windows
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Generator, Iterator, List, Optional, Tuple, Union
+from rich.console import Console
+from rich.progress import Progress
+from rich.layout import Layout
+from rich.panel import Panel
+from colorama import Fore, Style, init
+
+from modules.help_text import show_full_help, show_quick_help
 # third party imports
 from colorama import Fore, Style, init
 from mutagen.oggvorbis import OggVorbis
@@ -50,9 +32,33 @@ from mutagen.mp3 import MP3
 from mutagen.mp4 import MP4
 import yt_dlp
 import mutagen
-import rich
-from rich.progress import Progress
-from rich.console import Console
+# Local imports
+from .common_utils import (
+    is_windows, 
+    sanitize_filename, 
+    display_system_stats, 
+    list_supported_sites, 
+    print_banner,
+)
+from .progress import DownloadStats, Spinner, SpinnerAnimation
+from .defaults import (
+    CACHE_DIR,
+    speedtestresult,
+    DOWNLOAD_SESSIONS_FILE,
+    MAX_RETRIES,
+    RETRY_SLEEP_BASE,
+    MAX_MEMORY_PERCENT,
+    AUDIO_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+)
+from .session import SessionManager, run_speedtest
+from .cache import DownloadCache
+from .file_organizer import FileOrganizer
+from .ffmpeg_helper import locate_ffmpeg, validate_ffmpeg_installation
+
+# Constants
+part_ext = '.part'
+webn_ext = '.webm'
 
 logger = logging.getLogger(__name__)
 
@@ -107,10 +113,14 @@ AUDIO_FORMATS = {
     },
     "flac": {
         "min_sample_rate": 44100,
-        "min_bit_depth": 16,
+        "min_bit_depth": 12,
         "optimal_bit_depth": 24,
-        "channels": [2, 8],  # Stereo or 7.1
-        "codec": CODEC_FLAC
+        "channels": [2,6,8],  # Stereo or 7.1
+        "codec": CODEC_FLAC,
+        "surround_template": {
+            "8": "-ac 8 -af 'pan=7.1|FL=FL|FR=FR|FC=FC|LFE=LFE|BL=BL|BR=BR|SL=SL|SR=SR'"
+        }
+        
     },
     "m4a": {
         "min_sample_rate": 44100,
@@ -212,556 +222,9 @@ def timer(name: str = "", silent: bool = False):
             logging.info(f"{name} completed in {elapsed:.2f} seconds")
         else:
             logging.debug(f"{name} completed in {elapsed:.2f} seconds")
-class DownloadStats:
-    """
-    Enhanced download statistics tracker with optimized monitoring and comprehensive reporting.
-
-    This implementation features:
-    - Memory-efficient statistics tracking using running aggregates
-    - Comprehensive performance metrics (avg/median/peak speeds)
-    - Time-series analysis capabilities
-    - Thread-safe operation for concurrent downloads
-    - Export capabilities for further analysis
-    - Adaptive visualization based on terminal capabilities
-    """
-
-    def __init__(self, keep_history: bool = False, history_limit: int = 100):
-        # Core statistics with optimized memory usage
-        self.total_downloads = 0
-        self.successful_downloads = 0
-        self.failed_downloads = 0
-        self.total_bytes = 0
-        self.total_time = 0.0
-        self.start_time = time.time()
-
-        # Performance tracking with running aggregates
-        self.peak_speed = 0.0
-        self._speed_sum = 0.0
-        self._squared_speed_sum = 0.0  # For calculating variance/std dev
-
-        # Thread safety
-        self._lock = threading.RLock()
-
-        # Optional history tracking for time-series analysis
-        self.keep_history = keep_history
-        self.history_limit = history_limit
-        self.download_history = [] if keep_history else None
-
-        # Terminal capabilities detection for optimal display
-        self.term_width = min(shutil.get_terminal_size().columns, 100)
-
-        # Cached properties for efficient repeated access
-        self._cached = {}
-        self._last_cache_time = 0
-        self._cache_ttl = 1.0  # Recalculate values after 1 second
-
-    def add_download(
-            self,
-            success: bool,
-            size_bytes: int = 0,
-            duration: float = 0.0,
-            error: Optional[str] = None
-        ) -> None:
-        """Record a download completion with memory-efficient statistics tracking."""
-        with self._lock:
-            self.total_downloads += 1
-            
-            # Clear cache on new data
-            self._cached.clear()
-
-            if success:
-                self.successful_downloads += 1
-                if size_bytes > 0 and duration > 0:
-                    # Update aggregated statistics
-                    self.total_bytes += size_bytes
-                    self.total_time += duration
-
-                    # Calculate speed and update running statistics
-                    speed = size_bytes / max(duration, 0.001)  # Prevent division by zero
-                    self._speed_sum += speed
-                    self._squared_speed_sum += speed * speed
-                    self.peak_speed = max(self.peak_speed, speed)
-
-                    # Store history if enabled (with cleanup)
-                    if self.keep_history:
-                        self.download_history.append({
-                            'timestamp': time.time(),
-                            'size': size_bytes,
-                            'duration': duration,
-                            'speed': speed
-                        })
-
-                        # Auto-prune history to limit memory usage
-                        if len(self.download_history) > self.history_limit:
-                            self.download_history = self.download_history[-self.history_limit:]
-
-            else:
-                self.failed_downloads += 1
-                if error:
-                    logging.error(f"Download failed: {error}")
-
-    def add_download_progress(
-            self,
-            downloaded: int,
-            total: int,
-            speed: float,
-            elapsed: float
-        ) -> None:
-        """Update download progress statistics."""
-        with self._lock:
-            # Update running statistics
-            if speed > 0:
-                self.peak_speed = max(self.peak_speed, speed)
-                
-            # Store progress point if history is enabled
-            if self.keep_history and total > 0:
-                progress_point = {
-                    'timestamp': time.time(),
-                    'downloaded': downloaded,
-                    'total': total,
-                    'speed': speed,
-                    'elapsed': elapsed
-                }
-                
-                # Only store if meaningful change occurred
-                if not self.download_history or \
-                   downloaded > self.download_history[-1]['downloaded'] + total * 0.01:  # 1% change
-                    self.download_history.append(progress_point)
-                    
-                    # Cleanup old points
-                    if len(self.download_history) > self.history_limit:
-                        # Keep points spread evenly across time
-                        keep_indices = list(range(0, len(self.download_history), 2))
-                        self.download_history = [self.download_history[i] for i in keep_indices]
-
-    def get_current_speed(self) -> float:
-        """Get current download speed with optimized calculation."""
-        with self._lock:
-            if not self.download_history:
-                return 0.0
-                
-            # Use recent history points for current speed
-            recent_points = self.download_history[-10:]
-            if len(recent_points) < 2:
-                return recent_points[-1]['speed'] if recent_points else 0.0
-                
-            # Calculate speed from recent progress
-            first, last = recent_points[0], recent_points[-1]
-            time_diff = last['timestamp'] - first['timestamp']
-            if time_diff <= 0:
-                return last['speed']
-                
-            bytes_diff = last['downloaded'] - first['downloaded']
-            return bytes_diff / time_diff if time_diff > 0 else 0.0
-
-    def get_summary(self) -> Dict[str, Any]:
-        """Get a memory-efficient summary of download statistics."""
-        with self._lock:
-            return {
-                'downloads': {
-                    'total': self.total_downloads,
-                    'successful': self.successful_downloads,
-                    'failed': self.failed_downloads,
-                    'success_rate': self.success_rate
-                },
-                'performance': {
-                    'total_bytes': self.total_bytes,
-                    'total_time': self.total_time,
-                    'average_speed': self.average_speed,
-                    'median_speed': self.median_speed,
-                    'peak_speed': self.peak_speed,
-                    'current_speed': self.get_current_speed()
-                },
-                'session': {
-                    'duration': self.session_duration,
-                    'start_time': self.start_time,
-                    'active_downloads': len(self.download_history) if self.keep_history else 0
-                }
-            }
-
-    @property
-    def average_speed(self) -> float:
-        """Calculate average download speed with minimal computational overhead."""
-        with self._lock:
-            # Use cached value if available and recent
-            if (
-                "average_speed" in self._cached
-                and time.time() - self._last_cache_time < self._cache_ttl
-            ):
-                return self._cached["average_speed"]
-
-            if self.successful_downloads == 0:
-                return 0.0
-
-            # Two calculation methods:
-            # 1. Based on individual download speeds (more accurate)
-            # 2. Based on aggregate bytes/time (fallback)
-            if self.keep_history and self.download_history:
-                avg_speed = self._speed_sum / self.successful_downloads
-            elif self.total_time > 0:
-                avg_speed = self.total_bytes / self.total_time
-            else:
-                avg_speed = 0.0
-
-            # Cache the result
-            self._cached["average_speed"] = avg_speed
-            self._last_cache_time = time.time()
-            return avg_speed
-
-    @property
-    def median_speed(self) -> float:
-        """Calculate median download speed (central tendency with outlier resistance)."""
-        with self._lock:
-            if (
-                "median_speed" in self._cached
-                and time.time() - self._last_cache_time < self._cache_ttl
-            ):
-                return self._cached["median_speed"]
-
-            if (
-                not self.keep_history
-                or not self.download_history
-                or len(self.download_history) == 0
-            ):
-                return self.average_speed
-
-            speeds = sorted(item["speed"] for item in self.download_history)
-            n = len(speeds)
-
-            # Calculate true median
-            if n % 2 == 0:
-                median = (speeds[n // 2 - 1] + speeds[n // 2]) / 2
-            else:
-                median = speeds[n // 2]
-
-            self._cached["median_speed"] = median
-            return median
-
-    @property
-    def std_deviation(self) -> float:
-        """Calculate standard deviation of download speeds (for consistency analysis)."""
-        with self._lock:
-            if self.successful_downloads < 2:
-                return 0.0
-
-            # Calculate variance using the computational formula:
-            # var = E(X²) - (E(X))²
-            mean_speed = self._speed_sum / self.successful_downloads
-            mean_squared = self._squared_speed_sum / self.successful_downloads
-            variance = mean_squared - (mean_speed * mean_speed)
-
-            # Handle numerical precision issues that can cause small negative values
-            if variance <= 0:
-                return 0.0
-
-            return math.sqrt(variance)
-
-    @property
-    def success_rate(self) -> float:
-        """Calculate percentage of successful downloads."""
-        with self._lock:
-            if self.total_downloads == 0:
-                return 0.0
-            return (self.successful_downloads / self.total_downloads) * 100
-
-    @property
-    def session_duration(self) -> float:
-        """Get total duration of the download session in seconds."""
-        return time.time() - self.start_time
-
-    def _format_size(self, bytes_value: float) -> str:
-        """Format file size in human-readable units."""
-        if bytes_value == 0:
-            return "0 B"
-
-        units = ["B", "KB", "MB", "GB", "TB"]
-        unit_index = 0
-
-        while bytes_value >= 1024 and unit_index < len(units) - 1:
-            bytes_value /= 1024
-            unit_index += 1
-
-        precision = 0 if unit_index == 0 else 2
-        return f"{bytes_value:.{precision}f} {units[unit_index]}"
-
-    def _format_speed(self, speed: float) -> str:
-        """Format speed with appropriate units and precision."""
-        return f"{self._format_size(speed)}/s"
-
-    def _format_time(self, seconds: float) -> str:
-        """Format time duration in a human-readable format."""
-        if seconds < 60:
-            return f"{seconds:.1f} seconds"
-
-        hours, remainder = divmod(seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
-
-        if hours > 0:
-            return f"{int(hours)}h {int(minutes)}m {int(seconds)}s"
-        else:
-            return f"{int(minutes)}m {int(seconds)}s"
-
-    def display(self, detailed: bool = False, graph: bool = False) -> None:
-        """Display formatted download statistics"""
-        with self._lock:
-            # Display header
-            self._format_display_header()
-            
-            # Display core metrics
-            self._format_core_metrics()
-            
-            # Calculate and display performance metrics
-            avg_speed = self.average_speed
-            self._format_performance_metrics(avg_speed)
-            
-            # Show speed bar if applicable
-            if self.successful_downloads > 0:
-                self._display_speed_bar(avg_speed)
-            
-            # Show detailed stats if requested
-            if detailed:
-                self._display_detailed_stats(avg_speed)
-            
-            # Show graph if requested
-            if graph and self.keep_history and len(self.download_history) >= 5:
-                self._draw_trend_graph()
-            
-            # Display footer
-            print(f"\n{Fore.CYAN}{'═' * self.term_width}{Style.RESET_ALL}")
-
-    def _format_display_header(self) -> None:
-        """Format and display the statistics header"""
-        print(f"\n{Fore.CYAN}{'═' * self.term_width}")
-        print(f"{Fore.GREEN}{'DOWNLOAD STATISTICS SUMMARY':^{self.term_width}}{Style.RESET_ALL}")
-        print(f"{Fore.CYAN}{'═' * self.term_width}{Style.RESET_ALL}\n")
-
-    def _format_core_metrics(self) -> None:
-        """Format and display core metrics"""
-        print(f"  {Fore.YELLOW}Session Duration:{Style.RESET_ALL} {self._format_time(self.session_duration)}")
-        print(f"  {Fore.YELLOW}Total Downloads:{Style.RESET_ALL} {self.total_downloads}")
-        print(f"  {Fore.YELLOW}Successful:{Style.RESET_ALL} {self.successful_downloads} ({self.success_rate:.1f}%)")
-        print(f"  {Fore.YELLOW}Failed:{Style.RESET_ALL} {self.failed_downloads}")
-
-    def _format_performance_metrics(self, avg_speed: float) -> None:
-        """Format and display performance metrics"""
-        if self.successful_downloads > 0:
-            print(f"\n  {Fore.YELLOW}Total Downloaded:{Style.RESET_ALL} {self._format_size(self.total_bytes)}")
-            print(f"  {Fore.YELLOW}Average Speed:{Style.RESET_ALL} {self._format_speed(avg_speed)}")
-            print(f"  {Fore.YELLOW}Peak Speed:{Style.RESET_ALL} {self._format_speed(self.peak_speed)}")
-
-    def _display_speed_bar(self, avg_speed: float) -> None:
-        """Display visual speed bar"""
-        if avg_speed <= 0:
-            return
-            
-        bar_length = min(50, self.term_width - 30)
-        ratio = min(1.0, avg_speed / (self.peak_speed or 1))
-        filled_len = int(bar_length * ratio)
-        speed_bar = f"{Fore.GREEN}{'█' * filled_len}{Style.RESET_ALL}{'░' * (bar_length - filled_len)}"
-        print(f"\n  Speed: {speed_bar} {ratio*100:.1f}% of peak")
-
-    def _display_detailed_stats(self, avg_speed: float) -> None:
-        """Display detailed statistics"""
-        if self.successful_downloads <= 1:
-            return
-            
-        print(f"\n{Fore.CYAN}{'─' * self.term_width}")
-        print(f"{Fore.GREEN}DETAILED METRICS{Style.RESET_ALL}")
-        
-        print(f"\n  {Fore.YELLOW}Median Speed:{Style.RESET_ALL} {self._format_speed(self.median_speed)}")
-        print(f"  {Fore.YELLOW}Speed Deviation:{Style.RESET_ALL} {self._format_speed(self.std_deviation)}")
-        print(f"  {Fore.YELLOW}Download Efficiency:{Style.RESET_ALL} {self.total_bytes / (self.total_time or 1) / avg_speed * 100:.1f}%")
-        
-        self._display_trend_analysis()
-
-    def _display_trend_analysis(self) -> None:
-        """Analyze and display download speed trends"""
-        if not (self.keep_history and len(self.download_history) >= 5):
-            return
-            
-        print(f"\n  {Fore.YELLOW}Download Rate Trend:{Style.RESET_ALL}")
-        
-        # Calculate trend
-        history = self.download_history
-        third_size = max(1, len(history) // 3)
-        early_speeds = [item["speed"] for item in history[:third_size]]
-        recent_speeds = [item["speed"] for item in history[-third_size:]]
-        
-        early_avg = sum(early_speeds) / len(early_speeds)
-        recent_avg = sum(recent_speeds) / len(recent_speeds)
-        
-        change_pct = ((recent_avg / early_avg) - 1) * 100 if early_avg > 0 else 0
-        
-        # Display trend indicator
-        if change_pct > 10:
-            trend = f"{Fore.GREEN}Improving ({change_pct:.1f}%↑){Style.RESET_ALL}"
-        elif change_pct < -10:
-            trend = f"{Fore.RED}Declining ({abs(change_pct):.1f}%↓){Style.RESET_ALL}"
-        else:
-            trend = f"{Fore.YELLOW}Stable ({change_pct:+.1f}%){Style.RESET_ALL}"
-            
-        print(f"    {trend}")
-
-    def _draw_simple_graph(self, speeds: List[float], _: int, height: int) -> List[str]:
-        """Draw a simple ASCII graph segment"""
-        if not speeds:
-            return []
-            
-        max_val = max(speeds)
-        if max_val <= 0:
-            return []
-            
-        graph = []
-        for h in range(height):
-            threshold = max_val * ((height - h - 1) / (height - 1)) if height > 1 else 0
-            row = "".join("█" if s >= threshold else " " for s in speeds)
-            graph.append(row)
-            
-        return graph
-
-    def _draw_trend_graph(self, height: int = 5) -> None:
-        """Draw a simplified trend graph of download speeds over time"""
-        if not (self.keep_history and len(self.download_history) >= 5):
-            return
-            
-        # Get speeds and calculate width
-        speeds = [item["speed"] for item in self.download_history]
-        width = min(self.term_width - 8, len(speeds))
-        
-        # Sample data points if needed
-        if len(speeds) > width:
-            speeds = self._sample_data_points(speeds, width)
-        
-        # Draw the graph
-        print(f"\n    Speed over time ({self._format_speed(max(speeds))} max):")
-        print(f"    {Fore.CYAN}┌{'─' * width}┐{Style.RESET_ALL}")
-        
-        # Draw graph body
-        for line in self._draw_simple_graph(speeds, width, height):
-            print(f"    {Fore.CYAN}│{Style.RESET_ALL}{Fore.GREEN}{line}{Style.RESET_ALL}{Fore.CYAN}│{Style.RESET_ALL}")
-        
-        # Draw footer
-        print(f"    {Fore.CYAN}└{'─' * width}┘{Style.RESET_ALL}")
-        print(f"    {Fore.CYAN}Start{' ' * (width - 9)}End{Style.RESET_ALL}")
-        
-    def _sample_data_points(self, data: List[float], target_size: int) -> List[float]:
-        """Sample data points to fit target size"""
-        if not data or target_size <= 0:
-            return []
-            
-        sample_rate = len(data) / target_size
-        return [
-            sum(data[int(i*sample_rate):int((i+1)*sample_rate)]) / sample_rate 
-            for i in range(target_size)
-        ]
-
-    def export(self, format_type: str = "json", filename: str = None) -> bool:
-        """
-        Export statistics to a file for further analysis.
-
-        Args:
-            format_type: Export format ('json' or 'csv')
-            filename: Target filename, or auto-generated if None
-
-        Returns:
-            Success status
-        """
-        if not filename:
-            timestamp = time.strftime("%Y%m%d-%H%M%S")
-            filename = f"download_stats_{timestamp}.{format_type}"
-
-        try:
-            if format_type.lower() == "json":
-                return self._export_json(filename)
-            elif format_type.lower() == "csv":
-                return self._export_csv(filename)
-            else:
-                logging.error(f"Unsupported export format: {format_type}")
-                return False
-        except Exception as e:
-            logging.error(f"Failed to export statistics: {str(e)}")
-            return False
-
-    def _export_json(self, filename: str) -> bool:
-        """Export statistics as JSON."""
-        with self._lock:
-            data = {
-                "timestamp": time.time(),
-                "date": time.strftime("%Y-%m-%d %H%M%S"),
-                "session_duration": self.session_duration,
-                "downloads": {
-                    "total": self.total_downloads,
-                    "successful": self.successful_downloads,
-                    "failed": self.failed_downloads,
-                    "success_rate": self.success_rate,
-                },
-                "data": {
-                    "total_bytes": self.total_bytes,
-                    "total_time": self.total_time,
-                },
-                "performance": {
-                    "average_speed": self.average_speed,
-                    "median_speed": self.median_speed,
-                    "peak_speed": self.peak_speed,
-                    "std_deviation": self.std_deviation,
-                },
-            }
-
-            # Include download history if available
-            if self.keep_history and self.download_history:
-                data["history"] = self.download_history
-
-            with open(filename, "w") as f:
-                json.dump(data, f, indent=2)
-
-            print(f"{Fore.GREEN}Statistics exported to {filename}{Style.RESET_ALL}")
-            return True
-
-    def _export_csv(self, filename: str) -> bool:
-        """Export download history as CSV for spreadsheet analysis."""
-        if not self.keep_history or not self.download_history:
-            print(
-                f"{Fore.YELLOW}No download history to export to CSV.{Style.RESET_ALL}"
-            )
-            return False
-
-        import csv
-
-        with open(filename, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(
-                ["Timestamp", "Size (bytes)", "Duration (s)", "Speed (B/s)"]
-            )
-
-            for item in self.download_history:
-                writer.writerow(
-                    [
-                        time.strftime(
-                            "%Y-%m-%d %H:%M:%S", time.localtime(item["timestamp"])
-                        ),
-                        item["size"],
-                        item["duration"],
-                        item["speed"],
-                    ]
-                )
-
-        print(f"{Fore.GREEN}Download history exported to {filename}{Style.RESET_ALL}")
-        return True
-
-    def reset(self) -> None:
-        """Reset all statistics while maintaining the same start time."""
-        with self._lock:
-            # Preserve the original start time but reset everything else
-            original_start = self.start_time
-            self.__init__(
-                keep_history=self.keep_history, history_limit=self.history_limit
-            )
-            self.start_time = original_start
-
-
 class DownloadManager:
-    """Enhanced download manager with improved performance and resource management"""
-
+    """Enhanced download manager with improved UI and functionality"""
+    
     def __init__(self, config: Dict[str, Any]):
         """Initialize download manager with robust session handling."""
         if config is None:
@@ -781,8 +244,7 @@ class DownloadManager:
         os.makedirs(self.session_dir, exist_ok=True)
         
         # Initialize session manager with session file path
-        session_file = os.path.join(self.session_dir, "download_sessions.json")
-        self.session_manager = SessionManager(session_file=session_file)
+        self.session_manager = SessionManager(DOWNLOAD_SESSIONS_FILE)
         
         # Initialize other components
         self.download_cache = DownloadCache()
@@ -792,8 +254,8 @@ class DownloadManager:
         # Download tracking
         self.current_download_url = None
         self.download_start_time = None
-        
-        # Error handling settings
+        self.current_downloads = {}
+                # Error handling settings
         self.max_retries = config.get("max_retries", MAX_RETRIES)
         self.retry_delay = config.get("retry_delay", RETRY_SLEEP_BASE)
         self.exponential_backoff = config.get("exponential_backoff", True)
@@ -809,7 +271,10 @@ class DownloadManager:
         
         # Current download info
         self._current_info_dict = {}
-
+        # Validate FFmpeg installation
+        self.ffmpeg_path = locate_ffmpeg()
+        if not self.ffmpeg_path or not validate_ffmpeg_installation():
+            logging.warning("FFmpeg not found or invalid. Some features may be limited.")
     def progress_hook(self, d: Dict[str, Any]) -> None:
         """Consolidated progress hook for tracking download progress"""
         try:
@@ -837,13 +302,7 @@ class DownloadManager:
 
             # Update statistics
             if hasattr(self, 'download_stats'):
-                elapsed = time.time() - (getattr(self, 'download_start_time', time.time()))
-                self.download_stats.add_download_progress(
-                    downloaded=downloaded,
-                    total=total,
-                    speed=speed,
-                    elapsed=elapsed
-                )
+                self.download_stats.display
                 
             # Update session if filename available
             filename = d.get('filename', '')
@@ -1487,8 +946,14 @@ class DownloadManager:
             os.makedirs(self.session_dir, exist_ok=True)
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                
                 try:
-                    error_code = await ydl.download([url])
+                    loop = asyncio.get_event_loop()
+                    try:
+                        await loop.run_in_executor(None, ydl.download, [url])
+                        error_code = 0
+                    except yt_dlp.utils.DownloadError as de:
+                        error_code = 1
                     success = error_code == 0
                     
                     if success:
@@ -1924,4 +1389,156 @@ class DownloadManager:
                 'error': error,
                 'timestamp': time.time()
             }
+    async def interactive_mode(self) -> None:
+        """Interactive download mode with improved UX"""
+        try:
+            from .interactive_mode import SnatchUI
+            
+            # Initialize and run the interactive UI
+            ui = SnatchUI(self)
+            await ui.run()
+        except ImportError as e:
+            logging.error(f"Failed to load interactive mode: {e}")
+            print(f"{Fore.RED}Failed to load interactive mode. Falling back to command line.{Style.RESET_ALL}")
+            # Fallback to basic command line interface
+            await self._basic_cli_mode()
+    def __init__(self, config: Dict[str, Any]):
+        """Initialize download manager with robust session handling."""
+        if config is None:
+            raise ValueError("Configuration cannot be None")
+            
+        self.config = config.copy()
+        
+        # Create necessary directories
+        for dir_key in ["video_output", "audio_output"]:
+            if path := config.get(dir_key):
+                os.makedirs(path, exist_ok=True)
+            else:
+                raise ValueError(f"Missing required configuration field: {dir_key}")
+        
+        # Set up session management
+        self.session_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sessions")
+        os.makedirs(self.session_dir, exist_ok=True)
+        
+        # Initialize session manager with session file path
+        self.session_manager = SessionManager(DOWNLOAD_SESSIONS_FILE)
+        
+        # Initialize other components
+        self.download_cache = DownloadCache()
+        self.download_stats = DownloadStats(keep_history=True)
+        self.file_organizer = FileOrganizer(config)
+        
+        # Download tracking
+        self.current_download_url = None
+        self.download_start_time = None
+        self.current_downloads = {}
+        
+        # Error handling settings
+        self.max_retries = config.get("max_retries", MAX_RETRIES)
+        self.retry_delay = config.get("retry_delay", RETRY_SLEEP_BASE)
+        self.exponential_backoff = config.get("exponential_backoff", True)
+        
+        # Resource management
+        self.memory_limit = psutil.virtual_memory().total * (MAX_MEMORY_PERCENT / 100)
+        self._active_downloads = 0
+        self._download_lock = threading.RLock()
+        
+        # Failure tracking
+        self._failed_attempts = {}
+        self._failed_lock = threading.RLock()
+        
+        # Current download info
+        self._current_info_dict = {}    
+    async def interactive_mode(self) -> None:
+        """Interactive download mode with improved UX"""
+        from .interactive_mode import SnatchUI
+        
+        # Initialize and run the interactive UI
+        ui = SnatchUI(self)
+        await ui.run()
+        
+    def _update_layout(self, layout: Layout, status: str, message: str, console: Console):
+        """Update layout with new status and message"""
+        self._draw_layout_sections(layout, status)
+        if message:
+            console.print(message)
+        console.print(layout)
+        
+    def _draw_layout_sections(self, layout: Layout, status: str = "Ready"):
+        """Draw all layout sections"""
+        layout["header"].update(self._draw_header())
+        layout["main"].update(self._draw_body())
+        layout["footer"].update(self._draw_footer(status))
+        self._show_sidebar(layout["sidebar"])
+        
+    def _draw_header(self) -> Panel:
+        """Draw header section"""
+        return Panel(
+            f"{Fore.GREEN}SNATCH DOWNLOAD MANAGER{Style.RESET_ALL}\n"
+            f"Status: Active | Press F1 for options | Type 'help' for commands",
+            title="[cyan]Header[/cyan]"
+        )
+        
+    def _draw_body(self, content: str = "") -> Panel:
+        """Draw main body section"""
+        return Panel(content, title="[cyan]Main Area[/cyan]")
+        
+    def _draw_footer(self, status: str = "Ready") -> Panel:
+        """Draw footer section"""
+        return Panel(
+            f"Status: {status} | F2: Toggle Sidebar | F3: Queue | Ctrl+C: Exit",
+            title="[cyan]Footer[/cyan]"
+        )
+        
+    async def _process_user_input(self, url: str, layout: Layout, console: Console) -> bool:
+        """Process user input and return False if should exit"""
+        if not url:
+            return True
+            
+        if url.lower() in ('exit', 'quit', 'q'):
+            console.print("[yellow]Exiting...[/yellow]")
+            return False
+            
+        if url.lower() in ('help', '?'):
+            show_full_help(console)
+            return True
+            
+        if url.lower() == 'h':
+            show_quick_help(console)
+            return True
+            
+        # Handle advanced commands
+        if url.startswith('!'):
+            command = url[1:]
+            result = await self._handle_interactive_command(command)
+            if result is False:
+                return True
+                
+        # Process download
+        success = await self.download_with_retries(url, self.config)
+        status = "Download completed" if success else "Download failed"
+        message = (f"[green]✓ Successfully downloaded: {url}[/green]" if success 
+                  else f"[red]✗ Failed to download: {url}[/red]")
+        
+        # Update layout
+        self._update_layout(layout, status, message, console)
+        return True
+    async def interactive_mode(self) -> None:
+        self.interactive_mode()
 
+class UnifiedProgress:
+    def __init__(self):
+        self.http = Progress()
+        self.p2p = Progress()
+        self.layout = Layout()
+        
+    def create_task(self, description: str, total: float) -> str:
+        """Create synchronized progress task"""
+        task_id = self.http.add_task(description, total=total)
+        self.p2p.add_task(description, total=total, id=task_id)
+        return task_id
+        
+    def update(self, task_id: str, **kwargs):
+        """Update both progress displays"""
+        self.http.update(task_id, **kwargs)
+        self.p2p.update(task_id, **kwargs)

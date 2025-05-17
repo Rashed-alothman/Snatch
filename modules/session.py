@@ -1,332 +1,45 @@
-#HTTP/P2P session abstraction, proxy logic
-import logging
-import requests
-import threading
-import shutil
+"""
+Enhanced session management system for Snatch.
+Provides persistent session tracking for HTTP and P2P file transfers.
+"""
+
+import asyncio
 import json
-import time
+import logging
 import os
+import shutil
+import threading
+import time
+import requests
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
-from .common_utils import is_windows
-from .progress import Spinner, SpinnerAnimation
-from .defaults import (
-    CACHE_DIR,
-    speedtestresult,
-    DOWNLOAD_SESSIONS_FILE,
-)
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generator,
-    Iterator,
-    List,
-    Optional,
-    Tuple,
-    Union,
-)
+from typing import Any, Dict, List, Optional, Union, Set, TypeVar, Type, cast
+from urllib.parse import urlparse
+
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
+from rich.panel import Panel
 from colorama import Fore, Style, init
+from .progress import SpinnerAnimation
+from .common_utils import is_windows, ensure_dir
+from .defaults import DOWNLOAD_SESSIONS_FILE,CACHE_DIR,speedtestresult
+from .logging_config import setup_logging
+from .p2p import (
+    P2PManager,
+    ShareConfig,
+    P2PError,
+)
+from .progress import HolographicProgress
+
+# Configure logging
+setup_logging()
 logger = logging.getLogger(__name__)
+console = Console()
 
-class SessionManager:
-    """
-    Manages download sessions with advanced features for resuming interrupted downloads.
-    Provides thread-safe operations and automatic session persistence.
-
-    Features:
-    - Thread-safe operations for concurrent downloads
-    - Memory-efficient caching with automatic persistence
-    - Session expiration and automatic cleanup
-    - Robust error handling and recovery
-    - Optimized I/O with batched writes
-    """
-
-    def __init__(
-        self,
-        session_file: str = DOWNLOAD_SESSIONS_FILE,
-        auto_save_interval: int = 30,
-        session_expiry: int = 7 * 24 * 60 * 60,  # 7 days default expiry
-        max_cache_size: int = 1000
-    ):
-        self.session_file = session_file
-        self.sessions = {}
-        self.lock = threading.RLock()  # Reentrant lock for thread safety
-        self.last_save_time = 0
-        self.modified = False
-        self.auto_save_interval = auto_save_interval
-        self.session_expiry = session_expiry
-        self.max_cache_size = max_cache_size
-        self._cache = {}
-
-        # Create sessions directory if it doesn't exist
-        os.makedirs(os.path.dirname(session_file), exist_ok=True)
-
-        # Load existing sessions and perform maintenance
-        self._load_and_maintain_sessions()
-
-        # Start background auto-save thread if interval is positive
-        if self.auto_save_interval > 0:
-            self._start_auto_save_thread()
-
-    def _load_and_maintain_sessions(self) -> None:
-        """Load sessions from disk and remove expired entries."""
-        with self.lock:
-            self.sessions = self._load_sessions_from_disk()
-            current_time = time.time()
-            expired_count = 0
-
-            # Remove expired sessions
-            for url, session in list(self.sessions.items()):
-                if current_time - session.get("timestamp", 0) > self.session_expiry:
-                    del self.sessions[url]
-                    expired_count += 1
-
-            if expired_count > 0:
-                logger.info(f"Removed {expired_count} expired download sessions")
-                self.modified = True
-                self._save_sessions_to_disk()
-
-    def _load_sessions_from_disk(self) -> Dict[str, Dict[str, Any]]:
-        """Load sessions from disk with robust error handling."""
-        if not os.path.exists(self.session_file):
-            return {}
-
-        try:
-            with open(self.session_file, "r") as f:
-                sessions = json.load(f)
-
-            if not isinstance(sessions, dict):
-                logger.warning(f"Invalid session data format, expected dict but got {type(sessions)}")
-                return {}
-
-            return sessions
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse session file: {e}")
-            self._backup_corrupted_file()
-            return {}
-        except (IOError, OSError) as e:
-            logger.error(f"Error reading session file: {e}")
-            return {}
-        except Exception as e:
-            logger.error(f"Unexpected error loading sessions: {e}")
-            return {}
-
-    def _backup_corrupted_file(self) -> None:
-        """Create backup of corrupted session file."""
-        try:
-            if os.path.exists(self.session_file):
-                backup_file = f"{self.session_file}.bak.{int(time.time())}"
-                shutil.copy2(self.session_file, backup_file)
-                logger.info(f"Created backup of corrupted session file: {backup_file}")
-        except Exception as e:
-            logger.error(f"Failed to backup corrupted session file: {e}")
-
-    def _save_sessions_to_disk(self) -> bool:
-        """Save sessions to disk with proper error handling and atomic writes."""
-        if not self.modified:
-            return True
-
-        try:
-            # Create temp file for atomic write
-            temp_file = f"{self.session_file}.tmp"
-            
-            with open(temp_file, "w") as f:
-                json.dump(self.sessions, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-
-            # Perform atomic replace
-            if os.path.exists(self.session_file):
-                if is_windows():
-                    os.replace(temp_file, self.session_file)
-                else:
-                    os.rename(temp_file, self.session_file)
-            else:
-                os.rename(temp_file, self.session_file)
-
-            self.last_save_time = time.time()
-            self.modified = False
-            return True
-
-        except (IOError, OSError) as e:
-            logger.error(f"Failed to save session data: {e}")
-            return False
-        except Exception as e:
-            logger.error(f"Unexpected error saving sessions: {e}")
-            return False
-
-    def _start_auto_save_thread(self) -> None:
-        """Start background thread for periodic auto-saving."""
-        def auto_save_worker():
-            while True:
-                try:
-                    time.sleep(self.auto_save_interval)
-                    with self.lock:
-                        if self.modified and time.time() - self.last_save_time >= self.auto_save_interval:
-                            self._save_sessions_to_disk()
-                except Exception as e:
-                    logger.error(f"Error in auto-save thread: {e}")
-
-        save_thread = threading.Thread(
-            target=auto_save_worker,
-            daemon=True,
-            name="SessionAutoSave"
-        )
-        save_thread.start()
-
-    def update_session(self, url: str, progress: float, metadata: Optional[Dict] = None) -> bool:
-        """
-        Update or create a session with the current progress and optional metadata.
-
-        Args:
-            url: The download URL as unique identifier
-            progress: Download progress percentage (0-100)
-            metadata: Optional dict with additional session data
-
-        Returns:
-            bool: True if session was updated successfully
-        """
-        if not url:
-            return False
-
-        with self.lock:
-            if url not in self.sessions:
-                self.sessions[url] = {}
-
-            # Update session data
-            self.sessions[url].update({
-                "progress": float(progress),
-                "timestamp": time.time(),
-                "last_active": time.strftime("%Y-%m-%d %H:%M:%S")
-            })
-
-            # Add metadata if provided
-            if metadata and isinstance(metadata, dict):
-                if "metadata" not in self.sessions[url]:
-                    self.sessions[url]["metadata"] = {}
-                self.sessions[url]["metadata"].update(metadata)
-
-            self.modified = True
-
-            # Save immediately if this is a significant progress update
-            if progress % 10 < 1:  # Save at each 10% milestone
-                self._save_sessions_to_disk()
-
-            return True
-
-    def get_session(self, url: str) -> Optional[Dict]:
-        """
-        Get session data for a URL if it exists and is valid.
-
-        Args:
-            url: The download URL to retrieve
-
-        Returns:
-            Optional[Dict]: Session dict or None if not found or expired
-        """
-        with self.lock:
-            session = self.sessions.get(url)
-            if not session:
-                return None
-
-            # Validate session data
-            if "progress" not in session or "timestamp" not in session:
-                logger.warning(f"Found invalid session for {url}, removing it")
-                del self.sessions[url]
-                self.modified = True
-                return None
-
-            # Check expiration
-            if time.time() - session["timestamp"] > self.session_expiry:
-                logger.info(f"Found expired session for {url}, removing it")
-                del self.sessions[url]
-                self.modified = True
-                return None
-
-            return session.copy()
-
-    def remove_session(self, url: str) -> bool:
-        """
-        Remove a session when download completes or is cancelled.
-
-        Args:
-            url: The download URL to remove
-
-        Returns:
-            bool: True if session was found and removed
-        """
-        with self.lock:
-            if url in self.sessions:
-                del self.sessions[url]
-                self.modified = True
-                self._save_sessions_to_disk()
-                return True
-            return False
-
-    def get_all_sessions(self) -> Dict[str, Dict]:
-        """Get all active download sessions (thread-safe copy)."""
-        with self.lock:
-            return {url: session.copy() for url, session in self.sessions.items()}
-
-    def clear_all_sessions(self) -> None:
-        """Clear all sessions and save changes to disk."""
-        with self.lock:
-            self.sessions.clear()
-            self.modified = True
-            self._save_sessions_to_disk()
-
-    def get_session_count(self) -> int:
-        """Get the number of active sessions."""
-        with self.lock:
-            return len(self.sessions)
-
-    def get_resumable_sessions(self, max_age: Optional[int] = None) -> List[Dict[str, Any]]:
-        """
-        Get a list of sessions that can be resumed, sorted by last activity.
-
-        Args:
-            max_age: Optional maximum age in seconds (defaults to session_expiry)
-
-        Returns:
-            List[Dict[str, Any]]: List of session info including URLs
-        """
-        with self.lock:
-            current_time = time.time()
-            max_age = max_age or self.session_expiry
-
-            resumable = []
-            for url, session in self.sessions.items():
-                age = current_time - session.get("timestamp", 0)
-                if age <= max_age and 0 <= session.get("progress", 0) < 100:
-                    info = session.copy()
-                    info["url"] = url
-                    info["age"] = age
-                    resumable.append(info)
-
-            # Sort by last activity (most recent first)
-            return sorted(resumable, key=lambda x: x["timestamp"], reverse=True)
-
-    def cleanup_expired(self) -> int:
-        """
-        Remove all expired sessions.
-
-        Returns:
-            int: Number of sessions removed
-        """
-        with self.lock:
-            current_time = time.time()
-            expired = [url for url, session in self.sessions.items()
-                      if current_time - session.get("timestamp", 0) > self.session_expiry]
-
-            for url in expired:
-                del self.sessions[url]
-
-            if expired:
-                self.modified = True
-                self._save_sessions_to_disk()
-
-            return len(expired)
+# Type variable for generic session handling
+T = TypeVar('T', bound='TransferSession')
 
 def run_speedtest(detailed: bool = True) -> float:
     """
@@ -363,9 +76,9 @@ def run_speedtest(detailed: bool = True) -> float:
                 spinner.stop(clear=True)
                 _display_speedtest_results(speed, detailed)
                 return speed
-    except Exception:
+    except Exception as e:
         # If any error occurs with cache, just run a new test
-        pass
+        logger.debug(f"Cache read error: {e}")
 
     # Define test endpoints - multiple CDNs for more accurate measurement
     test_endpoints = [
@@ -453,7 +166,6 @@ def run_speedtest(detailed: bool = True) -> float:
 
     return speed
 
-
 def _display_speedtest_results(speed_mbps: float, detailed: bool = True) -> None:
     """
     Display speed test results in a user-friendly format with recommendations.
@@ -530,4 +242,567 @@ def _display_speedtest_results(speed_mbps: float, detailed: bool = True) -> None
             print(f"  • {Fore.GREEN}1080p Video:{Style.RESET_ALL} ✓ Excellent")
             print(f"  • {Fore.GREEN}720p Video:{Style.RESET_ALL} ✓ Excellent")
         elif speed_mbps >= 10:
-            print(f"  • {Fore.RED}4K Video:{Style.RESET_ALL}")
+            print(f"  • {Fore.RED}4K Video:{Style.RESET_ALL} ✗ Not recommended")
+            print(f"  • {Fore.GREEN}1080p Video:{Style.RESET_ALL} ✓ Good")
+            print(f"  • {Fore.GREEN}720p Video:{Style.RESET_ALL} ✓ Excellent")
+        elif speed_mbps >= 5:
+            print(f"  • {Fore.RED}4K Video:{Style.RESET_ALL} ✗ Not recommended")
+            print(f"  • {Fore.YELLOW}1080p Video:{Style.RESET_ALL} ⚠ May buffer")
+            print(f"  • {Fore.GREEN}720p Video:{Style.RESET_ALL} ✓ Good")
+        else:
+            print(f"  • {Fore.RED}4K Video:{Style.RESET_ALL} ✗ Not recommended")
+            print(f"  • {Fore.RED}1080p Video:{Style.RESET_ALL} ✗ Not recommended")
+            print(f"  • {Fore.YELLOW}720p Video:{Style.RESET_ALL} ⚠ May buffer")
+            print(f"  • {Fore.GREEN}480p Video:{Style.RESET_ALL} ✓ Recommended")
+
+        # Audio format recommendations
+        print(f"\n  {Fore.YELLOW}Audio Format Recommendations:{Style.RESET_ALL}")
+        if speed_mbps >= 10:
+            print(
+                f"  • {Fore.GREEN}FLAC:{Style.RESET_ALL} ✓ Recommended for best quality"
+            )
+            print(f"  • {Fore.GREEN}MP3/Opus:{Style.RESET_ALL} ✓ Fast downloads")
+        elif speed_mbps >= 3:
+            print(f"  • {Fore.YELLOW}FLAC:{Style.RESET_ALL} ⚠ Will work but slower")
+            print(
+                f"  • {Fore.GREEN}MP3/Opus:{Style.RESET_ALL} ✓ Recommended for faster downloads"
+            )
+        else:
+            print(f"  • {Fore.RED}FLAC:{Style.RESET_ALL} ✗ Not recommended")
+            print(f"  • {Fore.GREEN}MP3/Opus:{Style.RESET_ALL} ✓ Recommended")
+
+        # Download settings recommendations
+        print(f"\n  {Fore.YELLOW}Optimized Settings:{Style.RESET_ALL}")
+
+        # Determine optimal chunk size and concurrent downloads
+        if speed_mbps >= 50:
+            chunk_size = "20MB"
+            concurrent = "24-32"
+            aria2 = "✓ Highly recommended"
+            aria_color = Fore.GREEN
+        elif speed_mbps >= 20:
+            chunk_size = "10MB"
+            concurrent = "16-24"
+            aria2 = "✓ Recommended"
+            aria_color = Fore.GREEN
+        elif speed_mbps >= 10:
+            chunk_size = "5MB"
+            concurrent = "8-16"
+            aria2 = "✓ Recommended"
+            aria_color = Fore.GREEN
+        elif speed_mbps >= 5:
+            chunk_size = "2MB"
+            concurrent = "4-8"
+            aria2 = "✓ Beneficial"
+            aria_color = Fore.CYAN
+        else:
+            chunk_size = "1MB"
+            concurrent = "2-4"
+            aria2 = "⚠ Limited benefit"
+            aria_color = Fore.YELLOW
+
+        print(f"  • {Fore.CYAN}Chunk Size:{Style.RESET_ALL} {chunk_size}")
+        print(f"  • {Fore.CYAN}Concurrent Downloads:{Style.RESET_ALL} {concurrent}")
+        print(
+            f"  • {Fore.CYAN}aria2c:{Style.RESET_ALL} {aria_color}{aria2}{Style.RESET_ALL}"
+        )
+
+        print(
+            "\n  These settings will be applied automatically to optimize your downloads."
+        )
+
+    print(f"\n{border}")
+
+    # Show retest instructions
+    print(
+        f"\n{Fore.GREEN}Tip:{Style.RESET_ALL} Run {Fore.CYAN}--speedtest{Style.RESET_ALL} again anytime to refresh these results.\n"
+    )
+@dataclass
+class TransferSession:
+    """Base class for transfer sessions"""
+    id: str
+    start_time: datetime
+    file_path: str
+    total_size: int
+    error: Optional[str] = None
+    status: str = "pending"
+    transferred: int = 0
+    
+    def is_active(self) -> bool:
+        """Check if session is active"""
+        return self.status not in ("completed", "error", "cancelled", "stopped")
+    
+    def is_finished(self) -> bool:
+        """Check if session has finished"""
+        return self.status in ("completed", "error", "cancelled", "stopped")
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert session to dictionary for storage"""
+        return {
+            **asdict(self),
+            "start_time": self.start_time.isoformat(),
+            "type": self.__class__.__name__
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TransferSession":
+        """Create session from dictionary"""
+        data = data.copy()
+        data["start_time"] = datetime.fromisoformat(data["start_time"])
+        return cls(**data)
+
+@dataclass
+class P2PShareSession(TransferSession):
+    """P2P file sharing session with encryption and DHT support."""
+    share_code: Optional[str] = None
+    encryption: bool = True
+    dht_enabled: bool = True
+    connections: List[Dict[str, Any]] = None
+    chunk_size: int = 1024 * 1024  # 1MB chunks
+
+    def __post_init__(self):
+        """Initialize and validate P2P share session."""
+        super().__post_init__()
+        self.connections = self.connections or []
+        self._validate_share_settings()
+
+    def _validate_share_settings(self) -> None:
+        """Validate P2P sharing settings."""
+        if not Path(self.file_path).is_file():
+            raise FileNotFoundError(f"Share file not found: {self.file_path}")
+        if self.chunk_size <= 0:
+            raise ValueError("Chunk size must be positive")
+
+    def add_connection(self, peer_info: Dict[str, Any]) -> None:
+        """Add a new peer connection with validation."""
+        required_fields = {'id', 'address', 'port'}
+        if not all(field in peer_info for field in required_fields):
+            raise ValueError(f"Peer info missing required fields: {required_fields}")
+        if peer_info not in self.connections:
+            self.connections.append(peer_info)
+            logger.info(f"New peer connected: {peer_info['address']}:{peer_info['port']}")
+
+    def remove_connection(self, peer_info: Dict[str, Any]) -> None:
+        """Remove a peer connection."""
+        if peer_info in self.connections:
+            self.connections.remove(peer_info)
+            logger.info(f"Peer disconnected: {peer_info['address']}:{peer_info['port']}")
+
+    def get_active_connections(self) -> List[Dict[str, Any]]:
+        """Get list of active peer connections."""
+        return [conn for conn in self.connections if conn.get('active', False)]
+
+@dataclass(kw_only=True)
+class P2PFetchSession(TransferSession):
+    """P2P file fetching session with integrity verification."""
+    share_code: str
+    source_hash: str
+    verify: bool = True
+    peer_info: Optional[Dict[str, Any]] = None
+    resume_position: int = 0
+    temp_path: Optional[str] = None
+
+    def __post_init__(self):
+        """Initialize and validate P2P fetch session."""
+        super().__post_init__()
+        self._validate_fetch_settings()
+        if not self.temp_path:
+            self.temp_path = str(Path(self.file_path).with_suffix('.part'))
+
+    def _validate_fetch_settings(self) -> None:
+        """Validate fetch settings."""
+        if not self.share_code:
+            raise ValueError("Share code is required")
+        if self.verify and not self.source_hash:
+            raise ValueError("Source hash is required when verify=True")
+        if self.resume_position < 0:
+            raise ValueError("Resume position cannot be negative")
+        
+    def validate_hash(self, computed_hash: str) -> bool:
+        """Validate file integrity using source hash."""
+        if not self.verify:
+            logger.warning("Hash verification disabled")
+            return True
+        if not self.source_hash:
+            logger.error("Source hash not available for verification")
+            return False
+        matches = self.source_hash == computed_hash
+        if not matches:
+            logger.error(f"Hash mismatch. Expected: {self.source_hash}, Got: {computed_hash}")
+        return matches
+
+    def cleanup(self) -> None:
+        """Clean up temporary files."""
+        if self.temp_path and Path(self.temp_path).exists():
+            try:
+                Path(self.temp_path).unlink()
+                logger.debug(f"Cleaned up temporary file: {self.temp_path}")
+            except Exception as e:
+                logger.error(f"Failed to clean up temporary file: {e}")
+
+    def can_resume(self) -> bool:
+        """Check if download can be resumed."""
+        return (
+            self.resume_position > 0 and
+            self.resume_position < self.total_size and
+            Path(self.temp_path).exists()
+        )
+@dataclass
+class SessionManager:
+    """Enhanced session management system."""
+    
+    def __init__(self, session_file: str = DOWNLOAD_SESSIONS_FILE, auto_save_interval: int = 30,
+        session_expiry: int = 7 * 24 * 60 * 60,  # 7 days default expiry
+        max_cache_size: int = 1000):
+        """Initialize session manager."""
+        self.session_file = os.path.abspath(session_file) # Absolute path to session file
+        self.sessions: Dict[str, Dict] = {} # Dictionary to store session data
+        self.lock = threading.RLock()  # Reentrant lock for thread safety
+        self.last_save_time = 0 # Last save time for auto-save
+        self._active_transfers: Set[str] = set() # Set of active transfer session IDs 
+        self.auto_save_interval = auto_save_interval # Auto-save interval in seconds
+        self._shutdown = False # Flag to indicate shutdown
+        self.session_expiry = session_expiry # Session expiry in seconds
+        self.modified = False # Flag to track if sessions have been modified
+        self.session_expiry = session_expiry # Session expiry in seconds
+        self.max_cache_size = max_cache_size # Maximum cache size
+        self._cache = {} # Cache for session data
+        self._executor = ThreadPoolExecutor(max_workers=4) # Thread pool executor for async tasks
+        self._load_sessions() # Load existing sessions from disk
+    def update_session(self, url: str, progress: float, metadata: Optional[Dict] = None) -> bool:
+        """
+        Update or create a session with the current progress and optional metadata.
+
+        Args:
+            url: The download URL as unique identifier
+            progress: Download progress percentage (0-100)
+            metadata: Optional dict with additional session data
+
+        Returns:
+            bool: True if session was updated successfully
+        """
+        if not url:
+            return False
+
+        with self.lock:
+            if url not in self.sessions:
+                self.sessions[url] = {}
+
+            # Update session data
+            self.sessions[url].update({
+                "progress": float(progress),
+                "timestamp": time.time(),
+                "last_active": time.strftime("%Y-%m-%d %H:%M:%S")
+            })
+
+            # Add metadata if provided
+            if metadata and isinstance(metadata, dict):
+                if "metadata" not in self.sessions[url]:
+                    self.sessions[url]["metadata"] = {}
+                self.sessions[url]["metadata"].update(metadata)
+
+            self.modified = True
+
+            # Save immediately if this is a significant progress update
+            if progress % 10 < 1:  # Save at each 10% milestone
+                self._save_sessions_to_disk()
+
+            return True
+    async def _handle_fetch_session(self, session: P2PFetchSession) -> None:
+        """Handle a P2P fetch session with progress tracking."""
+        if not isinstance(session, P2PFetchSession) or not session.id:
+            raise ValueError("Invalid fetch session")
+            
+        config = ShareConfig()
+        p2p = P2PManager(config)
+        output_file = None
+        
+        try:
+            session.status = "connecting"
+            self._save_session(session)
+            
+            # Setup progress tracking with rich holographic display
+            with Progress(
+                SpinnerColumn(),
+                *Progress.get_default_columns(),
+                TimeElapsedColumn(),
+                console=console,
+                transient=False
+            ) as progress:
+                # Add download task
+                task_id = progress.add_task(
+                    description=self._format_progress_message(session),
+                    total=session.total_size or 100
+                )
+                
+                # Start download with progress updates
+                session.status = "downloading"
+                self._active_transfers.add(session.id)
+                
+                def update_progress(bytes_received: int) -> None:
+                    progress.update(task_id, completed=bytes_received)
+                
+                output_file = await p2p.fetch_file(
+                    session.share_code,
+                    session.file_path,
+                    progress_callback=update_progress,
+                )
+                
+                if output_file and output_file.exists():
+                    # Update session info
+                    session.total_size = output_file.stat().st_size
+                    session.transferred = session.total_size
+                    session.status = "completed"
+                    logger.info(f"Download completed: {session.id}")
+                    
+        except P2PError as e:
+            session.status = "error"
+            session.error = str(e)
+            if output_file and output_file.exists():
+                output_file.unlink()
+            logger.error(f"Download error in session {session.id}: {e}")
+            raise
+            
+        except asyncio.CancelledError:
+            session.status = "cancelled"
+            session.error = "Download cancelled by user"
+            if output_file and output_file.exists():
+                output_file.unlink()
+            logger.info(f"Download cancelled: {session.id}")
+            
+        finally:
+            self._active_transfers.discard(session.id)
+            self._save_session(session)
+            
+    def get_session(self, session_id: str) -> Optional[TransferSession]:
+        """Get session by ID."""
+        return self.sessions.get(session_id)
+        
+    def get_session_info(self, session_id: str) -> Dict[str, Any]:
+        """Get detailed session info."""
+        session = self.get_session(session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+            
+        return {
+            "id": session.id,
+            "type": "share" if isinstance(session, P2PShareSession) else "fetch",
+            "status": session.status,
+            "error": session.error,
+            "progress": session.get_progress(),
+            "start_time": session.start_time.isoformat(),
+            "file_path": session.file_path,
+            "total_size": session.total_size,
+            "transferred": session.transferred
+        }
+        
+    def _save_session(self, session: TransferSession) -> None:
+        """Save session state."""
+        if session and session.id:
+            self.sessions[session.id] = session
+            # Persist to disk
+            self._save_sessions_to_disk()
+            
+    def _clean_share_code(self, code: str) -> str:
+        """Clean and validate share code."""
+        clean = code.strip()
+        if not clean.startswith("snatch://"):
+            raise ValueError("Invalid share code format")
+        return clean
+
+    def shutdown(self) -> None:
+        """Shutdown session manager gracefully."""
+        try:
+            # Signal shutdown
+            self._shutdown = True
+            
+            # Cancel active transfers
+            for session_id in list(self._active_transfers):
+                try:
+                    self.cancel_session(session_id)
+                except Exception as e:
+                    logger.error(f"Error cancelling session {session_id}: {e}")
+                    
+            # Save final state
+            self._save_sessions_to_disk()
+            
+            # Cleanup resources
+            if self._executor:
+                self._executor.shutdown(wait=True)
+                
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+        finally:
+            logger.info("Session manager shutdown complete")
+            
+    def cleanup_sessions(self, max_age: int = 24 * 60 * 60) -> int:
+        """Clean up old sessions."""
+        now = datetime.now()
+        expired = []
+        
+        for session_id, session in list(self.sessions.items()):
+            # Skip active transfers
+            if session_id in self._active_transfers:
+                continue
+                
+            # Check age
+            age = (now - session.start_time).total_seconds()
+            if age > max_age:
+                expired.append(session_id)
+                
+            # Clean up completed/failed sessions
+            elif session.status in ("completed", "error", "cancelled"):
+                if isinstance(session, P2PFetchSession):
+                    session.cleanup()  # Clean temp files
+                expired.append(session_id)
+                
+        # Remove expired sessions
+        for session_id in expired:
+            del self.sessions[session_id]
+            
+        # Save changes
+        if expired:
+            self._save_sessions_to_disk()
+            
+        return len(expired)
+    
+    def _save_sessions_to_disk(self) -> None:
+        """Persist sessions to disk."""
+        try:
+            # Convert sessions to dict
+            data = {}
+            for sid, session in self.sessions.items():
+                if isinstance(session, TransferSession):
+                    data[sid] = asdict(session)
+                else:  # Handle legacy sessions
+                    data[sid] = dict(session)
+            # Save to file
+            temp_path = Path(self.session_file).with_suffix('.tmp')
+            
+            with temp_path.open('w') as f:
+                json.dump(self._serialize_sessions(), f, indent=2)
+            temp_path.replace(self.session_file)
+
+                
+        except Exception as e:
+            logger.error(f"Failed to save sessions: {e}")
+            temp_path.unlink(missing_ok=True)
+
+    def _serialize_sessions(self) -> Dict:
+        return {
+            sid: (session.to_dict() if isinstance(session, TransferSession)
+                  else session)
+            for sid, session in self.sessions.items()
+        }
+
+    def _load_sessions(self) -> None:
+        """Load sessions from disk."""
+        try:
+            load_path = Path(DOWNLOAD_SESSIONS_FILE)
+            if not load_path.exists():
+                return
+                
+            with load_path.open('r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            # Restore sessions
+            for sid, session_data in data.items():
+                try:
+                    if session_data.get('type') == 'share':
+                        session = P2PShareSession(**session_data)
+                    else:
+                        session = P2PFetchSession(**session_data)
+                    self.sessions[sid] = session
+                except Exception as e:
+                    logger.error(f"Failed to restore session {sid}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Failed to load sessions: {e}")
+    def remove_session(self, url: str) -> bool:
+        """
+        Remove a session when download completes or is cancelled.
+
+        Args:
+            url: The download URL to remove
+
+        Returns:
+            bool: True if session was found and removed
+        """
+        with self.lock:
+            if url in self.sessions:
+                del self.sessions[url]
+                self.modified = True
+                self._save_sessions_to_disk()
+                return True
+            return False
+    def get_all_sessions(self) -> Dict[str, Dict]:
+        """Get all active download sessions (thread-safe copy)."""
+        with self.lock:
+            return {url: session.copy() for url, session in self.sessions.items()}
+
+    def clear_all_sessions(self) -> None:
+        """Clear all sessions and save changes to disk."""
+        with self.lock:
+            self.sessions.clear()
+            self.modified = True
+            self._save_sessions_to_disk()
+
+    def get_session_count(self) -> int:
+        """Get the number of active sessions."""
+        with self.lock:
+            return len(self.sessions)
+
+    def get_resumable_sessions(self, max_age: Optional[int] = None) -> List[Dict[str, Any]]:
+        """
+        Get a list of sessions that can be resumed, sorted by last activity.
+
+        Args:
+            max_age: Optional maximum age in seconds (defaults to session_expiry)
+
+        Returns:
+            List[Dict[str, Any]]: List of session info including URLs
+        """
+        with self.lock:
+            current_time = time.time()
+            max_age = max_age or self.session_expiry
+
+            resumable = []
+            for url, session in self.sessions.items():
+                age = current_time - session.get("timestamp", 0)
+                if age <= max_age and 0 <= session.get("progress", 0) < 100:
+                    info = session.copy()
+                    info["url"] = url
+                    info["age"] = age
+                    resumable.append(info)
+
+            # Sort by last activity (most recent first)
+            return sorted(resumable, key=lambda x: x["timestamp"], reverse=True)
+
+    def cleanup_expired(self) -> int:
+        """
+        Remove all expired sessions.
+
+        Returns:
+            int: Number of sessions removed
+        """
+        with self.lock:
+            current_time = time.time()
+            expired = [url for url, session in self.sessions.items()
+                      if current_time - session.get("timestamp", 0) > self.session_expiry]
+
+            for url in expired:
+                del self.sessions[url]
+
+            if expired:
+                self.modified = True
+                self._save_sessions_to_disk()
+
+            return len(expired)
+
+    def __enter__(self) -> 'SessionManager':
+        """Context manager enter."""
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Context manager exit with cleanup."""
+        self.shutdown()

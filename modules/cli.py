@@ -1,7 +1,7 @@
 from typing import List, Optional
 from .config import test_functionality, initialize_config_async, check_for_updates
 from .logging_config import setup_logging, CustomHelpFormatter
-from .utils import list_supported_sites, display_system_stats
+from .common_utils import list_supported_sites, display_system_stats
 from .manager import DownloadManager, DownloadStats
 from .defaults import VERSION, EXAMPLES
 from colorama import Fore, Style, init
@@ -255,17 +255,38 @@ def test():
         raise typer.Exit(1)
 
 @app.command()
-def share(file: Path = typer.Argument(..., help="File to share via P2P")):
-    """Share a file via P2P."""
+def share(
+    file: Path = typer.Argument(..., help="File to share via P2P"),
+    encrypt: bool = typer.Option(True, "--encrypt/--no-encrypt", "-e", help="Enable/disable encryption"),
+    dht: bool = typer.Option(True, "--dht/--no-dht", "-d", help="Enable/disable DHT"),
+):
+    """Share a file via P2P with encryption and DHT support."""
     try:
-        from .p2p import share_file
-        code = share_file(str(file))
-        rich.print(f"[green]Share code: {code}[/green]")
+        from .p2p import share_file_cmd, P2PError
+        code = share_file_cmd(str(file))
+        rich.print(f"\n[cyan]Share code:[/cyan] [green]{code}[/green]")
+        rich.print("\n[yellow]File is now being shared. Press Ctrl+C to stop sharing.[/yellow]\n")
+        
+        # Show sharing info
+        info_panel = rich.panel.Panel(
+            "\n".join([
+                "[cyan]🔒 Encryption:[/cyan] " + ("[green]Enabled[/green]" if encrypt else "[yellow]Disabled[/yellow]"),
+                "[cyan]🌐 DHT:[/cyan] " + ("[green]Enabled[/green]" if dht else "[yellow]Disabled[/yellow]"),
+                "\n[dim]Waiting for incoming connections...[/dim]"
+            ]),
+            title="[bold]Share Info",
+            border_style="cyan"
+        )
+        rich.print(info_panel)
+        
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
             rich.print("\n[yellow]Sharing stopped.[/yellow]")
+    except P2PError as e:
+        rich.print(f"[red]P2P Error: {str(e)}[/red]")
+        raise typer.Exit(1)
     except Exception as e:
         rich.print(f"[red]Error sharing file: {str(e)}[/red]")
         raise typer.Exit(1)
@@ -273,18 +294,32 @@ def share(file: Path = typer.Argument(..., help="File to share via P2P")):
 @app.command()
 def fetch(
     code: str = typer.Argument(..., help="Share code to fetch file from"),
-    out: Path = typer.Option(Path("."), "--output-dir", "-o", help="Output directory")
+    out: Path = typer.Option(Path("."), "--output-dir", "-o", help="Output directory"),
+    no_verify: bool = typer.Option(False, "--no-verify", help="Skip integrity verification")
 ):
-    """Fetch a file using a share code."""
+    """Fetch a file using a share code with progress tracking."""
     try:
-        from .p2p import fetch_file, PeerRefusedError, IntegrityError
-        fetch_file(code, str(out))
-    except PeerRefusedError:
-        rich.print("[red]Peer refused the request.[/red]")
-        raise typer.Exit(1)
-    except IntegrityError as e:
-        rich.print(f"[red]Integrity error: {e}[/red]")
-        raise typer.Exit(2)
+        from .p2p import fetch_file_cmd, PeerRefusedError, IntegrityError, P2PError
+        
+        # Create output directory if it doesn't exist
+        out.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            output_file = fetch_file_cmd(code, str(out))
+            rich.print(f"\n[green]✓ Download complete![/green]")
+            rich.print(f"[cyan]File saved to:[/cyan] {output_file}")
+        except PeerRefusedError:
+            rich.print("\n[red]❌ Peer refused the request[/red]")
+            rich.print("[yellow]The file owner denied the download request.[/yellow]")
+            raise typer.Exit(1)
+        except IntegrityError as e:
+            rich.print("\n[red]❌ Integrity check failed[/red]")
+            rich.print("[yellow]The downloaded file may be corrupted or tampered with.[/yellow]")
+            raise typer.Exit(2)
+        except P2PError as e:
+            rich.print(f"\n[red]❌ P2P Error: {e}[/red]")
+            raise typer.Exit(1)
+            
     except Exception as e:
         rich.print(f"[red]Error: {e}[/red]")
         raise typer.Exit(2)

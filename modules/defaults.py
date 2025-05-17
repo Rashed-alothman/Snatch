@@ -2,6 +2,7 @@
 import re 
 import sys
 import signal
+from rich.theme import Theme
 from colorama import Fore, Style, init
 from pathlib import Path 
 
@@ -153,3 +154,138 @@ EXAMPLES = """
 ║                                                                          ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 """
+
+
+
+# Add this to your existing defaults
+THEME = Theme({
+    # Basic styles
+    "info": "cyan",
+    "success": "bold green",
+    "warning": "bold yellow",
+    "error": "bold red",
+    "highlight": "bold magenta",
+    
+    # Custom interactive mode styles
+    "banner": "bright_cyan",
+    "preview_label": "bold bright_white",
+    "preview_value": "#00ffff",
+    "matrix_border": "#9400d3",
+    "surround_channel": "bold bright_blue",
+    "surround_level": "#00ff00",
+    "surround_bar": "#00ff00",
+    "help_border": "bright_yellow",
+    "stats_label": "dim cyan",
+    "stats_value": "bold bright_white"
+})
+
+BANNER_ART = r"""
+  _____ _   _  _____ _______ ______  _   _   
+ / ____| \ | |/ ____|__   __|  ____|| | | |  
+| (___ |  \| | |      | |  | |__   | |_| |  
+ \___ \| . ` | |      | |  |  __|  |  _  |  
+ ____) | |\  | |____  | |  | |____ | | | |  
+|_____/|_| \_|\_____| |_|  |______||_| |_|  
+"""
+
+HELP_CONTENT = {
+    "main": """
+    ## Interactive Mode Guide
+    
+    **Navigation:**
+    - `Tab`/`Shift+Tab`: Switch between panels
+    - `Ctrl+H`: Toggle help
+    - `↑/↓`: Scroll through options
+    
+    **Quality Presets:**
+    - Lossless: Original quality
+    - Master: Studio-grade
+    - High: Balanced quality
+    """,
+    "welcome": """
+    ## Welcome to Snatch Premium!
+    
+    Start by entering a media URL or:
+    - Press `F1` for advanced options
+    - `Ctrl+T` for tutorial mode
+    - `Ctrl+Q` to exit
+    """
+}
+
+QUALITY_PRESETS = {
+    "lossless": {"video": "best", "audio": "best"},
+    "master": {"video": "4K", "audio": "flac"},
+    "high": {"video": "1080p", "audio": "320kbps"}
+}
+
+SURROUND_PROFILES = {
+    "FL": 9, "FR": 9, "FC": 7,
+    "LFE": 6, "BL": 8, "BR": 8,
+    "SL": 7, "SR": 7
+}
+# In defaults.py
+SUBTITLE_STYLES = {
+    "default": {
+        "font": "Arial",
+        "font_size": 24,
+        "color": "#FFFFFF",
+        "background": "#00000080",
+        "outline": 2,
+        "outline_color": "#000000",
+        "alignment": "center",
+        "margin": 10
+    },
+    "cinema": {
+        "font": "Helvetica Neue",
+        "font_size": 28,
+        "color": "#FFFF00",
+        "background": "#00000000",
+        "outline": 3,
+        "outline_color": "#000000",
+        "alignment": "center",
+        "margin": 50
+    },
+    "modern": {
+        "font": "Roboto",
+        "font_size": 22,
+        "color": "#00FF00",
+        "background": "#1A1A1ACC",
+        "outline": 1,
+        "outline_color": "#FFFFFF",
+        "alignment": "bottom-center",
+        "margin": 20
+    },
+    "classic": {
+        "font": "Times New Roman",
+        "font_size": 26,
+        "color": "#FFFFFF",
+        "background": "#000000AA",
+        "outline": 0,
+        "alignment": "top-center",
+        "margin": 30
+    },
+    "animated": {
+        "font": "Futura",
+        "font_size": 24,
+        "color": "#FFA500",
+        "background": "#00000000",
+        "outline": 2,
+        "outline_color": "#000000",
+        "alignment": "dynamic",
+        "margin": 15,
+        "effects": ["fade", "scroll"]
+    },
+    "formats": {
+        "srt": {
+            "max_lines": 2,
+            "line_spacing": 8
+        },
+        "ass": {
+            "styles": ["Bold", "Italic"],
+            "wrap_style": 0
+        },
+        "vtt": {
+            "cue_settings": "vertical:rl line:50%"
+        }
+    }
+}
