@@ -4,6 +4,7 @@ import os
 import subprocess
 import threading
 import time
+import asyncio
 import yt_dlp
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Tuple
@@ -13,11 +14,6 @@ from .defaults import (
     CONFIG_FILE,
     DEFAULT_CONFIG,
     DEFAULT_ORGANIZATION_TEMPLATES,
-    _config_initialized,
-    _ffmpeg_validated,
-    _background_init_complete,
-    _config_updates_available,
-    _update_messages,
     CACHE_DIR
 )
 from .common_utils import is_windows
@@ -26,7 +22,16 @@ from .manager import DownloadManager
 # Initialize colorama
 init(autoreset=True)
 
+# Module-level variables
 logger = logging.getLogger(__name__)
+
+# Configuration state variables
+_config_initialized = False
+_ffmpeg_validated = False
+_background_init_complete = False
+_config_updates_available = False
+_update_messages: List[str] = []
+_config_lock = threading.Lock()
 
 def _validate_ffmpeg_version(ffmpeg_path: str) -> Tuple[bool, Optional[float]]:
     """Validate FFmpeg version, returns (is_valid, version_number)"""
@@ -76,7 +81,7 @@ def _update_organization_templates(config: dict) -> bool:
 
 def _run_background_init(config: dict) -> None:
     """Run background configuration validation and updates"""
-    global _ffmpeg_validated, _background_init_complete, _config_updates_available
+    global _ffmpeg_validated, _background_init_complete, _config_updates_available, _update_messages
     
     try:
         any_updates_found = False
@@ -112,11 +117,11 @@ def _run_background_init(config: dict) -> None:
             try:
                 with open(CONFIG_FILE, "w") as f:
                     json.dump(config, f, indent=4)
-            except Exception as e:
-                logger.error(f"Failed to save config updates: {e}")
+            except Exception as error:
+                logger.error(f"Failed to save config updates: {str(error)}")
 
-    except Exception as e:
-        logger.error(f"Background initialization error: {e}")
+    except Exception as error:
+        logger.error(f"Background initialization error: {str(error)}")
     finally:
         _background_init_complete = True
 
@@ -155,69 +160,111 @@ def _ensure_output_directories(config: Dict[str, Any]) -> None:
             config[key] = fallback
             os.makedirs(fallback, exist_ok=True)
 
-def initialize_config_async(force_validation: bool = False) -> Dict[str, Any]:
-    """Initialize configuration asynchronously with robust error handling"""
-    global _config_initialized, _ffmpeg_validated
+def get_default_config() -> Dict[str, Any]:
+    """Get default configuration values"""
+    config_dir = os.path.dirname(os.path.dirname(__file__))
+    
+    base_paths = {
+        "sessions_dir": os.path.join(config_dir, "sessions"),
+        "cache_dir": os.path.join(config_dir, "cache"),
+        "download_dir": os.path.join(config_dir, "downloads"),
+        "video_output": os.path.join(os.path.expanduser("~"), "Videos"),
+        "audio_output": os.path.join(os.path.expanduser("~"), "Music")
+    }
+    
+    # Create required directories
+    for path in base_paths.values():
+        os.makedirs(path, exist_ok=True)
+    
+    return {
+        **base_paths,  # Include all base paths
+        "session_file": os.path.join(base_paths["sessions_dir"], "download_sessions.json"),
+        "auto_organize": True,
+        "max_retries": 3,
+        "retry_delay": 5,
+        "exponential_backoff": True,
+        "concurrent_downloads": min(os.cpu_count() or 4, 16),
+        "chunk_size": 1024 * 1024,  # 1MB
+        "session_expiry": 7 * 24 * 60 * 60,  # 7 days
+        "auto_save_interval": 30,  # seconds
+    }
+
+async def initialize_config_async(*, force_validation: bool = False) -> Optional[Dict[str, Any]]:
+    """Initialize configuration asynchronously with proper defaults"""
+    global _config_initialized, _background_init_complete
     
     try:
-        # Ensure directory structure exists
-        _ensure_config_directory()
+        with _config_lock:
+            config = load_config()
+            
+            # If no config was loaded, get the defaults
+            if not config:
+                config = get_default_config()
+            
+            # Ensure critical paths exist and are set
+            for key, value in config.items():
+                if isinstance(value, str) and (key.endswith('_dir') or key.endswith('_file') or key.endswith('_output')):
+                    if os.path.isabs(value):  # Only create absolute paths
+                        os.makedirs(os.path.dirname(value), exist_ok=True)
+            
+            # Reset state if forcing validation
+            if force_validation:
+                _background_init_complete = False
+            
+            # Start background validation if needed
+            if not _background_init_complete or force_validation:
+                await asyncio.to_thread(_run_background_init, config)
+            
+            _config_initialized = True
+            return config
         
-        # Load or create configuration
-        config = _load_existing_config()
-        
-        # Setup output directories
-        _ensure_output_directories(config)
-        
-        # Ensure cache directory exists
-        try:
-            os.makedirs(CACHE_DIR, exist_ok=True)
-        except OSError as e:
-            logger.error(f"Failed to create cache directory: {e}")
-        
-        # Save updated config
-        try:
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(config, f, indent=4)
-        except Exception as e:
-            logger.error(f"Failed to save config: {e}")
-        
-        # Start background validation if needed
-        if not _config_initialized or force_validation:
-            bg_thread = threading.Thread(
-                target=_run_background_init,
-                args=(config,),
-                daemon=True
-            )
-            bg_thread.start()
-        
-        _config_initialized = True
-        return config
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize config: {e}")
-        return DEFAULT_CONFIG.copy()
+    except Exception as error:
+        logger.error(f"Failed to initialize config: {str(error)}")
+        return None
 
 def load_config() -> Dict[str, Any]:
     """Load configuration from file with defaults and error handling"""
+    global _config_initialized
+
     try:
-        with open(CONFIG_FILE, "r") as f:
-            config = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        config = DEFAULT_CONFIG.copy()
-
-    # Ensure all default keys are present
-    for key, value in DEFAULT_CONFIG.items():
-        config.setdefault(key, value)
-
-    # Ensure organization templates are complete
-    if "organization_templates" in config:
-        for key, value in DEFAULT_ORGANIZATION_TEMPLATES.items():
-            config["organization_templates"].setdefault(key, value)
-    else:
-        config["organization_templates"] = DEFAULT_ORGANIZATION_TEMPLATES.copy()
-
-    return config
+        # Get default configuration first
+        config = get_default_config()
+        
+        # If config file exists, load and merge with defaults
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r") as f:
+                loaded_config = json.load(f)
+                
+            # Ensure loaded config is a dictionary
+            if isinstance(loaded_config, dict):
+                config.update(loaded_config)
+            else:
+                logger.warning("Invalid config format in file, using defaults")
+        else:
+            logger.info("No config file found, using defaults")
+            
+        # Ensure sessions directory exists
+        sessions_dir = config.get("sessions_dir")
+        if sessions_dir:
+            os.makedirs(sessions_dir, exist_ok=True)
+            if "session_file" not in config:
+                config["session_file"] = os.path.join(sessions_dir, "download_sessions.json")
+                
+        # Save config if it was created or updated
+        if not os.path.exists(CONFIG_FILE):
+            with _config_lock:
+                with open(CONFIG_FILE, "w") as f:
+                    json.dump(config, f, indent=4)
+                    
+        _config_initialized = True
+        return config
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse config file: {str(e)}")
+        return get_default_config()
+    except Exception as error:
+        logger.error(f"Unexpected error loading config: {str(error)}")
+        return get_default_config()
 
 def test_functionality() -> bool:
     """Run basic tests to verify functionality"""
@@ -372,12 +419,16 @@ def print_ffmpeg_instructions():
         "\nFor detailed instructions, visit: https://www.wikihow.com/Install-FFmpeg-on-Windows"
     )
 
-def check_for_updates() -> None:
+async def check_for_updates() -> None:
     """
     Check if any configuration updates were detected in the background thread.
     If so, display notifications to the user.
     """
-    if _background_init_complete and _config_updates_available:
+    # Wait a brief moment to allow background init to complete
+    while not _background_init_complete:
+        await asyncio.sleep(0.1)  # Short sleep to allow other tasks to run
+        
+    if _config_updates_available:
         print(f"\n{Fore.YELLOW}Configuration Updates Available:{Style.RESET_ALL}")
         for message in _update_messages:
             print(f"  {Fore.CYAN}• {message}{Style.RESET_ALL}")

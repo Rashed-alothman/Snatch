@@ -1,7 +1,20 @@
 #progress/spinner interface, UI abstraction
 from colorama import Fore, Style, init
-from typing import Optional 
-from .defaults import SPINNER_STYLES
+from typing import Optional, Dict, List, Any, Union
+import asyncio
+from rich.progress import (
+    Progress, SpinnerColumn, TimeRemainingColumn,
+    TextColumn, BarColumn, DownloadColumn,
+    TransferSpeedColumn, TaskProgressColumn
+)
+from rich.live import Live
+from rich.panel import Panel
+from rich.console import Console
+from rich.table import Table
+from rich.layout import Layout
+from rich.text import Text
+from rich import box
+from .defaults import SPINNER_STYLES, THEME
 import threading
 import platform
 import logging
@@ -13,7 +26,37 @@ import math
 import sys
 import json
 
+# Rich console setup
+console = Console(theme=THEME)
 logger = logging.getLogger(__name__)
+
+# Progress Dashboard Constants
+STYLE = {
+    "progress": {
+        "bar": {
+            "complete": "bright_cyan",
+            "finished": "bright_green",
+            "pulse": "bright_cyan"
+        },
+        "speed": "bright_yellow",
+        "elapsed": "bright_black",
+        "remaining": "bright_black",
+        "description": "bright_white"
+    },
+    "status": {
+        "success": "bright_green",
+        "error": "bright_red",
+        "warning": "bright_yellow",
+        "info": "bright_blue"
+    }
+}
+
+BOX = {
+    "main": box.HEAVY,
+    "progress": box.ROUNDED,
+    "stats": box.MINIMAL_HEAVY_HEAD,
+    "info": box.SIMPLE
+}
 
 class DetailedProgressDisplay:
     """
@@ -1334,3 +1377,533 @@ class DownloadStats:
                 keep_history=self.keep_history, history_limit=self.history_limit
             )
             self.start_time = original_start
+
+class RichProgressDashboard:
+    """Modern progress dashboard with real-time stats, adaptive layout, and holographic effects.
+    
+    Features:
+    - Multi-column progress bars with ETA and speed
+    - Real-time transfer statistics with peak/average speeds
+    - System resource monitoring
+    - File information panel
+    - Rich styling and animations
+    - Responsive layout
+    """
+    
+    def __init__(self, total_size: int = 0, title: str = "Download"):
+        self.total_size = total_size
+        self.title = title
+        self.started = False
+        self.download_task_id = None
+        self._lock = threading.Lock()
+        
+        # Stats tracking
+        self.stats = {
+            "downloaded": 0,
+            "current_speed": 0,
+            "peak_speed": 0,
+            "avg_speed": 0,
+            "start_time": 0,
+            "speeds": [],
+            "max_samples": 50
+        }
+        
+        # Setup Rich components
+        self.progress = Progress(
+            SpinnerColumn(style=STYLE["progress"]["description"]),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(
+                complete_style=STYLE["progress"]["bar"]["complete"],
+                finished_style=STYLE["progress"]["bar"]["finished"],
+                pulse_style=STYLE["progress"]["bar"]["pulse"]
+            ),
+            TaskProgressColumn(),
+            DownloadColumn(binary_units=True),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
+            expand=True
+        )
+        
+        # Create layout
+        self.layout = Layout()
+        self._setup_layout()
+
+    def _setup_layout(self):
+        """Configure the dashboard layout"""
+        self.layout.split(
+            Layout(name="header", size=3),
+            Layout(name="body"),
+            Layout(name="footer", size=3)
+        )
+        
+        self.layout["body"].split_row(
+            Layout(name="main", ratio=2),
+            Layout(name="sidebar", ratio=1)
+        )
+        
+        self.layout["main"].split(
+            Layout(name="progress"),
+            Layout(name="stats")
+        )
+
+    def _render_header(self) -> Panel:
+        """Render the header panel with title and status"""
+        return Panel(
+            Text(self.title, style="bold bright_cyan"),
+            box=BOX["main"],
+            border_style="bright_blue",
+            title="Snatch Download Manager"
+        )
+
+    def _render_progress(self) -> Panel:
+        """Render the progress panel"""
+        return Panel(
+            self.progress,
+            box=BOX["progress"],
+            border_style="bright_cyan",
+            title="Progress"
+        )
+
+    def _render_stats(self) -> Panel:
+        """Render download statistics"""
+        stats_table = Table.grid(expand=True, padding=(0, 2))
+        stats_table.add_column(style="bright_blue")
+        stats_table.add_column(justify="right")
+        
+        avg_speed = self._format_speed(self.stats["avg_speed"])
+        peak_speed = self._format_speed(self.stats["peak_speed"])
+        elapsed = time.time() - self.stats["start_time"] if self.stats["start_time"] else 0
+        
+        stats_table.add_row("Average Speed:", avg_speed)
+        stats_table.add_row("Peak Speed:", peak_speed)
+        stats_table.add_row("Time Elapsed:", self._format_time(elapsed))
+        
+        return Panel(
+            stats_table,
+            box=BOX["stats"],
+            border_style="bright_blue",
+            title="Statistics"
+        )
+
+    def _render_sidebar(self) -> Panel:
+        """Render system info and file details"""
+        info_table = Table.grid(expand=True, padding=(0, 2))
+        info_table.add_column(style="bright_blue")
+        info_table.add_column(justify="right")
+        
+        info_table.add_row(
+            "File Size:",
+            self._format_size(self.total_size) if self.total_size else "Unknown"
+        )
+        info_table.add_row(
+            "Downloaded:",
+            self._format_size(self.stats["downloaded"])
+        )
+        
+        # Add system stats if psutil is available
+        try:
+            import psutil
+            info_table.add_row("CPU Usage:", f"{psutil.cpu_percent()}%")
+            info_table.add_row("Memory Usage:", f"{psutil.virtual_memory().percent}%")
+        except ImportError:
+            pass
+        
+        return Panel(
+            info_table,
+            box=BOX["info"],
+            border_style="bright_cyan",
+            title="Information"
+        )
+
+    def _format_size(self, size: int) -> str:
+        """Format size in human-readable format"""
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if size < 1024:
+                return f"{size:.1f} {unit}"
+            size /= 1024
+        return f"{size:.1f} PB"
+
+    def _format_speed(self, speed: float) -> str:
+        """Format speed with units"""
+        return f"{self._format_size(speed)}/s" if speed else "0 B/s"
+
+    def _format_time(self, seconds: float) -> str:
+        """Format time duration"""
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        minutes = int(seconds / 60)
+        seconds = seconds % 60
+        if minutes < 60:
+            return f"{minutes}m {seconds:.0f}s"
+        hours = int(minutes / 60)
+        minutes = minutes % 60
+        return f"{hours}h {minutes}m"
+
+    def _update_speed_stats(self, bytes_downloaded: int, elapsed: float):
+        """Update speed statistics"""
+        if elapsed > 0:
+            current_speed = bytes_downloaded / elapsed
+            self.stats["current_speed"] = current_speed
+            self.stats["peak_speed"] = max(self.stats["peak_speed"], current_speed)
+            
+            # Update speed samples
+            self.stats["speeds"].append(current_speed)
+            if len(self.stats["speeds"]) > self.stats["max_samples"]:
+                self.stats["speeds"].pop(0)
+            
+            # Calculate average speed
+            self.stats["avg_speed"] = sum(self.stats["speeds"]) / len(self.stats["speeds"])
+
+    def start(self):
+        """Start the progress dashboard"""
+        if not self.started:
+            self.stats["start_time"] = time.time()
+            self.last_update_time = 0
+            self.download_task_id = self.progress.add_task(
+                "[cyan]Downloading...", 
+                total=self.total_size or 100
+            )
+            self.started = True
+
+    def update(self, bytes_increment: int):
+        """Update progress with new bytes downloaded"""
+        with self._lock:
+            if not self.started:
+                self.start()
+            
+            self.stats["downloaded"] += bytes_increment
+            elapsed = time.time() - self.stats["start_time"]
+            self._update_speed_stats(bytes_increment, elapsed)
+            
+            # Update progress bar
+            self.progress.update(
+                self.download_task_id,
+                advance=bytes_increment,
+                refresh=True
+            )
+
+    def refresh(self):
+        """Refresh the entire dashboard"""
+        self.layout["header"].update(self._render_header())
+        self.layout["progress"].update(self._render_progress())
+        self.layout["stats"].update(self._render_stats())
+        self.layout["sidebar"].update(self._render_sidebar())
+
+    async def run(self):
+        """Run the dashboard in an async context"""
+        with Live(self.layout, refresh_per_second=4, screen=True):
+            while True:
+                self.refresh()
+                await asyncio.sleep(0.25)
+    
+    def run_sync(self):
+        """Run the dashboard synchronously"""
+        with Live(self.layout, refresh_per_second=4, screen=True):
+            try:
+                while True:
+                    self.refresh()
+                    time.sleep(0.25)
+            except KeyboardInterrupt:
+                self.stop()
+
+    def stop(self):
+        """Stop the progress dashboard"""
+        if self.started:
+            self.progress.remove_task(self.download_task_id)
+            self.started = False
+
+class HolographicDownloadDashboard:
+    """Premium interactive download dashboard with holographic effects and real-time monitoring.
+    
+    Features:
+    - Real-time speed and progress visualization
+    - System resource monitoring
+    - Detailed format information
+    - Network speed monitoring
+    - Smart retry handling
+    - File integrity tracking
+    """
+    
+    def __init__(
+        self,
+        manager: 'DownloadManager',
+        console: Optional[Console] = None,
+        theme: Optional[Dict[str, str]] = None
+    ):
+        self.manager = manager
+        self.console = console or Console()
+        self.layout = Layout()
+        self._setup_layout()
+        
+        # Progress tracking
+        self.progress = Progress(
+            TextColumn("[progress.description]{task.description}"),
+            SpinnerColumn("dots", style="progress"),
+            BarColumn(
+                complete_style="progress.bar.complete",
+                finished_style="progress.bar.finished",
+                pulse_style="progress.bar.pulse"
+            ),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            DownloadColumn(binary_units=True),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
+            expand=True
+        )
+        
+        # Stats tracking
+        self.current_task = None
+        self.stats = {
+            "start_time": None,
+            "downloaded_bytes": 0,
+            "total_bytes": 0,
+            "current_speed": 0,
+            "peak_speed": 0,
+            "speeds": [],  # Rolling window of speed samples
+            "retries": 0,
+            "max_retries": 3
+        }
+        
+        # Holographic effects
+        self.holographic_colors = ["#00ffff", "#ff00ff", "#9400d3"]  # Cyan, Magenta, Purple
+        self.shimmer_phase = 0
+        
+    def _setup_layout(self):
+        """Configure the dashboard layout"""
+        # Main layout structure
+        self.layout.split_column(
+            Layout(name="header", size=3),
+            Layout(name="main", ratio=8),
+            Layout(name="footer", size=3),
+        )
+        
+        # Main content area with progress and info
+        self.layout["main"].split_row(
+            Layout(name="body", ratio=2),
+            Layout(name="sidebar", ratio=1, minimum_size=30),
+        )
+        
+        # Body section with progress and details
+        self.layout["body"].split(
+            Layout(name="progress"),
+            Layout(name="details"),
+        )
+        
+    def _render_header(self) -> Panel:
+        """Render holographic header with download info"""
+        # Create shimmering title
+        title = "🌀 Snatch Download Manager"
+        shimmer_text = ""
+        for i, char in enumerate(title):
+            phase = (self.shimmer_phase + i) % len(self.holographic_colors)
+            shimmer_text += f"[{self.holographic_colors[phase]}]{char}[/]"
+        
+        # Add download status
+        if self.stats["start_time"]:
+            elapsed = time.time() - self.stats["start_time"]
+            speed = self.stats["current_speed"]
+            status = f"⏱️ {self._format_time(elapsed)} | ⚡ {self._format_speed(speed)}"
+        else:
+            status = "Initializing..."
+            
+        content = Table.grid(padding=(0, 1))
+        content.add_row(Text(shimmer_text, justify="center"))
+        content.add_row(Text(status, justify="center", style="bright_blue"))
+        
+        return Panel(
+            content,
+            box=BOX["main"],
+            border_style="bright_blue",
+            padding=(1, 2)
+        )
+    
+    def _render_progress(self) -> Panel:
+        """Render main download progress section"""
+        return Panel(
+            self.progress,
+            title=self._get_progress_title(),
+            border_style="bright_cyan",
+            box=BOX["progress"]
+        )
+    
+    def _render_details(self) -> Panel:
+        """Render download details and statistics"""
+        stats_table = Table.grid(expand=True)
+        stats_table.add_column(style="bright_blue")
+        stats_table.add_column(justify="right")
+        
+        # Download stats
+        downloaded = self.stats["downloaded_bytes"]
+        total = self.stats["total_bytes"]
+        peak = self.stats["peak_speed"]
+        
+        stats_table.add_row("Downloaded:", self._format_size(downloaded))
+        stats_table.add_row("Total Size:", self._format_size(total))
+        stats_table.add_row("Peak Speed:", self._format_speed(peak))
+        
+        if self.stats["retries"] > 0:
+            stats_table.add_row(
+                "Retries:",
+                f"{self.stats['retries']}/{self.stats['max_retries']}"
+            )
+        
+        return Panel(
+            stats_table,
+            title="📊 Statistics",
+            border_style="bright_blue",
+            box=BOX["stats"]
+        )
+    
+    def _render_sidebar(self) -> Panel:
+        """Render system info and download queue"""
+        try:
+            import psutil
+            cpu = psutil.cpu_percent()
+            mem = psutil.virtual_memory().percent
+            
+            sys_table = Table.grid(expand=True)
+            sys_table.add_column(style="bright_blue")
+            sys_table.add_column(justify="right")
+            
+            sys_table.add_row("CPU Usage:", f"{cpu}%")
+            sys_table.add_row("Memory:", f"{mem}%")
+            sys_table.add_row("Active Downloads:", str(len(self.manager.current_downloads)))
+            
+            return Panel(
+                sys_table,
+                title="💻 System",
+                border_style="bright_cyan",
+                box=BOX["info"]
+            )
+            
+        except ImportError:
+            return Panel(
+                "System monitoring unavailable",
+                border_style="bright_cyan",
+                box=BOX["info"]
+            )
+    
+    def _get_progress_title(self) -> str:
+        """Get the progress panel title with holographic effect"""
+        phase = int(time.time() * 2) % len(self.holographic_colors)
+        color = self.holographic_colors[phase]
+        return f"[{color}]⬇️ Download Progress[/]"
+    
+    def _format_size(self, size: int) -> str:
+        """Format size with color-coded units"""
+        for unit in ["B", "KB", "MB", "GB", "TB"]:
+            if size < 1024:
+                return f"[cyan]{size:.1f}[/] [bright_black]{unit}[/]"
+            size /= 1024
+        return f"[cyan]{size:.1f}[/] [bright_black]PB[/]"
+    
+    def _format_speed(self, speed: float) -> str:
+        """Format speed with color-coded units"""
+        if speed == 0:
+            return "[bright_black]0 B/s[/]"
+        
+        formatted = self._format_size(speed)
+        return f"{formatted}/s"
+    
+    def _format_time(self, seconds: float) -> str:
+        """Format time with color coding"""
+        if seconds < 60:
+            return f"[cyan]{seconds:.1f}[/][bright_black]s[/]"
+        
+        minutes = int(seconds / 60)
+        seconds = seconds % 60
+        if minutes < 60:
+            return f"[cyan]{minutes}[/][bright_black]m [/][cyan]{seconds:.0f}[/][bright_black]s[/]"
+        
+        hours = int(minutes / 60)
+        minutes = minutes % 60
+        return f"[cyan]{hours}[/][bright_black]h [/][cyan]{minutes}[/][bright_black]m[/]"
+    
+    def start(self, title: str = "Downloading...", total: Optional[int] = None):
+        """Start a new download task"""
+        self.stats.update({
+            "start_time": time.time(),
+            "downloaded_bytes": 0,
+            "total_bytes": total or 0,
+            "current_speed": 0,
+            "peak_speed": 0,
+            "speeds": [],
+            "retries": 0
+        })
+        
+        self.current_task = self.progress.add_task(title, total=100)
+    
+    def update(self, n: int, total: Optional[int] = None, speed: Optional[float] = None):
+        """Update download progress"""
+        if not self.current_task:
+            self.start()
+        
+        self.stats["downloaded_bytes"] += n
+        if total is not None:
+            self.stats["total_bytes"] = total
+        
+        if speed is not None:
+            self.stats["current_speed"] = speed
+            self.stats["peak_speed"] = max(self.stats["peak_speed"], speed)
+            
+            # Update speed samples
+            self.stats["speeds"].append(speed)
+            if len(self.stats["speeds"]) > 50:  # Keep last 50 samples
+                self.stats["speeds"].pop(0)
+        
+        # Update progress percentage
+        if self.stats["total_bytes"] > 0:
+            percentage = (self.stats["downloaded_bytes"] / self.stats["total_bytes"]) * 100
+            self.progress.update(self.current_task, completed=percentage)
+    
+    def retry(self, reason: str):
+        """Handle a retry event"""
+        self.stats["retries"] += 1
+        self.progress.update(
+            self.current_task,
+            description=f"[yellow]Retrying ({reason})[/]"
+        )
+    
+    def finish(self, success: bool = True):
+        """Complete the download task"""
+        if success:
+            self.progress.update(
+                self.current_task,
+                completed=100,
+                description="[green]Download Complete![/]"
+            )
+        else:
+            self.progress.update(
+                self.current_task,
+                description="[red]Download Failed[/]"
+            )
+    
+    def refresh(self):
+        """Refresh the entire dashboard"""
+        self.shimmer_phase += 1  # Update holographic effect
+        
+        # Update layout sections
+        self.layout["header"].update(self._render_header())
+        self.layout["progress"].update(self._render_progress())
+        self.layout["details"].update(self._render_details())
+        self.layout["sidebar"].update(self._render_sidebar())
+        
+        # Live update
+        self.console.print(self.layout)
+    
+    async def run(self):
+        """Run the dashboard asynchronously"""
+        with Live(self.layout, console=self.console, refresh_per_second=4) as live:
+            while True:
+                self.refresh()
+                await asyncio.sleep(0.25)  # 4 times per second
+                
+    def run_sync(self):
+        """Run the dashboard synchronously"""
+        with Live(self.layout, console=self.console, refresh_per_second=4) as live:
+            try:
+                while True:
+                    self.refresh()
+                    time.sleep(0.25)
+            except KeyboardInterrupt:
+                pass

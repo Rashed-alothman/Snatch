@@ -33,8 +33,7 @@ setup(
             "config/*.json",
             "data/*.txt",
         ],
-    },
-    # Core dependencies
+    },    # Core dependencies
     install_requires=[
         "yt-dlp>=2025.4.30",
         "ffmpeg>=1.4",
@@ -47,6 +46,10 @@ setup(
         "certifi>=2025.4.26",
         "charset-normalizer>=3.4.2",
         "idna>=3.10",
+        "aiohttp>=3.9.1",  # For async HTTP requests
+        "aiofiles>=23.2.1",  # For async file operations
+        "async-timeout>=4.0.3",  # For async timeouts
+        "netifaces>=0.11.0",  # For network interface detection
         
         # CLI interface and formatting
         "typer>=0.15.3",
@@ -57,7 +60,7 @@ setup(
         "tqdm>=4.66.1",
         "shellingham>=1.5.0",
         "prompt_toolkit>=3.0.43",
-        
+        "textual>=0.40.0",  # For modern TUI interface
         # Markdown processing
         "markdown-it-py>=3.0.0",
         "mdurl>=0.1.2",
@@ -66,7 +69,9 @@ setup(
         # Utilities
         "python-json-logger>=2.0.4",
         "asgiref>=3.8.1",
-        "typing_extensions>=4.13.2",        # P2P and DHT support
+        "typing_extensions>=4.13.2",
+        
+        # P2P and DHT support
         "cryptography>=44.0.3",
         "future>=1.0.0",
         "pyp2p>=0.8.3",
@@ -74,12 +79,10 @@ setup(
         "cffi>=1.17.1",
         "attrs>=25.3.0",
         "service_identity>=24.1.0",
-        "netifaces>=0.11.0",
-        "miniupnpc>=2.3.2",
+        "netifaces>=0.11.0",  # Network interface information
+        "miniupnpc>=2.3.2",   # UPnP support for P2P
         "u-msgpack-python>=2.8.0",  # Required by pyp2p
-        "storjkademlia>=0.7.4",  # Required by pyp2p
-
-        # Additional dependencies
+        "storjkademlia>=0.7.4",     # Required by pyp2p        # Additional dependencies
         "hyperlink>=21.0.0",
         "imageio>=2.37.0",
         "imageio-ffmpeg>=0.6.0",
@@ -87,20 +90,26 @@ setup(
         "iniconfig>=2.1.0",
         "ipaddress>=1.0.23",
         "moviepy>=2.1.2",
-        "netifaces>=0.11.0",
-        "ntplib>=0.4.0",
+        "ntplib>=0.4.0",         # Network Time Protocol for synchronization
         "numpy>=2.2.5",
         "packaging>=25.0",
-        "pillow>=10.4.0",
+        "pillow>=10.4.0",        # Image processing
         "pluggy>=1.5.0",
         "proglog>=0.1.12",
         "pycparser>=2.22",
-        "pydub>=0.25.1",
+        "pydub>=0.25.1",         # Audio processing
         "pyroute2>=0.9.2",
-        "Twisted>=24.11.0",
         "wcwidth>=0.2.13",
         "zope.interface>=7.2",
-        "future>=1.0.0",
+        # Cross-platform compatibility
+        "filelock>=3.13.1",      # For safe file access
+        "xxhash>=3.4.1",         # Fast hashing algorithm
+        "multidict>=6.0.4",      # For aiohttp
+        "yarl>=1.9.4",           # For URL handling
+        
+        # Retry and resilience
+        "backoff>=2.2.1",        # For exponential backoff and retries
+        "tenacity>=8.2.3",       # Advanced retry functionality
     ],
     
     entry_points={

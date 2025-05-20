@@ -207,7 +207,7 @@ HELP_CONTENT = {
     
     Start by entering a media URL or:
     - Press `F1` for advanced options
-    - `Ctrl+T` for tutorial mode
+    - `Ctrl+T` to tutorial mode
     - `Ctrl+Q` to exit
     """
 }
@@ -286,6 +286,113 @@ SUBTITLE_STYLES = {
         },
         "vtt": {
             "cue_settings": "vertical:rl line:50%"
+        }
+    }
+}
+
+# Format presets for common quality settings
+FORMAT_PRESETS = {
+    "audio": {
+        "best": {
+            "flac": {
+                "codec": "flac",
+                "quality": "0",  # Lossless
+                "sample_rate": "96000",
+                "bit_depth": "24",
+                "channels": "2"
+            },
+            "opus": {
+                "codec": "libopus",
+                "bitrate": "256k",
+                "vbr": "on",
+                "compression_level": "10"
+            },
+            "mp3": {
+                "codec": "libmp3lame",
+                "bitrate": "320k",
+                "quality": "0",
+                "compression_level": "0"
+            },
+            "aac": {
+                "codec": "aac",
+                "bitrate": "256k",
+                "profile": "aac_low",
+                "quality": "1"
+            }
+        },
+        "medium": {
+            "opus": {
+                "codec": "libopus",
+                "bitrate": "128k",
+                "vbr": "on",
+                "compression_level": "8"
+            },
+            "mp3": {
+                "codec": "libmp3lame",
+                "bitrate": "192k",
+                "quality": "4",
+                "compression_level": "2"
+            },
+            "aac": {
+                "codec": "aac",
+                "bitrate": "128k",
+                "profile": "aac_low",
+                "quality": "3"
+            }
+        },
+        "small": {
+            "opus": {
+                "codec": "libopus",
+                "bitrate": "96k",
+                "vbr": "on",
+                "compression_level": "6"
+            },
+            "mp3": {
+                "codec": "libmp3lame",
+                "bitrate": "128k",
+                "quality": "5",
+                "compression_level": "4"
+            },
+            "aac": {
+                "codec": "aac",
+                "bitrate": "96k",
+                "profile": "aac_low",
+                "quality": "4"
+            }
+        }
+    },
+    "video": {
+        "4k": {
+            "codec": "libx264",
+            "height": 2160,
+            "crf": "18",
+            "preset": "slow",
+            "audio_codec": "aac",
+            "audio_bitrate": "192k"
+        },
+        "1080p": {
+            "codec": "libx264",
+            "height": 1080,
+            "crf": "20",
+            "preset": "medium",
+            "audio_codec": "aac",
+            "audio_bitrate": "128k"
+        },
+        "720p": {
+            "codec": "libx264", 
+            "height": 720,
+            "crf": "22",
+            "preset": "fast",
+            "audio_codec": "aac",
+            "audio_bitrate": "96k"
+        },
+        "480p": {
+            "codec": "libx264",
+            "height": 480,
+            "crf": "24",
+            "preset": "superfast",
+            "audio_codec": "aac",
+            "audio_bitrate": "64k"
         }
     }
 }

@@ -3,7 +3,12 @@ import shutil
 import logging
 from pathlib import Path
 import subprocess
-from typing import Optional
+import sys
+import asyncio
+from typing import Optional, Dict, Any, List
+
+# Re-export AudioProcessor from the main implementation
+from .audio_processor import AudioProcessor, AudioStats
 
 def locate_ffmpeg() -> Optional[str]:
     """Locate FFmpeg executable with fallback to auto-install"""
