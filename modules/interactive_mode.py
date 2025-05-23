@@ -161,6 +161,72 @@ UI = {
     "spacer": "\n"
 }
 
+
+# Status classification helpers for reducing complexity
+def classify_download_speed(speed_mbps: float) -> str:
+    """Classify download speed into status classes."""
+    if speed_mbps > 5:
+        return "status-ok"
+    elif speed_mbps > 1:
+        return "status-warning"
+    else:
+        return "status-error"
+
+def classify_upload_speed(speed_mbps: float) -> str:
+    """Classify upload speed into status classes."""
+    if speed_mbps > 2:
+        return "status-ok"
+    elif speed_mbps > 0.5:
+        return "status-warning"
+    else:
+        return "status-error"
+
+def classify_ping(ping_ms: float) -> str:
+    """Classify ping latency into status classes."""
+    if ping_ms < 100:
+        return "status-ok"
+    elif ping_ms < 200:
+        return "status-warning"
+    else:
+        return "status-error"
+
+def classify_jitter(jitter_ms: float) -> str:
+    """Classify jitter into status classes."""
+    if jitter_ms < 20:
+        return "status-ok"
+    elif jitter_ms < 50:
+        return "status-warning"
+    else:
+        return "status-error"
+
+def classify_packet_loss(loss_percent: float) -> str:
+    """Classify packet loss into status classes."""
+    if loss_percent < 1:
+        return "status-ok"
+    elif loss_percent < 5:
+        return "status-warning"
+    else:
+        return "status-error"
+
+def get_overall_rating(download_mbps: float, ping_ms: float) -> str:
+    """Get overall network rating."""
+    if download_mbps > 10 and ping_ms < 100:
+        return "Good"
+    elif download_mbps > 3:
+        return "Fair"
+    else:
+        return "Poor"
+
+def get_rating_class(rating: str) -> str:
+    """Get CSS class for rating."""
+    if rating == "Good":
+        return "status-ok"
+    elif rating == "Fair":
+        return "status-warning"
+    else:
+        return "status-error"
+
+
 class MediaInfo:
     """Rich media information display with metadata and quality visualization."""
 
@@ -385,7 +451,7 @@ class InteractiveApp(App):
     DOWNLOAD_SCREEN = "download-screen"
     BROWSE_SCREEN = "browse-screen"
     NETWORK_SCREEN = "network-screen"
-    SETTINGS_SCREEN = "settings-screen" 
+    SETTINGS_SCREEN = "settings-screen"
     HELP_SCREEN = "help-screen"
     AUDIO_SCREEN = "audio-screen"
     VIDEO_SCREEN = "video-screen"
@@ -487,28 +553,12 @@ class InteractiveApp(App):
     """
     
         # Screen ID constants
-    DOWNLOAD_SCREEN = "download-screen"
-    BROWSE_SCREEN = "browse-screen"
-    NETWORK_SCREEN = "network-screen"
-    SETTINGS_SCREEN = "settings-screen" 
-    HELP_SCREEN = "help-screen"
-    AUDIO_SCREEN = "audio-screen"
-    VIDEO_SCREEN = "video-screen"
-    FILES_SCREEN = "files-screen"
-    
-    # Form input ID constants
-    VIDEO_DIR_INPUT = "#video-dir-input"
-    AUDIO_DIR_INPUT = "#audio-dir-input"
-    FFMPEG_INPUT = "#ffmpeg-input"
-    ORGANIZE_FILES = "#organize-files"
-    HIGH_QUALITY = "#high-quality"
     
     # Default paths
     DEFAULT_VIDEO_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "video")
     DEFAULT_AUDIO_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "audio")
     
     # Help content
-    HELP_DOCUMENTATION_TITLE = "Help & Documentation"
     
     def __init__(self, config: Dict[str, Any]):
         """Initialize the interactive app with configuration"""
@@ -702,98 +752,6 @@ class InteractiveApp(App):
         except Exception as e:
             logging.error(f"Failed to initialize download manager: {str(e)}")
             self.notify(f"Failed to initialize download manager: {str(e)}", severity="error")
-    
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button press events"""
-        button_id = event.button.id
-        
-        # Menu navigation
-        if button_id.startswith("menu-"):
-            # Remove selected class from all menu items
-            for item in self.query(".menu-item"):
-                item.remove_class("selected")
-                
-            # Add selected class to clicked item
-            event.button.add_class("selected")
-            
-            # Switch content based on menu selection
-            menu_target = button_id.replace("menu-", "")
-            target_screen = f"{menu_target}-screen"
-            
-            # Get the content switcher
-            content_switcher = self.query_one("#content-switcher")
-            
-            # Check if the screen exists in default screens
-            if target_screen in content_switcher.default_screens:
-                content_switcher.current = target_screen
-            else:
-                self.notify(f"Screen {target_screen} not available", severity="warning")
-        
-        # Action buttons
-        elif button_id == "analyze-btn":
-            self.analyze_url()
-        elif button_id == "start-download-btn":
-            self.start_download()
-        elif button_id == "speedtest-btn":
-            self.run_speed_test()
-        elif button_id == "save-settings-btn":
-            self.save_settings()
-    def setup_format_table(self) -> None:
-        """Set up the format selection table"""
-        table = self.query_one(self.FORMAT_TABLE_ID)
-        table.cursor_type = "row"
-        
-        # Clear existing columns if any
-        if hasattr(table, "clear"):
-            table.clear()
-        
-        # Add detailed columns for better format selection
-        table.add_columns(
-            "ID", "Quality", "Resolution", "Codec", "Size", "Audio", "FPS"
-        )
-        
-        # Make sure we have a download button
-        if not self.query_one("#format-selection").query("#start-download-btn"):
-            download_button = Button("Start Download", id="start-download-btn", variant="primary")
-            self.query_one("#format-selection").mount(download_button)
-        
-    def load_help_content(self) -> None:
-        """Load help content from defaults"""
-        try:
-            help_screen = self.query_one("#help-screen")
-            help_screen.remove_children()
-            help_screen.mount(Static("Help & Documentation", classes="title"))
-            
-            # Try to load help content from defaults
-            from .defaults import HELP_CONTENT
-            help_text = "\n\n".join(HELP_CONTENT.values())
-            help_screen.mount(Static(help_text))
-        except Exception as e:
-            logging.error(f"Error loading help content: {str(e)}")
-            help_screen = self.query_one("#help-screen")
-            help_screen.remove_children()
-            help_screen.mount(Static("Help & Documentation", classes="title"))
-            help_screen.mount(Static("Error loading help content. Please check documentation."))
-    def load_settings(self) -> None:
-        """Load settings into form fields"""
-        try:
-            self.query_one(self.VIDEO_DIR_INPUT).value = self.config.get("video_output", self.DEFAULT_VIDEO_DIR)
-            self.query_one(self.AUDIO_DIR_INPUT).value = self.config.get("audio_output", self.DEFAULT_AUDIO_DIR)
-            self.query_one(self.FFMPEG_INPUT).value = self.config.get("ffmpeg_location", "")
-            self.query_one(self.ORGANIZE_FILES).value = self.config.get("organize", False)
-            self.query_one(self.HIGH_QUALITY).value = self.config.get("high_quality_audio", True)
-        except Exception as e:
-            logging.error(f"Error loading settings: {str(e)}")
-            self.notify("Error loading settings", severity="error")
-    def initialize_download_manager(self) -> None:
-        """Initialize the download manager with current settings"""
-        try:
-            from .manager import AsyncDownloadManager
-            self.download_manager = AsyncDownloadManager(self.config)
-            logging.info("Download manager initialized successfully")
-        except Exception as e:
-            logging.error(f"Error initializing download manager: {str(e)}")
-            self.notify(f"Error initializing core components: {str(e)}", severity="error")
             
     def save_settings(self) -> None:
         """Save user settings to config file"""
@@ -850,25 +808,14 @@ class InteractiveApp(App):
     @work(thread=True)
     async def analyze_url(self) -> None:
         """Analyze URL and show available formats"""
-        url_input = self.query_one("#url-input")
-        url = url_input.value.strip()
-        
+        url = self._get_input_url()
         if not url:
-            self.notify("Please enter a valid URL", severity="error")
             return
             
-        # Update UI to show we're analyzing
         self.notify("Analyzing URL...", severity="info")
         
         try:
-            # Clear previous formats
-            table = self.query_one(self.FORMAT_TABLE_ID)
-            table.clear()
-            
-            # Set up the table columns
-            self.setup_format_table()
-            
-            # Analyze the URL using download manager
+            await self._clear_and_setup_format_table()
             self.current_url = url
             self.format_info = await self.download_manager.get_formats(url)
             
@@ -876,102 +823,94 @@ class InteractiveApp(App):
                 self.notify("No formats found for this URL", severity="error")
                 return
                 
-            # Add formats to the table
-            formats = self.format_info.get("formats", [])
-            
-            # Sort formats by quality (highest first)
-            formats.sort(key=lambda f: (
-                f.get("height", 0) or 0, 
-                f.get("fps", 0) or 0,
-                f.get("tbr", 0) or 0
-            ), reverse=True)
-            
-            # Filter out formats without video or audio
-            video_formats = [f for f in formats if f.get("vcodec") != "none"]
-            audio_formats = [f for f in formats if f.get("acodec") != "none"]
-            
-            # Add best video+audio formats first
-            for fmt in video_formats[:10]:  # Limit to top 10 for better usability
-                format_id = fmt.get("format_id", "unknown")
-                quality = "HD" if fmt.get("height", 0) >= 720 else "SD"
-                resolution = f"{fmt.get('width', '?')}x{fmt.get('height', '?')}"
-                codec = fmt.get("vcodec", "unknown")
-                filesize = format_size(fmt.get("filesize") or fmt.get("filesize_approx") or 0)
-                audio_codec = fmt.get("acodec", "none")
-                fps = fmt.get("fps", "N/A")
-                
-                # Add the row to the table
-                table.add_row(
-                    format_id, 
-                    quality, 
-                    resolution, 
-                    codec, 
-                    filesize,
-                    audio_codec if audio_codec != "none" else "No audio",
-                    str(fps) if fps else "N/A"
-                )
-            
-            # Add audio-only formats
-            for fmt in audio_formats[:5]:  # Limit to top 5 audio formats
-                if fmt.get("vcodec") == "none":  # Audio only
-                    format_id = fmt.get("format_id", "unknown")
-                    quality = fmt.get("format_note", "Audio")
-                    resolution = "Audio only"
-                    codec = "N/A"
-                    filesize = format_size(fmt.get("filesize") or fmt.get("filesize_approx") or 0)
-                    audio_codec = fmt.get("acodec", "unknown")
-                    
-                    # Add the row to the table
-                    table.add_row(
-                        format_id, 
-                        quality, 
-                        resolution, 
-                        codec, 
-                        filesize,
-                        audio_codec,
-                        "N/A"
-                    )
-                
-            # Select the first row by default
-            if table.row_count > 0:
-                table.cursor_row = 0
-                
-            # Show download button
-            if not self.query_one("#main-content").query("#start-download-btn"):
-                download_btn = Button("Start Download", id="start-download-btn", variant="primary")
-                format_selection = self.query_one("#format-selection")
-                format_selection.mount(download_btn)
-                
+            await self._populate_format_table()
+            self._setup_download_button()
             self.notify("URL analyzed successfully", severity="success")
+            
         except asyncio.CancelledError:
             self.notify("URL analysis was cancelled", severity="warning")
         except Exception as e:
             logging.error(f"Error analyzing URL: {str(e)}")
             self.notify(f"Error analyzing URL: {str(e)}", severity="error")
+    
+    def _get_input_url(self) -> str:
+        """Get and validate URL from input."""
+        url_input = self.query_one("#url-input")
+        url = url_input.value.strip()
+        
+        if not url:
+            self.notify("Please enter a valid URL", severity="error")
+            return ""
+        return url
+    
+    async def _clear_and_setup_format_table(self) -> None:
+        """Clear and setup the format table."""
+        table = self.query_one(self.FORMAT_TABLE_ID)
+        table.clear()
+        self.setup_format_table()
+    
+    async def _populate_format_table(self) -> None:
+        """Populate the format table with available formats."""
+        table = self.query_one(self.FORMAT_TABLE_ID)
+        formats = self.format_info.get("formats", [])
+        
+        # Sort formats by quality
+        formats.sort(key=lambda f: (
+            f.get("height", 0) or 0, 
+            f.get("fps", 0) or 0,
+            f.get("tbr", 0) or 0
+        ), reverse=True)
+        
+        self._add_video_formats(table, formats)
+        self._add_audio_formats(table, formats)
+        
+        if table.row_count > 0:
+            table.cursor_row = 0
+    
+    def _add_video_formats(self, table, formats) -> None:
+        """Add video formats to table."""
+        video_formats = [f for f in formats if f.get("vcodec") != "none"]
+        
+        for fmt in video_formats[:10]:
+            format_id = fmt.get("format_id", "unknown")
+            quality = "HD" if fmt.get("height", 0) >= 720 else "SD"
+            resolution = f"{fmt.get('width', '?')}x{fmt.get('height', '?')}"
+            codec = fmt.get("vcodec", "unknown")
+            filesize = format_size(fmt.get("filesize") or fmt.get("filesize_approx") or 0)
+            audio_codec = fmt.get("acodec", "none")
+            fps = fmt.get("fps", "N/A")
+            
+            table.add_row(
+                format_id, quality, resolution, codec, filesize,
+                audio_codec if audio_codec != "none" else "No audio",
+                str(fps) if fps else "N/A"
+            )
+    
+    def _add_audio_formats(self, table, formats) -> None:
+        """Add audio-only formats to table."""
+        audio_formats = [f for f in formats if f.get("acodec") != "none"]
+        
+        for fmt in audio_formats[:5]:
+            if fmt.get("vcodec") == "none":
+                format_id = fmt.get("format_id", "unknown")
+                quality = fmt.get("format_note", "Audio")
+                resolution = "Audio only"
+                codec = "N/A"
+                filesize = format_size(fmt.get("filesize") or fmt.get("filesize_approx") or 0)
+                audio_codec = fmt.get("acodec", "unknown")
                 
-            # Add formats to the table
-            for fmt in formats:
-                format_id = fmt.get("format_id", "N/A")
-                quality = fmt.get("quality", "N/A")
-                resolution = fmt.get("resolution", "N/A")
-                codec = fmt.get("codec", "N/A")
-                filesize = format_size(fmt.get("filesize", 0))
-                audio_codec = fmt.get("acodec", "none")
-                
-                table.add_row(
-                    format_id, 
-                    str(quality), 
-                    str(resolution), 
-                    codec, 
-                    filesize,
-                    audio_codec if audio_codec != "none" else "No audio"
-                )
-                
-            # Select the first row by default
-            if table.row_count > 0:
-                table.cursor_row = 0
-                
-            self.notify("URL analyzed successfully", severity="success")
+                table.add_row(format_id, quality, resolution, codec, filesize, audio_codec, "N/A")
+    
+    def _setup_download_button(self) -> None:
+        """Setup the download button if not already present."""
+        try :
+            # Check if the download button already exists
+            if not self.query_one("#main-content").query("#start-download-btn"):
+                download_btn = Button("Start Download", id="start-download-btn", variant="primary")
+                format_selection = self.query_one("#format-selection")
+                format_selection.mount(download_btn)
+        except asyncio.CancelledError:
+            self.notify("URL analysis was cancelled", severity="warning")
         except Exception as e:
             logging.error(f"Error analyzing URL: {str(e)}")
             self.notify(f"Error analyzing URL: {str(e)}", severity="error")
@@ -1018,7 +957,7 @@ class InteractiveApp(App):
                 await self.update_download_progress()
                 
             if success:
-                self.notify(f"Download started successfully", severity="success")
+                self.notify("Download started successfully", severity="success")
             else:
                 self.notify("Download could not be started", severity="error")
                 
@@ -1035,127 +974,109 @@ class InteractiveApp(App):
         status = self.query_one("#network-status")
         stats_container = self.query_one("#network-stats")
         
-        # Update UI
-        button.disabled = True
-        button.label = "Running Test..."
-        status.update("Testing network speed...")
+        self._prepare_speed_test_ui(button, status)
         
         try:
-            # Create NetworkManager instance
-            from .network import NetworkManager
-            network_manager = NetworkManager(self.config)
-            
-            # Run speed test
-            result = await network_manager.run_speed_test(detailed=True)
+            result = await self._execute_speed_test()
             
             if result:
-                # Clear previous results
-                stats_container.remove_children()
-                stats_container.mount(Static("Network Status: Completed", id="network-status"))
-                
-                # Add result data
-                download_class = "status-ok" if result.download_mbps > 5 else "status-warning" if result.download_mbps > 1 else "status-error"
-                stats_container.mount(Static(f"Download: {result.download_mbps:.2f} Mbps", classes=download_class))
-                
-                upload_class = "status-ok" if result.upload_mbps > 2 else "status-warning" if result.upload_mbps > 0.5 else "status-error"
-                stats_container.mount(Static(f"Upload: {result.upload_mbps:.2f} Mbps", classes=upload_class))
-                
-                ping_class = "status-ok" if result.ping_ms < 100 else "status-warning" if result.ping_ms < 200 else "status-error"
-                stats_container.mount(Static(f"Ping: {result.ping_ms:.0f} ms", classes=ping_class))
-                
-                if hasattr(result, 'jitter_ms') and result.jitter_ms is not None:
-                    jitter_class = "status-ok" if result.jitter_ms < 20 else "status-warning" if result.jitter_ms < 50 else "status-error"
-                    stats_container.mount(Static(f"Jitter: {result.jitter_ms:.1f} ms", classes=jitter_class))
-                    
-                if hasattr(result, 'packet_loss') and result.packet_loss is not None:
-                    loss_class = "status-ok" if result.packet_loss < 1 else "status-warning" if result.packet_loss < 5 else "status-error"
-                    stats_container.mount(Static(f"Packet Loss: {result.packet_loss:.1f}%", classes=loss_class))
-                
-                # Overall rating
-                overall_rating = "Good" if result.download_mbps > 10 and result.ping_ms < 100 else "Fair" if result.download_mbps > 3 else "Poor"
-                rating_class = "status-ok" if overall_rating == "Good" else "status-warning" if overall_rating == "Fair" else "status-error"
-                stats_container.mount(Static(f"Overall Rating: {overall_rating}", classes=rating_class))
-                
-                # Recommendations based on speed
-                recommendations = []
-                if result.download_mbps < 3:
-                    recommendations.append("- Consider using lower quality video formats")
-                    recommendations.append("- Audio-only downloads recommended")
-                elif result.download_mbps < 10:
-                    recommendations.append("- 720p video should work well")
-                    recommendations.append("- 1080p may buffer occasionally")
-                else:
-                    recommendations.append("- 1080p or higher should work well")
-                    recommendations.append("- 4K may be possible depending on stability")
-                
-                if recommendations:
-                    stats_container.mount(Static("Recommendations:", classes="subtitle"))
-                    for rec in recommendations:
-                        stats_container.mount(Static(rec))
-                
+                self._display_speed_test_results(stats_container, result)
                 self.notify("Network speed test completed", severity="success")
             else:
-                stats_container.mount(Static("No results returned from speed test", classes="status-error"))
+                self._display_speed_test_error(stats_container, "No results returned from speed test")
                 self.notify("Speed test failed - no results", severity="error")
                 
         except Exception as e:
             logging.error(f"Error running speed test: {str(e)}")
-            stats_container.remove_children()
-            stats_container.mount(Static("Network Status: Error", id="network-status", classes="status-error"))
-            stats_container.mount(Static(f"Error: {str(e)}", classes="status-error"))
+            self._display_speed_test_error(stats_container, str(e))
             self.notify(f"Speed test error: {str(e)}", severity="error")
         finally:
-            # Reset button
-            button.disabled = False
-            button.label = "Run Speed Test"
+            self._reset_speed_test_button(button)
+    
+    def _prepare_speed_test_ui(self, button, status) -> None:
+        """Prepare UI for speed test."""
+        button.disabled = True
+        button.label = "Running Test..."
+        status.update("Testing network speed...")
+    
+    async def _execute_speed_test(self):
+        """Execute the actual speed test."""
+        from .network import NetworkManager
+        network_manager = NetworkManager(self.config)
+        return await network_manager.run_speed_test(detailed=True)
+    
+    def _display_speed_test_results(self, container, result) -> None:
+        """Display speed test results."""
+        container.remove_children()
+        container.mount(Static("Network Status: Completed", id="network-status"))
         
-        try:
-            # Create NetworkManager instance
-            from .network import NetworkManager
-            network_manager = NetworkManager(self.config)
+        # Add basic metrics
+        download_class = classify_download_speed(result.download_mbps)
+        container.mount(Static(f"Download: {result.download_mbps:.2f} Mbps", classes=download_class))
+        
+        upload_class = classify_upload_speed(result.upload_mbps)
+        container.mount(Static(f"Upload: {result.upload_mbps:.2f} Mbps", classes=upload_class))
+        
+        ping_class = classify_ping(result.ping_ms)
+        container.mount(Static(f"Ping: {result.ping_ms:.0f} ms", classes=ping_class))
+        
+        # Add optional metrics
+        self._add_optional_metrics(container, result)
+        
+        # Add overall rating and recommendations
+        self._add_rating_and_recommendations(container, result)
+    
+    def _add_optional_metrics(self, container, result) -> None:
+        """Add optional metrics if available."""
+        if hasattr(result, 'jitter_ms') and result.jitter_ms is not None:
+            jitter_class = classify_jitter(result.jitter_ms)
+            container.mount(Static(f"Jitter: {result.jitter_ms:.1f} ms", classes=jitter_class))
             
-            # Run speed test
-            result = await network_manager.run_speed_test(detailed=True)
-            
-            if result:
-                # Clear previous results
-                stats_container.remove_children()
-                stats_container.mount(Static("Network Status: Checking...", id="network-status"))
-                
-                # Add result data
-                stats_container.mount(Static(f"Download: {result.download_mbps:.2f} Mbps", classes="status-ok"))
-                stats_container.mount(Static(f"Upload: {result.upload_mbps:.2f} Mbps", classes="status-ok"))
-                
-                ping_class = "status-ok" if result.ping_ms < 100 else "status-warning"
-                stats_container.mount(Static(f"Ping: {result.ping_ms:.0f} ms", classes=ping_class))
-                
-                if hasattr(result, 'jitter_ms') and result.jitter_ms is not None:
-                    stats_container.mount(Static(f"Jitter: {result.jitter_ms:.1f} ms"))
-                    
-                if hasattr(result, 'packet_loss') and result.packet_loss is not None:
-                    loss_class = "status-ok" if result.packet_loss < 1 else "status-warning" if result.packet_loss < 5 else "status-error"
-                    stats_container.mount(Static(f"Packet Loss: {result.packet_loss:.1f}%", classes=loss_class))
-                
-                # Overall rating
-                if hasattr(result, 'get_quality_rating'):
-                    quality_rating = result.get_quality_rating()
-                    rating_text = "Excellent" if quality_rating >= 5 else "Good" if quality_rating >= 4 else "Fair" if quality_rating >= 3 else "Poor" if quality_rating >= 2 else "Very Poor"
-                    rating_class = "status-ok" if quality_rating >= 4 else "status-warning" if quality_rating >= 2 else "status-error"
-                    stats_container.mount(Static(f"Connection Quality: {rating_text}", classes=rating_class))
-                
-                # Update status
-                status.update("Network test completed successfully", classes="status-ok")
-            else:
-                status.update("Network test failed. Check connection.", classes="status-error")
+        if hasattr(result, 'packet_loss') and result.packet_loss is not None:
+            loss_class = classify_packet_loss(result.packet_loss)
+            container.mount(Static(f"Packet Loss: {result.packet_loss:.1f}%", classes=loss_class))
+    
+    def _add_rating_and_recommendations(self, container, result) -> None:
+        """Add overall rating and recommendations."""
+        overall_rating = get_overall_rating(result.download_mbps, result.ping_ms)
+        rating_class = get_rating_class(overall_rating)
+        container.mount(Static(f"Overall Rating: {overall_rating}", classes=rating_class))
         
-        except Exception as e:
-            logging.error(f"Speed test error: {e}")
-            status.update(f"Error during network test: {str(e)}", classes="status-error")
-        
-        finally:
-            # Reset button
-            button.disabled = False
-            button.label = "Run Speed Test"
+        # Generate recommendations
+        recommendations = self._generate_recommendations(result.download_mbps)
+        if recommendations:
+            container.mount(Static("Recommendations:", classes="subtitle"))
+            for rec in recommendations:
+                container.mount(Static(rec))
+    
+    def _generate_recommendations(self, download_mbps: float) -> list:
+        """Generate recommendations based on download speed."""
+        if download_mbps < 3:
+            return [
+                "- Consider using lower quality video formats",
+                "- Audio-only downloads recommended"
+            ]
+        elif download_mbps < 10:
+            return [
+                "- 720p video should work well",
+                "- 1080p may buffer occasionally"
+            ]
+        else:
+            return [
+                "- 1080p or higher should work well",
+                "- 4K may be possible depending on stability"
+            ]
+    
+    def _display_speed_test_error(self, container, error_msg: str) -> None:
+        """Display speed test error."""
+        container.remove_children()
+        container.mount(Static("Network Status: Error", id="network-status", classes="status-error"))
+        container.mount(Static(f"Error: {error_msg}", classes="status-error"))
+    
+    def _reset_speed_test_button(self, button) -> None:
+        """Reset speed test button to initial state."""
+        button.disabled = False
+        button.label = "Run Speed Test"
     
     def load_settings(self) -> None:
         """Load settings into form fields"""
@@ -1230,47 +1151,7 @@ class InteractiveApp(App):
         """Update download progress periodically"""
         try:
             while True:
-                # Update each active download
-                completed_downloads = []
-                
-                for download in self.downloads:
-                    try:
-                        # Get progress info from session manager
-                        progress = await self.download_manager.session_manager.get_session(download["id"])
-                        
-                        if progress:
-                            # Update the progress bar
-                            bar = self.query_one(f"#{download['bar_id']}")
-                            bar.progress = progress.get("progress", 0)
-                            
-                            # Update status label
-                            status = self.query_one(f"#{download['status_id']}")
-                            status_text = progress.get("status", "Downloading...")
-                            progress_percent = progress.get("progress", 0)
-                            
-                            # Format status message based on status
-                            if status_text == "completed":
-                                status.update(f"Completed - 100%")
-                                status.add_class("status-ok")
-                                completed_downloads.append(download["id"])
-                            elif status_text == "cancelled":
-                                status.update(f"Cancelled - {progress_percent:.1f}%")
-                                status.add_class("status-warning")
-                                completed_downloads.append(download["id"])
-                            elif status_text == "failed":
-                                error_msg = progress.get("error", "Unknown error")
-                                status.update(f"Failed: {error_msg}")
-                                status.add_class("status-error")
-                                completed_downloads.append(download["id"]) 
-                            else:
-                                status.update(f"{status_text} - {progress_percent:.1f}%")
-                                
-                    except asyncio.CancelledError:
-                        raise  # Re-raise to properly handle task cancellation
-                    except Exception as e:
-                        logging.error(f"Error updating progress for download {download['id']}: {e}")
-                
-                # Wait before next update
+                completed_downloads = await self._update_all_downloads()
                 await asyncio.sleep(1)
                 
         except asyncio.CancelledError:
@@ -1279,6 +1160,205 @@ class InteractiveApp(App):
             logging.error(f"Download progress monitoring error: {e}")
         finally:
             self._progress_worker_running = False
+    
+    async def _update_all_downloads(self) -> list:
+        """Update all active downloads and return completed ones."""
+        completed_downloads = []
+        
+        for download in self.downloads:
+            try:
+                progress = await self.download_manager.session_manager.get_session(download["id"])
+                
+                if progress:
+                    self._update_download_display(download, progress)
+                    
+                    status_text = progress.get("status", "Downloading...")
+                    if status_text in ["completed", "cancelled", "failed"]:
+                        completed_downloads.append(download["id"])
+                        
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logging.error(f"Error updating progress for download {download['id']}: {e}")
+        
+        return completed_downloads
+    
+    def _update_download_display(self, download: dict, progress: dict) -> None:
+        """Update the display for a single download."""
+        # Update progress bar
+        bar = self.query_one(f"#{download['bar_id']}")
+        bar.progress = progress.get("progress", 0)
+        
+        # Update status label
+        status = self.query_one(f"#{download['status_id']}")
+        status_text = progress.get("status", "Downloading...")
+        progress_percent = progress.get("progress", 0)
+        
+        self._format_status_display(status, status_text, progress_percent, progress)
+    
+    def _format_status_display(self, status_widget, status_text: str, progress_percent: float, progress: dict) -> None:
+        """Format and update the status display."""
+        if status_text == "completed":
+            status_widget.update("Completed - 100%")
+            status_widget.add_class("status-ok")
+        elif status_text == "cancelled":
+            status_widget.update(f"Cancelled - {progress_percent:.1f}%")
+            status_widget.add_class("status-warning")
+        elif status_text == "failed":
+            error_msg = progress.get("error", "Unknown error")
+            status_widget.update(f"Failed: {error_msg}")
+            status_widget.add_class("status-error")
+        else:
+            status_widget.update(f"{status_text} - {progress_percent:.1f}%")
+    def setup_format_table(self) -> None:
+        """Setup the format table with appropriate columns"""
+        table = self.query_one(self.FORMAT_TABLE_ID)
+        table.clear(columns=True)
+        
+        # Add columns for format information
+        table.add_column("Format", style="cyan")
+        table.add_column("Quality", style="bright_green")
+        table.add_column("Resolution", style="blue")
+        table.add_column("Codec", style="magenta")
+        table.add_column("Size", style="yellow", justify="right")
+        table.add_column("Audio", style="cyan")
+        table.add_column("FPS", style="green", justify="right")
+def create_format_table(formats: List[Dict[str, Any]], box_style=None, border_style="bright_blue") -> Table:
+    """Create a formatted table for displaying available formats."""
+    from rich.table import Table
+    from rich import box
+    
+    table = Table(
+        box=box_style or box.MINIMAL_HEAVY_HEAD,
+        border_style=border_style,
+        expand=True,
+        show_header=True,
+        header_style="bold bright_blue"
+    )
+    
+    # Define columns
+    table.add_column("Format", style="cyan")
+    table.add_column("Quality", style="bright_green")
+    table.add_column("Resolution", style="blue")
+    table.add_column("Codec", style="magenta")
+    table.add_column("Size", style="yellow", justify="right")
+    table.add_column("Audio", style="cyan")
+    table.add_column("FPS", style="green", justify="right")
+    
+    # Add rows for each format
+    for fmt in formats:
+        format_id = fmt.get('format_id', 'unknown')
+        quality = fmt.get('format_note', 'Unknown')
+        
+        # Resolution
+        if fmt.get('height') and fmt.get('width'):
+            resolution = f"{fmt['width']}x{fmt['height']}"
+        elif fmt.get('vcodec') == 'none':
+            resolution = "Audio only"
+        else:
+            resolution = "N/A"
+            
+        # Codec
+        codec = fmt.get('vcodec', 'unknown')
+        if codec == 'none':
+            codec = fmt.get('acodec', 'audio only')
+            
+        # Size
+        filesize = format_size(fmt.get('filesize') or fmt.get('filesize_approx') or 0)
+        
+        # Audio codec
+        audio_codec = fmt.get('acodec', 'none')
+        if audio_codec == 'none':
+            audio_codec = "No audio"
+            
+        # FPS
+        fps = fmt.get('fps', 'N/A')
+        fps_str = str(fps) if fps else "N/A"
+        
+        table.add_row(
+            format_id, quality, resolution, codec, 
+            filesize, audio_codec, fps_str
+        )
+    
+    return table
+
+def get_status_class(value: float, thresholds: Tuple[float, float]) -> str:
+    """Helper function to determine status class based on value and thresholds."""
+    good_threshold, warning_threshold = thresholds
+    if value >= good_threshold:
+        return "status-ok"
+    elif value >= warning_threshold:
+        return "status-warning"
+    else:
+        return "status-error"
+
+def get_reverse_status_class(value: float, thresholds: Tuple[float, float]) -> str:
+    """Helper function for values where lower is better (like ping)."""
+    good_threshold, warning_threshold = thresholds
+    if value <= good_threshold:
+        return "status-ok"
+    elif value <= warning_threshold:
+        return "status-warning"
+    else:
+        return "status-error"
+
+
+    def load_help_content(self) -> None:
+        """Load help content into the help screen."""
+        try:
+            help_container = self.query_one("#help-screen")
+            help_container.remove_children()
+            help_container.mount(Static(self.HELP_DOCUMENTATION_TITLE, classes="title"))
+            
+            from .defaults import HELP_CONTENT
+            if isinstance(HELP_CONTENT, str):
+                help_container.mount(Static(HELP_CONTENT))
+            else:
+                help_container.mount(Static("Help content not available"))
+        except Exception as e:
+            logging.error(f"Error loading help content: {e}")
+    
+    async def on_button_pressed(self, event) -> None:
+        """Handle button press events."""
+        button_id = event.button.id
+        
+        if button_id == "analyze-btn":
+            await self.analyze_url()
+        elif button_id == "start-download-btn":
+            await self.start_download()
+        elif button_id == "speedtest-btn":
+            await self.run_speed_test()
+        elif button_id == "save-settings-btn":
+            self.save_settings()
+        elif button_id.startswith("menu-"):
+            self._handle_menu_selection(button_id)
+    
+    def _handle_menu_selection(self, button_id: str) -> None:
+        """Handle menu button selections."""
+        content_switcher = self.query_one("#content-switcher")
+        
+        # Remove selected class from all menu items
+        for menu_item in self.query(".menu-item"):
+            menu_item.remove_class("selected")
+        
+        # Add selected class to clicked item
+        self.query_one(f"#{button_id}").add_class("selected")
+        
+        # Switch content based on selection
+        screen_map = {
+            "menu-download": self.DOWNLOAD_SCREEN,
+            "menu-browse": self.BROWSE_SCREEN,
+            "menu-network": self.NETWORK_SCREEN,
+            "menu-settings": self.SETTINGS_SCREEN,
+            "menu-help": self.HELP_SCREEN,
+            "menu-audio": self.AUDIO_SCREEN,
+            "menu-video": self.VIDEO_SCREEN,
+            "menu-files": self.FILES_SCREEN,
+        }
+        
+        if button_id in screen_map:
+            content_switcher.current = screen_map[button_id]
+
 def launch_textual_interface(config: Dict[str, Any]) -> None:
     """Launch the Textual interface for interactive mode
     

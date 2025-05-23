@@ -157,7 +157,7 @@ FILENAME_PATTERN = r"^(.+?)(\.[^.]+)*(\.[^.]+)$"
 
 # Constants
 part_ext = '.part'
-webn_ext = '.webm'
+webn_ext = WEBM_EXT
 
 logger = logging.getLogger(__name__)
 
@@ -962,19 +962,21 @@ class AsyncDownloadManager:
                         # Update session
                         downloaded = chunk.end + 1
                         self.session_manager.update_session(url, {"progress": downloaded / total_size * 100})
-                
-                # Rename temp file to final
+                  # Rename temp file to final
                 os.replace(temp_path, output_path)
             except Exception as e:
                 logging.error(f"Download failed: {str(e)}")
                 if os.path.exists(temp_path):
                     # Leave partial download for potential future resume
                     logging.info(f"Partial download saved as {temp_path}")
-                raise        # Notify post-download hooks
+                raise
+        
+        # Notify post-download hooks
         for hook in self.hooks:
             await hook.post_download(url, output_path)
             
         return output_path
+
     async def download_with_options(self, urls: List[str], options: Dict[str, Any], non_interactive: bool = False) -> List[str]:
         """
         Download media with specified options from a list of URLs
@@ -1116,7 +1118,7 @@ class AsyncDownloadManager:
                                 else:
                                     # Check if file exists with a different extension (due to post-processing)
                                     base_path = os.path.splitext(file_path)[0]
-                                    for ext in ['.mp3', '.mp4', '.m4a', '.opus', '.webm', '.mkv']:
+                                    for ext in ['.mp3', '.mp4', '.m4a', '.opus', WEBM_EXT, '.mkv']:
                                         alt_path = f"{base_path}{ext}"
                                         if os.path.exists(alt_path):
                                             downloaded_files.append(alt_path)
