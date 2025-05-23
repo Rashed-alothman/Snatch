@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import threading
 import time
 import asyncio
@@ -35,36 +36,98 @@ _config_lock = threading.Lock()
 
 def _validate_ffmpeg_version(ffmpeg_path: str) -> Tuple[bool, Optional[float]]:
     """Validate FFmpeg version, returns (is_valid, version_number)"""
+    if not ffmpeg_path:
+        logger.warning("FFmpeg path is not specified")
+        return False, None
+    
+    # Handle the case when path is a directory (like C:\ffmpeg\bin)
+    if os.path.isdir(ffmpeg_path):
+        # Try to find ffmpeg executable in the directory
+        ffmpeg_exe = "ffmpeg.exe" if is_windows() else "ffmpeg"
+        possible_paths = [
+            os.path.join(ffmpeg_path, ffmpeg_exe),
+            os.path.join(ffmpeg_path, "bin", ffmpeg_exe)
+        ]
+        
+        for path in possible_paths:
+            if os.path.isfile(path):
+                logger.info(f"Found FFmpeg executable at: {path}")
+                ffmpeg_path = path
+                break
+        else:
+            logger.warning(f"FFmpeg executable not found in directory: {ffmpeg_path}")
+            return False, None
+    elif not os.path.exists(ffmpeg_path):
+        logger.warning(f"FFmpeg not found at path: {ffmpeg_path}")
+        return False, None
+    
+    if not os.path.isfile(ffmpeg_path):
+        logger.warning(f"FFmpeg path is not a file: {ffmpeg_path}")
+        return False, None
+        
     try:
         result = subprocess.run(
             [ffmpeg_path, "-version"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            check=True
+            check=False,  # Don't raise exception on non-zero exit
+            timeout=5  # Add timeout to prevent hanging
         )
+        
+        if result.returncode != 0:
+            logger.warning(f"FFmpeg validation failed with return code: {result.returncode}")
+            return False, None
+            
         version_info = (
             result.stdout.splitlines()[0] if result.stdout else ""
         )
         import re
         match = re.search(r"version\s+(\d+\.\d+)", version_info)
         if match:
-            return True, float(match.group(1))
-    except (subprocess.SubprocessError, OSError, ValueError):
-        pass
+            version = float(match.group(1))
+            logger.info(f"FFmpeg version {version} found at: {ffmpeg_path}")
+            return True, version
+        else:
+            logger.warning(f"Could not determine FFmpeg version from: {version_info}")
+    except (subprocess.SubprocessError, OSError, ValueError) as e:
+        logger.error(f"Error validating FFmpeg: {str(e)}")
+    
     return False, None
+
+def _get_default_directory(key: str) -> str:
+    """Get default directory path for config keys"""
+    base_dir = os.getcwd()
+    
+    if key == "video_output":
+        return os.path.join(base_dir, "downloads", "video")
+    elif key == "audio_output":
+        return os.path.join(base_dir, "downloads", "audio")
+    elif key == "thumbnails_dir":
+        return os.path.join(base_dir, "thumbnails")
+    elif key == "subtitles_dir":
+        return os.path.join(base_dir, "subtitles")
+    elif key == "sessions_dir":
+        return os.path.join(base_dir, "sessions")
+    elif key == "cache_dir":
+        return os.path.join(base_dir, "cache")
+    else:
+        return os.path.join(base_dir, key.replace("_dir", "").replace("_output", ""))
+
+def _create_directory(path: str) -> bool:
+    """Create directory and return True if successful"""
+    try:
+        logger.info(f"Creating directory: {path}")
+        os.makedirs(path, exist_ok=True)
+        return True
+    except OSError as e:
+        logger.warning(f"Failed to create directory {path}: {str(e)}")
+        return False
 
 def _validate_config_paths(config: dict) -> bool:
     """Validate and create output directories if needed"""
-    changed = False
-    for key in ["video_output", "audio_output"]:
-        if key in config and not os.path.exists(config[key]):
-            try:
-                os.makedirs(config[key], exist_ok=True)
-            except OSError:
-                config[key] = str(Path.home() / ("Videos" if key == "video_output" else "Music"))
-                changed = True
-    return changed
+    from .config_helpers import validate_config_paths
+    return validate_config_paths(config)
 
 def _update_organization_templates(config: dict) -> bool:
     """Update organization templates with any missing defaults"""
@@ -189,30 +252,49 @@ def get_default_config() -> Dict[str, Any]:
         "auto_save_interval": 30,  # seconds
     }
 
+def _ensure_file_parent_directories(config: Dict[str, Any]) -> None:
+    """Ensure parent directories exist for file paths in config"""
+    for key, value in config.items():
+        if isinstance(value, str) and key.endswith('_file') and os.path.isabs(value):
+            parent_dir = os.path.dirname(value)
+            if parent_dir and not os.path.exists(parent_dir):
+                try:
+                    os.makedirs(parent_dir, exist_ok=True)
+                    logger.info(f"Created parent directory for {key}: {parent_dir}")
+                except OSError as e:
+                    logger.warning(f"Failed to create directory {parent_dir}: {str(e)}")
+
+def _save_config(config: Dict[str, Any]) -> bool:
+    """Save configuration to disk"""
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=4)
+            logger.info("Configuration saved")
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to save configuration: {str(e)}")
+        return False
+
 async def initialize_config_async(*, force_validation: bool = False) -> Optional[Dict[str, Any]]:
     """Initialize configuration asynchronously with proper defaults"""
     global _config_initialized, _background_init_complete
     
     try:
         with _config_lock:
-            config = load_config()
+            # Load or get default config
+            config = load_config() or get_default_config()
             
-            # If no config was loaded, get the defaults
-            if not config:
-                config = get_default_config()
+            # Validate paths and save if changed
+            if _validate_config_paths(config):
+                logger.info("Configuration paths were updated")
+                _save_config(config)
             
-            # Ensure critical paths exist and are set
-            for key, value in config.items():
-                if isinstance(value, str) and (key.endswith('_dir') or key.endswith('_file') or key.endswith('_output')):
-                    if os.path.isabs(value):  # Only create absolute paths
-                        os.makedirs(os.path.dirname(value), exist_ok=True)
-            
-            # Reset state if forcing validation
-            if force_validation:
-                _background_init_complete = False
+            # Ensure file parent directories exist
+            _ensure_file_parent_directories(config)
             
             # Start background validation if needed
-            if not _background_init_complete or force_validation:
+            if force_validation or not _background_init_complete:
+                _background_init_complete = False
                 await asyncio.to_thread(_run_background_init, config)
             
             _config_initialized = True
@@ -365,37 +447,94 @@ def find_ffmpeg() -> Optional[str]:
 
     return None
 
+def _find_ffmpeg_executable(ffmpeg_location: str) -> Optional[str]:
+    """Find the FFmpeg executable path from a given location"""
+    # Handle direct path to executable
+    if not os.path.isdir(ffmpeg_location):
+        return ffmpeg_location if os.path.exists(ffmpeg_location) else None
+    
+    # If it's a directory, search for the executable
+    ffmpeg_exec = "ffmpeg.exe" if is_windows() else "ffmpeg"
+    
+    # Check common locations
+    possible_paths = [
+        os.path.join(ffmpeg_location, "bin", ffmpeg_exec),  # /path/to/ffmpeg/bin/ffmpeg[.exe]
+        os.path.join(ffmpeg_location, ffmpeg_exec),        # /path/to/ffmpeg/ffmpeg[.exe]
+    ]
+    
+    # Return the first valid path
+    for path in possible_paths:
+        if os.path.exists(path):
+            return path
+    
+    # Not found
+    logger.debug(f"FFmpeg executable not found in {ffmpeg_location}")
+    return None
+
+def _test_ffmpeg_executable(ffmpeg_path: str) -> bool:
+    """Test if the FFmpeg executable works"""
+    try:
+        # Run with increased timeout and capture output
+        result = subprocess.run(
+            [ffmpeg_path, "-version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            text=True,
+        )
+        
+        if result.returncode == 0 and "ffmpeg version" in result.stdout.lower():
+            # Log the version for debugging
+            version_line = next((line for line in result.stdout.splitlines() 
+                                if "ffmpeg version" in line.lower()), "")
+            if version_line:
+                logger.info(f"FFmpeg version: {version_line.strip()}")
+            return True
+        else:
+            logger.warning(f"FFmpeg validation failed. Return code: {result.returncode}")
+            if result.stderr:
+                logger.debug(f"FFmpeg error output: {result.stderr}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        logger.warning("FFmpeg validation timed out after 10 seconds")
+        return False
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.warning(f"Error validating FFmpeg: {str(e)}")
+        return False
+
 def validate_ffmpeg_path(ffmpeg_location: str) -> bool:
     """
     Validate that the specified ffmpeg_location contains valid FFmpeg binaries.
 
     Args:
-        ffmpeg_location: Path to directory containing FFmpeg binaries
+        ffmpeg_location: Path to directory or direct path to FFmpeg executable
 
     Returns:
         bool: True if valid FFmpeg binaries found, False otherwise
     """
-    if not ffmpeg_location or not os.path.exists(ffmpeg_location):
+    # Early validation for empty path
+    if not ffmpeg_location:
+        logger.debug("Empty FFmpeg location provided")
         return False
-
-    # Check for ffmpeg executable
-    ffmpeg_exec = "ffmpeg.exe" if is_windows() else "ffmpeg"
-    ffmpeg_path = os.path.join(ffmpeg_location, ffmpeg_exec)
-
-    if not os.path.exists(ffmpeg_path):
+    
+    # Find the executable
+    ffmpeg_path = _find_ffmpeg_executable(ffmpeg_location)
+    if not ffmpeg_path:
         return False
-
+    
+    # Check if the path is actually executable (skip on Windows for .exe files)
+    is_exe_on_windows = is_windows() and ffmpeg_path.lower().endswith('.exe')
+    if not is_exe_on_windows and not os.access(ffmpeg_path, os.X_OK):
+        logger.debug(f"FFmpeg at {ffmpeg_path} is not executable")
+        return False
+    
     # Test if executable works
-    try:
-        result = subprocess.run(
-            [ffmpeg_path, "-version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=3,
-        )
-        return result.returncode == 0
-    except (subprocess.SubprocessError, OSError):
-        return False
+    if _test_ffmpeg_executable(ffmpeg_path):
+        logger.info(f"Valid FFmpeg found at: {ffmpeg_path}")
+        return True
+    
+    return False
 
 def print_ffmpeg_instructions():
     """Print instructions for installing FFmpeg with platform-specific guidance"""

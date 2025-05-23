@@ -80,25 +80,20 @@ class EnhancedCLI:
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        return loop      
+        return loop
+        
     async def run_download(self, urls: List[str], options: Dict[str, Any], non_interactive: bool = False) -> None:
         """Run download(s) with proper context management"""
+        console_obj = Console()
         async with self.download_manager:
             try:
-                console = Console()
-                console.print(f"[bold cyan]Processing {len(urls)} URLs[/]")
+                console_obj.print(f"[bold cyan]Processing {len(urls)} URLs[/]")
                 result = await self.download_manager.download_with_options(urls, options, non_interactive)
                 if result:
-                    console.print(f"[bold green]Successfully downloaded {len(result)} files[/]")
-            except asyncio.CancelledError:
-                console = Console()
-                console.print("[bold yellow]Download was cancelled.[/]")
-                logging.info("Download process was cancelled")
-                # Don't re-raise CancelledError to prevent the unhandled exception
+                    console_obj.print(f"[bold green]Successfully downloaded {len(result)} files[/]")
             except Exception as e:
                 logging.error(f"Download error: {str(e)}")
-                console = Console()                
-                console.print(f"[bold red]Error: {str(e)}[/]")
+                console_obj.print(f"[bold red]Error: {str(e)}[/]")
                 raise
 
     def run_async(self, coro: Any) -> Any:
@@ -109,69 +104,34 @@ class EnhancedCLI:
         else:
             return loop.run_until_complete(coro)
     
-    def execute_download(self, urls: List[str], options: Dict[str, Any]) -> int:
-        """Execute download with proper event loop handling"""
+    def handle_download(self, urls: List[str], options: Dict[str, Any]) -> int:
+        """Handle download with proper event loop management"""
         if not urls:
             console.print("[bold red]No URLs provided.[/]")
             return 1
-        
-        # Log useful information
-        console.print(f"[bold cyan]Processing {len(urls)} URLs for download[/]")
-        
-        # Log download mode
-        if options.get("audio_only"):
-            console.print(f"[bold cyan]Audio mode:[/] Downloading as {options.get('audio_format', 'mp3')}")
-            if options.get("upmix_71"):
-                console.print("[bold cyan]Audio processing:[/] Upmixing to 7.1 surround")
-            if options.get("denoise"):
-                console.print("[bold cyan]Audio processing:[/] Applying noise reduction")
-        elif options.get("resolution"):
-            console.print(f"[bold cyan]Video mode:[/] Setting resolution to {options.get('resolution')}")
-        
+            
         # Handle download with proper event loop management
         try:
-            # Try to get the event loop - this will tell us if we're in an async context
-            try:
-                loop = asyncio.get_event_loop()
-                has_running_loop = loop.is_running()
-            except RuntimeError:
-                # No event loop exists, create one
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                has_running_loop = False
+            # Get or create an event loop
+            loop = self.get_or_create_event_loop()
+            is_running = loop.is_running()
             
-            # Execute the download based on the loop state
-            if has_running_loop:
-                # We're already in an async context
+            if is_running:
+                # We're in an existing event loop
                 logging.debug("Running download in existing event loop")
                 task = asyncio.create_task(self.run_download(urls, options))
-                try:
-                    loop.run_until_complete(asyncio.gather(task))
-                except RuntimeError:
-                    # Can't run_until_complete in a running loop
-                    logging.debug("Using task-only approach for nested loop")
-                    # The outer loop will handle the completion
+                # For nested event loops, we can't run_until_complete directly
+                # Let the outer event loop handle it
             else:
-                # We have a fresh loop
+                # We have control of the event loop
                 logging.debug("Running download in new event loop")
                 loop.run_until_complete(self.run_download(urls, options))
-                
-            return 0
             
-        except asyncio.CancelledError:
-            logging.warning("Download task was cancelled")
-            return 1
+            return 0
         except Exception as e:
-            logging.error(f"Error in download execution: {str(e)}")
-            # Last-ditch effort with a completely isolated loop
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self.run_download(urls, options))
-                return 0
-            except Exception as e2:
-                logging.error(f"Final download attempt failed: {str(e2)}")
-                return 1
+            logging.error(f"Download error: {str(e)}")
+            console.print(f"[bold red]Download error: {str(e)}[/]")
+            return 1
 
     def setup_argparse(self) -> typer.Typer:
         """Set up the Typer CLI app with all commands"""
@@ -180,7 +140,7 @@ class EnhancedCLI:
             help=f"{APP_NAME} - A powerful media downloader",
             epilog=EXAMPLES
         )
-          # Download command
+        
         @app.command("download", help="Download media from URLs")
         def download(
             urls: List[str] = typer.Argument(None, help="URLs to download"),
@@ -234,8 +194,25 @@ class EnhancedCLI:
                 "verbose": verbose,
             }
             
-            # Use the execute_download method to handle all download logic
-            return self.execute_download(all_urls, options)
+            # Log options for debugging
+            if verbose:
+                console.print("[cyan]Download options:[/]")
+                for key, value in options.items():
+                    if value is not None and value != False:
+                        console.print(f"  [blue]{key}:[/] {value}")
+            
+            # Show mode information
+            if audio_only:
+                console.print(f"[bold cyan]Audio mode:[/] Downloading as {audio_format}")
+                if upmix_71:
+                    console.print("[bold cyan]Audio processing:[/] Upmixing to 7.1 surround")
+                if denoise:
+                    console.print("[bold cyan]Audio processing:[/] Applying noise reduction")
+            elif resolution:
+                console.print(f"[bold cyan]Video mode:[/] Setting resolution to {resolution}")
+            
+            # Process the download
+            return self.handle_download(all_urls, options)
         
         # Interactive mode command
         @app.command("interactive", help="Run in interactive mode")
@@ -243,7 +220,9 @@ class EnhancedCLI:
             """Run in classic interactive mode"""
             from .interactive_mode import launch_textual_interface
             launch_textual_interface(self.config)
-            return 0        # New textual interface command
+            return 0
+            
+        # New textual interface command
         @app.command("textual", help="Run with modern Textual interface")
         def textual():
             """Run with modern Textual interface"""
@@ -292,74 +271,21 @@ class EnhancedCLI:
             """Show active downloads"""
             self.run_async(self._show_active_downloads_async())
             return 0
-        
+            
         return app
-    
+        
     async def _show_active_downloads_async(self) -> None:
         """Show active downloads asynchronously"""
         async with AsyncSessionManager(self.config["session_file"]) as sm:
             sessions = sm.get_active_sessions()
-            console_obj = Console()
             if sessions:
-                console_obj.print("[bold green]Active downloads:[/]")
+                console = Console()
+                console.print("[bold green]Active downloads:[/]")
                 for session in sessions:
-                    console_obj.print(f"- {session.get('url', 'Unknown URL')}")
-            else:                console_obj.print("[bold yellow]No active downloads[/]")
-                
-    async def interactive_mode(self) -> None:
-        """Rich interactive mode with command history"""
-        console_obj = Console()
-        console_obj.print("[bold cyan]Starting interactive mode[/]")
-        
-        try:
-            # Try to import interactive_mode module
-            from .interactive_mode import launch_textual_interface
-            launch_textual_interface(self.config)
-            return
-        except ImportError as e:
-            console_obj.print(f"[yellow]Could not load textual interface: {str(e)}[/]")
-            console_obj.print("[yellow]Falling back to simple interactive mode...[/]")
-        
-        # Simple fallback interactive mode
-        while True:
-            try:
-                # Simple input prompt
-                command = console_obj.input("[bold cyan]Enter command (or 'help', 'exit'):[/] ")
-                command = command.strip().lower()
-                
-                if command in ['exit', 'quit']:
-                    console_obj.print("[bold cyan]Exiting interactive mode[/]")
-                    break
-                    
-                elif command == 'help':
-                    console_obj.print("[bold cyan]Available commands:[/]")
-                    console_obj.print("  [green]download [URL][/] - Download media from URL")
-                    console_obj.print("  [green]help[/] - Show this help")
-                    console_obj.print("  [green]exit[/] or [green]quit[/] - Exit interactive mode")
-                    
-                elif command.startswith('download '):
-                    url = command[9:].strip()
-                    if url:
-                        console_obj.print(f"[cyan]Starting download of:[/] {url}")
-                        try:
-                            options = {}  # Default options
-                            await self.download_manager.download(url, **options)
-                            console_obj.print(f"[bold green]Download complete:[/] {url}")
-                        except Exception as e:
-                            console_obj.print(f"[bold red]Download error:[/] {str(e)}")
-                    else:
-                        console_obj.print("[yellow]Please provide a URL to download[/]")
-                        
-                elif command:
-                    console_obj.print(f"[yellow]Unknown command:[/] {command}")
-                    console_obj.print("[yellow]Type 'help' for available commands[/]")
-                    
-            except KeyboardInterrupt:
-                console_obj.print("\n[yellow]Operation interrupted. Type 'exit' to quit.[/]")
-                continue
-            except Exception as error:
-                console_obj.print(f"[bold red]Command error:[/] {str(error)}")
-                continue
+                    console.print(f"- {session.get('url', 'Unknown URL')}")
+            else:
+                console = Console()
+                console.print("[bold yellow]No active downloads[/]")
 
 def signal_handler(sig: int, frame: Any) -> NoReturn:
     """Handle Ctrl+C gracefully"""
@@ -402,10 +328,17 @@ def main() -> None:
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        if asyncio.get_event_loop().is_running():
+        # Check if we're already in an event loop
+        try:
             loop = asyncio.get_event_loop()
-            loop.run_until_complete(async_main())
-        else:
+            if loop.is_running():
+                # We're in a running event loop, use create_task
+                loop.create_task(async_main())
+            else:
+                # No running loop, use run_until_complete
+                loop.run_until_complete(async_main())
+        except RuntimeError:
+            # No event loop exists, create and run
             asyncio.run(async_main())
     except Exception:
         console.print_exception()
