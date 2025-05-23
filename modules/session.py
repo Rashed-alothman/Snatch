@@ -26,6 +26,7 @@ from .progress import SpinnerAnimation
 from .common_utils import ensure_dir, safe_file_write, safe_json_read, compute_file_hash
 from .defaults import DOWNLOAD_SESSIONS_FILE
 from .logging_config import setup_logging
+from .error_handler import EnhancedErrorHandler, handle_errors, ErrorCategory, ErrorSeverity
 
 # Configure logging
 setup_logging()
@@ -122,6 +123,11 @@ class AsyncSessionManager:
         self.auto_save_interval = auto_save_interval
         self.save_task: Optional[asyncio.Task] = None
         self.max_backups = max_backups
+        
+        # Initialize error handler
+        error_log_path = "logs/snatch_errors.log"
+        self.error_handler = EnhancedErrorHandler(log_file=error_log_path)
+        
         self._load_sessions()
         
     def _create_default_session_data(self, url: str, now: datetime) -> Dict[str, Any]:
@@ -357,10 +363,10 @@ class AsyncSessionManager:
                         except (TypeError, ValueError) as e:
                             logging.error("Failed to load session from backup: %s", str(e))
                             continue  # Skip invalid sessions
-                            
-                logging.info(f"Successfully recovered sessions from backup: {backup}")
+                            logging.info(f"Successfully recovered sessions from backup: {backup}")
                 return True
-            except:
+            except Exception as e:
+                logging.warning(f"Failed to load backup {backup}: {e}")
                 continue  # Try next backup
                 
         return False
@@ -501,10 +507,9 @@ class AsyncSessionManager:
             metadata=metadata,
             resume_data=resume_data
         )
-        
-        with self.lock:
-            self._sessions[url] = session
+        with self.lock:self._sessions[url] = session
             
+    @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.WARNING)
     def update_session(self, url: str, bytes_downloaded: int, status: Optional[str] = None, 
                        chunk_hash: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Update session progress thread-safely with enhanced status and metadata handling."""
@@ -648,28 +653,43 @@ class AsyncSessionManager:
                 session.metadata['pause_count'] = session.metadata.get('pause_count', 0) + 1
                 session.metadata['last_paused'] = datetime.now().isoformat()
                 return True
-            return False
-    
+        return False
+            
     def batch_update(self, updates: Dict[str, Dict[str, Any]]) -> None:
         """Batch update multiple sessions atomically."""
         with self.lock:
             for url, update_data in updates.items():
-                if url in self._sessions:
-                    session = self._sessions[url]
-                    if 'downloaded_bytes' in update_data:
-                        session.downloaded_bytes = update_data['downloaded_bytes']
-                    if 'status' in update_data:
-                        session.status = update_data['status']
-                    if 'metadata' in update_data:
-                        session.metadata.update(update_data['metadata'])
-                    if 'resume_data' in update_data:
-                        session.resume_data.update(update_data['resume_data'])
-                    if 'chunks_downloaded' in update_data:
-                        for chunk in update_data['chunks_downloaded']:
-                            if chunk not in session.chunks_downloaded:
-                                session.chunks_downloaded.append(chunk)
-                    session.last_updated = datetime.now()
+                self._update_single_session(url, update_data)
                         
+    def _update_session_field(self, session: DownloadSession, field: str, value: Any) -> None:
+        """Update a specific field in a session."""
+        if field == 'downloaded_bytes':
+            session.downloaded_bytes = value
+        elif field == 'status':
+            session.status = value
+        elif field == 'metadata':
+            session.metadata.update(value)
+        elif field == 'resume_data':
+            session.resume_data.update(value)
+        elif field == 'chunks_downloaded':
+            for chunk in value:
+                if chunk not in session.chunks_downloaded:
+                    session.chunks_downloaded.append(chunk)
+    
+    def _update_single_session(self, url: str, update_data: Dict[str, Any]) -> None:
+        """Update a single session with the provided data."""
+        if url not in self._sessions:
+            return
+            
+        session = self._sessions[url]
+        
+        # Update each field that's present in update_data
+        for field, value in update_data.items():
+            if field in ['downloaded_bytes', 'status', 'metadata', 'resume_data', 'chunks_downloaded']:
+                self._update_session_field(session, field, value)
+        
+        session.last_updated = datetime.now()
+
     def query_sessions(self, predicate: Callable[[DownloadSession], bool]) -> List[DownloadSession]:
         """Query sessions using a custom predicate."""
         with self.lock:
@@ -775,8 +795,7 @@ class SessionManager:
         
         Args:
             session_file: Path to the sessions data file. If None, uses default path.
-        """
-        # Use config directory for sessions file if no path provided
+        """        # Use config directory for sessions file if no path provided
         if session_file is None:
             session_file = os.path.join(
                 os.path.dirname(os.path.dirname(__file__)), 
@@ -786,6 +805,10 @@ class SessionManager:
             os.makedirs(os.path.dirname(session_file), exist_ok=True)
             
         self._async_manager = AsyncSessionManager(session_file)
+        
+        # Initialize error handler
+        error_log_path = "logs/snatch_errors.log" 
+        self.error_handler = EnhancedErrorHandler(log_file=error_log_path)
         
     def update_session(self, url: str, percentage: float, **metadata) -> None:
         """Update session state synchronously.

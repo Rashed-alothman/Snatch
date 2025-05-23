@@ -25,6 +25,7 @@ from .session import AsyncSessionManager, SessionManager
 from .network import run_speedtest
 from .common_utils import list_supported_sites, display_system_stats
 from .cache import DownloadCache
+from .error_handler import EnhancedErrorHandler, handle_errors, ErrorCategory, ErrorSeverity
 
 # Enable Rich traceback formatting
 install(show_locals=True)
@@ -41,6 +42,10 @@ class EnhancedCLI:
             
         self.config = config
         self._pending_download = None  # Store pending download for async execution
+        
+        # Initialize error handler
+        error_log_path = config.get("error_log_path", "logs/snatch_errors.log")
+        self.error_handler = EnhancedErrorHandler(log_file=error_log_path)
         
         try:
             # Get the session file path from config or use default
@@ -70,10 +75,15 @@ class EnhancedCLI:
             )
             
         except Exception as error:
+            self.error_handler.log_error(
+                str(error), 
+                ErrorCategory.CONFIGURATION, 
+                ErrorSeverity.CRITICAL,
+                context={"config_keys": list(config.keys()) if config else []}
+            )
             msg = f"Failed to initialize CLI: {str(error)}"
             logging.error(msg)
-            raise RuntimeError(msg) from error
-
+            raise RuntimeError(msg) from error    
     def get_or_create_event_loop(self):
         """Get the current event loop or create a new one if none exists"""
         try:
@@ -82,7 +92,8 @@ class EnhancedCLI:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         return loop
-        
+          
+    @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.ERROR)
     async def run_download(self, urls: List[str], options: Dict[str, Any], non_interactive: bool = False) -> None:
         """Run download(s) with proper context management"""
         async with self.download_manager:
@@ -92,13 +103,29 @@ class EnhancedCLI:
                 result = await self.download_manager.download_with_options(urls, options, non_interactive)
                 if result:
                     console.print(f"[bold green]Successfully downloaded {len(result)} files[/]")
+                    self.error_handler.log_error(
+                        f"Successfully downloaded {len(result)} files",
+                        ErrorCategory.DOWNLOAD,
+                        ErrorSeverity.INFO,
+                        context={"downloaded_files": len(result), "urls": urls}
+                    )
             except asyncio.CancelledError:
                 console = Console()
                 console.print("[bold yellow]Download was cancelled.[/]")
-                logging.info("Download process was cancelled")
+                self.error_handler.log_error(
+                    "Download process was cancelled",
+                    ErrorCategory.DOWNLOAD,
+                    ErrorSeverity.WARNING,
+                    context={"cancellation": True, "urls": urls}
+                )
                 # Don't re-raise CancelledError to prevent the unhandled exception
             except Exception as e:
-                logging.error(f"Download error: {str(e)}")
+                self.error_handler.log_error(
+                    f"Download error: {str(e)}",
+                    ErrorCategory.DOWNLOAD,
+                    ErrorSeverity.ERROR,
+                    context={"urls": urls, "options": options}
+                )
                 console = Console()
                 console.print(f"[bold red]Error: {str(e)}[/]")
                 raise
@@ -110,10 +137,15 @@ class EnhancedCLI:
             return asyncio.create_task(coro)
         else:
             return loop.run_until_complete(coro)
-    
+    @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.ERROR)
     def execute_download(self, urls: List[str], options: Dict[str, Any]) -> int:
         """Execute download with proper event loop handling"""
         if not urls:
+            self.error_handler.log_error(
+                "No URLs provided for download",
+                ErrorCategory.USER_INPUT,
+                ErrorSeverity.WARNING
+            )
             console.print("[bold red]No URLs provided.[/]")
             return 1
         
@@ -125,10 +157,14 @@ class EnhancedCLI:
         try:
             return self._run_download_safely(urls, options)
         except Exception as e:
-            logging.error(f"Error in download execution: {str(e)}")
+            self.error_handler.log_error(
+                f"Download execution failed: {str(e)}",
+                ErrorCategory.DOWNLOAD,
+                ErrorSeverity.ERROR,
+                context={"urls": urls, "options": options}            )
             console.print(f"[bold red]Download failed: {str(e)}[/]")
             return 1
-    
+
     def _log_download_mode(self, options: Dict[str, Any]) -> None:
         """Log download mode information"""
         if options.get("audio_only"):
@@ -138,7 +174,10 @@ class EnhancedCLI:
             if options.get("denoise"):
                 console.print("[bold cyan]Audio processing:[/] Applying noise reduction")
         elif options.get("resolution"):
-            console.print(f"[bold cyan]Video mode:[/] Setting resolution to {options.get('resolution')}")
+            resolution = options.get('resolution')
+            console.print(f"[bold cyan]Video mode:[/] Setting resolution to {resolution}")
+
+    @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.WARNING)
     def _run_download_safely(self, urls: List[str], options: Dict[str, Any]) -> int:
         """Run download with safe event loop handling"""
         try:            # Check if we're in an async context already
@@ -160,7 +199,12 @@ class EnhancedCLI:
                         new_loop.run_until_complete(self.run_download(urls, options))
                         result_queue.put(0)  # Success
                     except Exception as e:
-                        logging.error(f"Thread download error: {str(e)}")
+                        self.error_handler.log_error(
+                            f"Thread download error: {str(e)}",
+                            ErrorCategory.DOWNLOAD,
+                            ErrorSeverity.ERROR,
+                            context={"thread_execution": True, "urls": urls}
+                        )
                         result_queue.put(1)  # Failure
                     finally:
                         new_loop.close()
@@ -178,7 +222,12 @@ class EnhancedCLI:
                 asyncio.run(self.run_download(urls, options))
                 return 0
         except Exception as e:
-            logging.error(f"Failed to start download: {str(e)}")
+            self.error_handler.log_error(
+                f"Failed to start download: {str(e)}",
+                ErrorCategory.DOWNLOAD,
+                ErrorSeverity.CRITICAL,
+                context={"async_context_handling": True, "urls": urls}
+            )
             console.print(f"[bold red]Failed to start download: {str(e)}[/]")
             return 1
 

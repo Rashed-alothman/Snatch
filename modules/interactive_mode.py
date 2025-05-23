@@ -724,7 +724,7 @@ class InteractiveApp(App):
         self.query_one("#menu-download").add_class("selected")
         
         # Load help content
-        self.load_help_content()
+        #self.load_help_content()
     def initialize_download_manager(self) -> None:
         """Initialize the download manager with config"""
         try:
@@ -1216,13 +1216,13 @@ class InteractiveApp(App):
         table.clear(columns=True)
         
         # Add columns for format information
-        table.add_column("Format", style="cyan")
-        table.add_column("Quality", style="bright_green")
-        table.add_column("Resolution", style="blue")
-        table.add_column("Codec", style="magenta")
-        table.add_column("Size", style="yellow", justify="right")
-        table.add_column("Audio", style="cyan")
-        table.add_column("FPS", style="green", justify="right")
+        table.add_column("Format")
+        table.add_column("Quality")
+        table.add_column("Resolution")
+        table.add_column("Codec")
+        table.add_column("Size")
+        table.add_column("Audio")
+        table.add_column("FPS")
 def create_format_table(formats: List[Dict[str, Any]], box_style=None, border_style="bright_blue") -> Table:
     """Create a formatted table for displaying available formats."""
     from rich.table import Table
@@ -1237,13 +1237,13 @@ def create_format_table(formats: List[Dict[str, Any]], box_style=None, border_st
     )
     
     # Define columns
-    table.add_column("Format", style="cyan")
-    table.add_column("Quality", style="bright_green")
-    table.add_column("Resolution", style="blue")
-    table.add_column("Codec", style="magenta")
-    table.add_column("Size", style="yellow", justify="right")
-    table.add_column("Audio", style="cyan")
-    table.add_column("FPS", style="green", justify="right")
+    table.add_column("Format")
+    table.add_column("Quality")
+    table.add_column("Resolution")
+    table.add_column("Codec")
+    table.add_column("Size")
+    table.add_column("Audio")
+    table.add_column("FPS")
     
     # Add rows for each format
     for fmt in formats:
@@ -1303,7 +1303,7 @@ def get_reverse_status_class(value: float, thresholds: Tuple[float, float]) -> s
         return "status-error"
 
 
-    def load_help_content(self) -> None:
+def load_help_content(self) -> None:
         """Load help content into the help screen."""
         try:
             help_container = self.query_one("#help-screen")
@@ -1318,7 +1318,7 @@ def get_reverse_status_class(value: float, thresholds: Tuple[float, float]) -> s
         except Exception as e:
             logging.error(f"Error loading help content: {e}")
     
-    async def on_button_pressed(self, event) -> None:
+async def on_button_pressed(self, event) -> None:
         """Handle button press events."""
         button_id = event.button.id
         
@@ -1333,7 +1333,7 @@ def get_reverse_status_class(value: float, thresholds: Tuple[float, float]) -> s
         elif button_id.startswith("menu-"):
             self._handle_menu_selection(button_id)
     
-    def _handle_menu_selection(self, button_id: str) -> None:
+def _handle_menu_selection(self, button_id: str) -> None:
         """Handle menu button selections."""
         content_switcher = self.query_one("#content-switcher")
         
@@ -1400,4 +1400,3 @@ def launch_textual_interface(config: Dict[str, Any]) -> None:
         thread = Thread(target=_run_app_in_thread, daemon=False)
         thread.start()
         thread.join()
-

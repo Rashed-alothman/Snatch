@@ -69,6 +69,9 @@ except ImportError:
             i += 1
         return f"{bytes_value:.{precision}f} {units[i]}"
 
+# Import error handling
+from .error_handler import EnhancedErrorHandler, handle_errors, ErrorCategory, ErrorSeverity
+
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, DownloadColumn, TransferSpeedColumn
 from rich.console import Console
 from rich.live import Live
@@ -799,7 +802,6 @@ class DownloadHooks(ABC):
 
 class AsyncDownloadManager:
     """Async download manager with resumable downloads and chunk validation"""
-    
     def __init__(self, config: Dict[str, Any],
                  session_manager: SessionManager,
                  download_cache: DownloadCache,
@@ -813,6 +815,11 @@ class AsyncDownloadManager:
             self._http_client = http_client
         self.hooks: List[DownloadHooks] = []
         self.chunk_size = 1024 * 1024  # 1MB default
+        
+        # Initialize error handler
+        error_log_path = config.get("error_log_path", "logs/snatch_errors.log")
+        self.error_handler = EnhancedErrorHandler(log_file=error_log_path)
+        
         # Create audio processor instance
         self.audio_processor = AudioProcessor(config) if 'AudioProcessor' in globals() else None
         
@@ -884,7 +891,7 @@ class AsyncDownloadManager:
                 logging.error(f"Maximum retries reached for chunk {chunk.start}-{chunk.end}")
                 return False
             raise  # Let backoff handle retry
-            
+    @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.ERROR)
     async def download(self, url: str, output_path: str, **options) -> str:
         """
         Download file with resume support and chunk validation
@@ -898,7 +905,8 @@ class AsyncDownloadManager:
             Path to downloaded file
         """
         console = Console()
-          # Get content info
+        
+        # Get content info
         try:
             async with self.http_client.head(url) as response:
                 if response.status >= 400:
@@ -907,11 +915,26 @@ class AsyncDownloadManager:
                 
             if total_size <= 0:
                 raise ResourceError("Unable to determine file size. Content-Length header missing.")
+                
         except aiohttp.ClientError as e:
-            logging.error(f"Network error during download preparation: {str(e)}")
+            error_msg = f"Network error during download preparation: {str(e)}"
+            logging.error(error_msg)
+            self.error_handler.log_error(
+                error_msg,
+                ErrorCategory.NETWORK,
+                ErrorSeverity.ERROR,
+                context={"url": url, "error_type": "client_error"}
+            )
             raise NetworkError(f"Connection error: {str(e)}") from e
         except Exception as e:
-            logging.error(f"Error preparing download: {str(e)}")
+            error_msg = f"Error preparing download: {str(e)}"
+            logging.error(error_msg)
+            self.error_handler.log_error(
+                error_msg,
+                ErrorCategory.DOWNLOAD,
+                ErrorSeverity.ERROR,
+                context={"url": url, "preparation_stage": True}
+            )
             raise
             
         # Load resume data if exists
@@ -977,6 +1000,7 @@ class AsyncDownloadManager:
             
         return output_path
 
+    @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.ERROR)
     async def download_with_options(self, urls: List[str], options: Dict[str, Any], non_interactive: bool = False) -> List[str]:
         """
         Download media with specified options from a list of URLs
@@ -991,7 +1015,40 @@ class AsyncDownloadManager:
         if not urls:
             logging.error("No URLs provided for download")
             return []
+        
+        # Validate that required tools are available for download options
+        self._validate_download_requirements(options)
+        
+        # Setup yt-dlp download options based on user preferences
+        ydl_opts = self._setup_download_options(options)
+        
+        downloaded_files = []
+        console = Console()
+        
+        # Process each URL
+        with console.status("[bold green]Downloading...") as _:
+            for url in urls:
+                try:
+                    console.print(f"[cyan]Downloading:[/] {url}")
+                    
+                    # Download a single URL with the given options
+                    file_path = await self._download_single_url(url, ydl_opts, console)
+                    if file_path:
+                        downloaded_files.append(file_path)
+                
+                except Exception as e:
+                    console.print(f"[bold red]Error downloading {url}:[/] {str(e)}")
+                    logging.error(f"Download error for {url}: {str(e)}")
+        
+        if not downloaded_files:
+            console.print("[bold yellow]No files were successfully downloaded.[/]")
+        else:
+            console.print(f"[bold green]Successfully downloaded {len(downloaded_files)} files.[/]")
             
+        return downloaded_files
+    
+    def _validate_download_requirements(self, options: Dict[str, Any]) -> None:
+        """Validate that required tools are available for download options."""
         # Import required modules
         try:
             import yt_dlp
@@ -999,7 +1056,8 @@ class AsyncDownloadManager:
             error_msg = "yt-dlp is not installed. Cannot perform downloads."
             logging.error(error_msg)
             raise ResourceError(error_msg)
-          # Make sure ffmpeg is available for audio conversion if needed
+        
+        # Make sure ffmpeg is available for audio conversion if needed
         if options.get("audio_only"):
             try:
                 from .ffmpeg_helper import locate_ffmpeg, validate_ffmpeg_installation
@@ -1008,7 +1066,9 @@ class AsyncDownloadManager:
                     raise AudioConversionError("FFmpeg is required for audio conversion but not found or not working properly")
             except ImportError:
                 logging.warning("FFmpeg helper not available, assuming FFmpeg is installed")
-        
+    
+    def _setup_download_options(self, options: Dict[str, Any]) -> Dict[str, Any]:
+        """Setup yt-dlp download options based on user preferences."""
         # Ensure we have sanitize_filename function
         try:
             from .common_utils import sanitize_filename
@@ -1019,10 +1079,6 @@ class AsyncDownloadManager:
                 invalid_chars = r'[<>:"/\\|?*\x00-\x1F]'
                 return re.sub(invalid_chars, '_', filename).strip('. ')
         
-        downloaded_files = []
-        console = Console()
-        
-        # Prepare download options
         ydl_opts = {}
         
         # Set output directory based on audio_only flag
@@ -1039,6 +1095,13 @@ class AsyncDownloadManager:
         else:
             ydl_opts["outtmpl"] = os.path.join(output_dir, "%(title)s.%(ext)s")
         
+        # Configure format-specific options
+        self._configure_format_options(ydl_opts, options)
+        
+        return ydl_opts
+    
+    def _configure_format_options(self, ydl_opts: Dict[str, Any], options: Dict[str, Any]) -> None:
+        """Configure format-specific download options."""
         # Handle audio-only downloads
         if options.get("audio_only"):
             ydl_opts["format"] = "bestaudio/best"
@@ -1056,116 +1119,69 @@ class AsyncDownloadManager:
             if isinstance(res, str) and res.endswith("p"):
                 res = res[:-1]
             try:
-                height = int(res) if isinstance(res, str) and res.isdigit() else 1080
-                ydl_opts["format"] = f"bestvideo[height<={height}]+bestaudio/best[height<={height}]"
-                logging.info(f"Video download configured with resolution: {height}p")
+                height = int(res)
+                ydl_opts["format"] = f"best[height<={height}]"
+                logging.info(f"Video download configured: max resolution={height}p")
             except ValueError:
-                # Default to best quality if resolution parsing fails
-                ydl_opts["format"] = "bestvideo+bestaudio/best"
-                logging.warning(f"Invalid resolution format: {res}. Using best quality.")
+                logging.warning(f"Invalid resolution format: {res}, using default")
+                ydl_opts["format"] = "best"
         
-        # Handle format ID if specified
-        if options.get("format_id"):
+        # Handle specific format ID
+        elif options.get("format_id"):
             ydl_opts["format"] = options.get("format_id")
-            logging.info(f"Using specific format ID: {options.get('format_id')}")
-        
-        # Add common options
-        ydl_opts["quiet"] = options.get("quiet", False)
-        ydl_opts["verbose"] = options.get("verbose", False)
-        ydl_opts["no_warnings"] = False
-        ydl_opts["progress_hooks"] = [self._download_progress_hook]
-        
-        # Process each URL
-        with console.status("[bold green]Downloading...") as _:
-            for url in urls:
-                try:
-                    console.print(f"[cyan]Downloading:[/] {url}")
-                    
-                    try:
-                        # Create session entry
-                        session_id = await self.session_manager.create_session(url, ydl_opts)
-                    except Exception as session_error:
-                        logging.warning(f"Failed to create session: {str(session_error)}")
-                        session_id = None
-                    
-                    # Run download with yt-dlp
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        try:
-                            # Extract info first to get filename
-                            info = ydl.extract_info(url, download=False)
-                            
-                            if not info:
-                                console.print(f"[bold red]Error:[/] Could not retrieve information for {url}")
-                                continue
-                                
-                            # Now download with the extracted info
-                            ydl.process_ie_result(info, download=True)
-                            
-                            # Get downloaded file path
-                            if info.get("_type") == "playlist":
-                                entries = list(info.get("entries", []))
-                                for entry in entries:
-                                    if entry:
-                                        file_path = ydl.prepare_filename(entry)
-                                        if os.path.exists(file_path):
-                                            downloaded_files.append(file_path)
-                                            console.print(f"[green]Downloaded:[/] {os.path.basename(file_path)}")
-                            else:
-                                file_path = ydl.prepare_filename(info)
-                                if os.path.exists(file_path):
-                                    downloaded_files.append(file_path)
-                                    console.print(f"[green]Downloaded:[/] {os.path.basename(file_path)}")
-                                else:
-                                    # Check if file exists with a different extension (due to post-processing)
-                                    base_path = os.path.splitext(file_path)[0]
-                                    for ext in ['.mp3', '.mp4', '.m4a', '.opus', WEBM_EXT, '.mkv']:
-                                        alt_path = f"{base_path}{ext}"
-                                        if os.path.exists(alt_path):
-                                            downloaded_files.append(alt_path)
-                                            console.print(f"[green]Downloaded:[/] {os.path.basename(alt_path)}")
-                                            break
-                            
-                            # Update session status
-                            if session_id:
-                                await self.session_manager.update_session(session_id, {"status": "completed"})
-                        
-                        except yt_dlp.utils.DownloadError as e:
-                            if "ffmpeg" in str(e).lower():
-                                raise AudioConversionError(f"FFmpeg error: {str(e)}")
-                            else:
-                                raise
-                        
-                except AudioConversionError as e:
-                    console.print(f"[bold red]Audio conversion error:[/] {str(e)}")
-                    logging.error(f"Audio conversion error for {url}: {str(e)}")
-                    if session_id:
-                        await self.session_manager.update_session(session_id, {"status": "failed", "error": str(e)})
-                
-                except Exception as e:
-                    console.print(f"[bold red]Error downloading {url}:[/] {str(e)}")
-                    logging.error(f"Download error for {url}: {str(e)}")
-                    if session_id:
-                        await self.session_manager.update_session(session_id, {"status": "failed", "error": str(e)})
-        
-        if not downloaded_files:
-            console.print("[bold yellow]No files were successfully downloaded.[/]")
+            logging.info(f"Using specific format: {options.get('format_id')}")
+          # Default to best quality
         else:
-            console.print(f"[bold green]Successfully downloaded {len(downloaded_files)} files.[/]")
+            ydl_opts["format"] = "best"
+    
+    async def _download_single_url(self, url: str, ydl_opts: Dict[str, Any], console: Console) -> Optional[str]:
+        """Download a single URL with the given options."""
+        try:
+            import yt_dlp
             
-        return downloaded_files
-        
-    def _download_progress_hook(self, d):
-        """Progress hook for yt-dlp downloads"""
-        if d['status'] == 'downloading':
-            total = d.get('total_bytes')
-            downloaded = d.get('downloaded_bytes', 0)
+            # Add progress hook
+            def progress_hook(d):
+                if d['status'] == 'downloading':
+                    percent = d.get('_percent_str', 'N/A')
+                    speed = d.get('_speed_str', 'N/A')
+                    console.print(f"[cyan]Downloading:[/] {percent} at {speed}")
+                elif d['status'] == 'finished':
+                    console.print(f"[green]Download completed:[/] {d['filename']}")
             
-            if total:
-                percent = (downloaded / total) * 100
-                if hasattr(self, 'session_manager') and d.get('info_dict', {}).get('webpage_url'):
-                    url = d['info_dict']['webpage_url']
-                    asyncio.create_task(
-                        self.session_manager.update_session_progress(url, percent)
-                    )
-        elif d['status'] == 'finished':
-            logging.info(f"Download finished: {os.path.basename(d.get('filename', ''))}")
+            ydl_opts["progress_hooks"] = [progress_hook]
+            
+            # Setup error handling
+            def error_hook(error_msg):
+                self.error_handler.log_error(
+                    f"yt-dlp error: {error_msg}",
+                    ErrorCategory.DOWNLOAD,
+                    ErrorSeverity.ERROR,
+                    context={"url": url, "ydl_error": True}
+                )
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                try:
+                    # Extract info first to get filename
+                    info = ydl.extract_info(url, download=False)
+                    if not info:
+                        raise DownloadError("Failed to extract video information")
+                    
+                    # Download the video
+                    ydl.download([url])
+                    
+                    # Return the downloaded filename
+                    return ydl.prepare_filename(info)
+                    
+                except Exception as e:
+                    error_hook(str(e))
+                    raise DownloadError(f"Download failed for {url}: {str(e)}") from e
+                    
+        except Exception as e:
+            self.error_handler.log_error(
+                f"Failed to download {url}: {str(e)}",
+                ErrorCategory.DOWNLOAD,
+                ErrorSeverity.ERROR,
+                context={"url": url, "download_error": True}
+            )
+            console.print(f"[red]Error downloading {url}:[/] {str(e)}")
+            return None
