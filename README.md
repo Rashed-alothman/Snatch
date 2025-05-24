@@ -85,52 +85,52 @@
 
 We've created an extensive documentation ecosystem to support developers and users:
 
-#### **📖 [Technical Documentation](./TECHNICAL_DOCUMENTATION.md)**
+#### **📖 [Technical Documentation](Documentation/TECHNICAL_DOCUMENTATION.md)**
 - Complete system architecture overview with visual diagrams
 - Component interaction flows and data flow analysis
 - Dependency relationships and module hierarchies
 - Comprehensive file structure documentation
 
-#### **🔧 [Module Documentation](./MODULE_DOCUMENTATION.md)**
+#### **🔧 [Module Documentation](Documentation/MODULE_DOCUMENTATION.md)**
 - In-depth analysis of all core modules
 - Function signatures, parameters, and return values
 - Usage examples and best practices
 - Module interaction patterns
 
-#### **🔌 [Plugin Development Guide](./PLUGIN_DEVELOPMENT_GUIDE.md)**
+#### **🔌 [Plugin Development Guide](Documentation/PLUGIN_DEVELOPMENT_GUIDE.md)**
 - Complete plugin architecture documentation
 - Hook system explanation with practical examples
 - Plugin registration and lifecycle management
 - Sample plugin implementations
 
-#### **📋 [API Reference](./API_REFERENCE.md)**
+#### **📋 [API Reference](Documentation/API_REFERENCE.md)**
 - Comprehensive API documentation
 - Method signatures with detailed parameters
 - Error handling and return codes
 - Usage examples for all major functions
 
-#### **🚀 [Deployment Guide](./DEPLOYMENT_GUIDE.md)**
+#### **🚀 [Deployment Guide](Documentation/DEPLOYMENT_GUIDE.md)**
 - Development environment setup
 - Production deployment strategies
 - Docker containerization
 - Platform-specific installation guides
 - Security considerations and best practices
 
-#### **⚡ [Performance Optimization Guide](./PERFORMANCE_OPTIMIZATION_GUIDE.md)**
+#### **⚡ [Performance Optimization Guide](Documentation/PERFORMANCE_OPTIMIZATION_GUIDE.md)**
 - System resource optimization strategies
 - Network performance tuning
 - Memory and CPU optimization techniques
 - Caching strategies and storage optimization
 - Platform-specific performance tips
 
-#### **🔍 [Troubleshooting Guide](./TROUBLESHOOTING_GUIDE.md)**
+#### **🔍 [Troubleshooting Guide](Documentation/TROUBLESHOOTING_GUIDE.md)**
 - Quick diagnostic procedures
 - Common issues and solutions
 - Platform-specific troubleshooting
 - Error codes reference
 - Advanced debugging techniques
 
-#### **🧪 [Integration Testing](./INTEGRATION_TESTING.md)**
+#### **🧪 [Integration Testing](Documentation/INTEGRATION_TESTING.md)**
 - Comprehensive testing strategies
 - Test suite documentation
 - Continuous integration setup
