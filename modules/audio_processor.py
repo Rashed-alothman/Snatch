@@ -51,6 +51,229 @@ class AudioProcessingError(Exception):
     """Base exception for audio processing errors"""
     pass
 
+class StandaloneAudioProcessor:
+    """Standalone audio processor that works without downloading files first"""
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = config or {}
+        self.supported_formats = ['.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg', '.opus']
+        
+    def process_local_file(self, input_path: str, output_path: str = None, 
+                          normalize: bool = True, denoise: bool = True, 
+                          upmix_surround: bool = False, target_channels: int = 8) -> bool:
+        """Process a local audio file with all enhancements"""
+        try:
+            if not os.path.exists(input_path):
+                logger.error(f"Input file not found: {input_path}")
+                return False
+                
+            if not output_path:
+                base, ext = os.path.splitext(input_path)
+                output_path = f"{base}_enhanced{ext}"
+            
+            # Create temporary processing directory
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_file = os.path.join(temp_dir, "temp_audio.wav")
+                
+                # Convert to WAV for processing
+                if not self._convert_to_wav(input_path, temp_file):
+                    return False
+                
+                # Apply processing chain
+                processed_file = temp_file
+                
+                if denoise and ENHANCED_PROCESSING_AVAILABLE:
+                    denoised_file = os.path.join(temp_dir, "denoised.wav")
+                    if self._apply_noise_reduction(processed_file, denoised_file):
+                        processed_file = denoised_file
+                
+                if normalize:
+                    normalized_file = os.path.join(temp_dir, "normalized.wav")
+                    if self._apply_normalization(processed_file, normalized_file):
+                        processed_file = normalized_file
+                
+                if upmix_surround:
+                    upmixed_file = os.path.join(temp_dir, "upmixed.wav")
+                    if self._apply_surround_upmix(processed_file, upmixed_file, target_channels):
+                        processed_file = upmixed_file
+                
+                # Convert to final format
+                return self._convert_final_format(processed_file, output_path)
+                
+        except Exception as e:
+            logger.error(f"Error processing audio file: {e}")
+            return False
+    
+    def _convert_to_wav(self, input_path: str, output_path: str) -> bool:
+        """Convert audio file to WAV format for processing"""
+        try:
+            cmd = [
+                'ffmpeg', '-i', input_path,
+                '-acodec', 'pcm_s24le',
+                '-ar', '48000',
+                '-y', output_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            return result.returncode == 0
+            
+        except Exception as e:
+            logger.error(f"Error converting to WAV: {e}")
+            return False
+    
+    def _apply_noise_reduction(self, input_path: str, output_path: str) -> bool:
+        """Apply AI-powered noise reduction"""
+        try:
+            if not ENHANCED_PROCESSING_AVAILABLE:
+                return False
+                
+            # Load audio
+            data, rate = librosa.load(input_path, sr=None)
+            
+            # Apply noise reduction
+            reduced_noise = nr.reduce_noise(y=data, sr=rate, stationary=False, prop_decrease=0.8)
+            
+            # Save processed audio
+            sf.write(output_path, reduced_noise, rate)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error applying noise reduction: {e}")
+            return False
+    
+    def _apply_normalization(self, input_path: str, output_path: str) -> bool:
+        """Apply professional loudness normalization"""
+        try:
+            if not ENHANCED_PROCESSING_AVAILABLE:
+                # Fallback to FFmpeg normalization
+                cmd = [
+                    'ffmpeg', '-i', input_path,
+                    '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
+                    '-y', output_path
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                return result.returncode == 0
+            
+            # Use pyloudnorm for professional normalization
+            data, rate = librosa.load(input_path, sr=None)
+            
+            # Measure loudness
+            meter = pyln.Meter(rate)
+            loudness = meter.integrated_loudness(data)
+            
+            # Normalize to -16 LUFS
+            normalized_audio = pyln.normalize.loudness(data, loudness, -16.0)
+            
+            # Save normalized audio
+            sf.write(output_path, normalized_audio, rate)
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error applying normalization: {e}")
+            return False
+    
+    def _apply_surround_upmix(self, input_path: str, output_path: str, target_channels: int = 8) -> bool:
+        """Apply advanced 7.1 surround sound upmixing"""
+        try:
+            # Advanced 7.1 surround upmix filter chain
+            if target_channels == 8:  # 7.1 surround
+                filter_complex = (
+                    # Split input into multiple channels
+                    "[0:a]channelsplit=channel_layout=stereo[FL][FR];"
+                    # Create center channel (dialogue enhancement)
+                    "[FL][FR]amix=inputs=2:weights=0.5 0.5,highpass=f=200,lowpass=f=8000[C];"
+                    # Create LFE channel (bass extraction)
+                    "[FL][FR]amix=inputs=2:weights=0.5 0.5,lowpass=f=120[LFE];"
+                    # Create side channels (ambient expansion)
+                    "[FL]adelay=10,highpass=f=300,lowpass=f=10000[SL];"
+                    "[FR]adelay=10,highpass=f=300,lowpass=f=10000[SR];"
+                    # Create rear channels (spacial depth)
+                    "[FL]adelay=20,highpass=f=400,lowpass=f=8000,volume=0.7[RL];"
+                    "[FR]adelay=20,highpass=f=400,lowpass=f=8000,volume=0.7[RR];"
+                    # Mix all channels together
+                    "[FL][FR][C][LFE][RL][RR][SL][SR]amerge=inputs=8[out]"
+                )
+            elif target_channels == 6:  # 5.1 surround
+                filter_complex = (
+                    "[0:a]channelsplit=channel_layout=stereo[FL][FR];"
+                    "[FL][FR]amix=inputs=2:weights=0.5 0.5,highpass=f=200,lowpass=f=8000[C];"
+                    "[FL][FR]amix=inputs=2:weights=0.5 0.5,lowpass=f=120[LFE];"
+                    "[FL]adelay=15,highpass=f=300,lowpass=f=10000,volume=0.8[RL];"
+                    "[FR]adelay=15,highpass=f=300,lowpass=f=10000,volume=0.8[RR];"
+                    "[FL][FR][C][LFE][RL][RR]amerge=inputs=6[out]"
+                )
+            else:
+                return False
+            
+            cmd = [
+                'ffmpeg', '-i', input_path,
+                '-filter_complex', filter_complex,
+                '-map', '[out]',
+                '-c:a', 'pcm_s24le',
+                '-ar', '48000',
+                '-y', output_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            return result.returncode == 0
+            
+        except Exception as e:
+            logger.error(f"Error applying surround upmix: {e}")
+            return False
+    
+    def _convert_final_format(self, input_path: str, output_path: str) -> bool:
+        """Convert processed audio to final format"""
+        try:
+            _, ext = os.path.splitext(output_path)
+            
+            if ext.lower() == '.flac':
+                cmd = [
+                    'ffmpeg', '-i', input_path,
+                    '-c:a', 'flac',
+                    '-compression_level', '8',
+                    '-y', output_path
+                ]
+            elif ext.lower() == '.mp3':
+                cmd = [
+                    'ffmpeg', '-i', input_path,
+                    '-c:a', 'libmp3lame',
+                    '-b:a', '320k',
+                    '-y', output_path
+                ]
+            else:
+                cmd = ['ffmpeg', '-i', input_path, '-y', output_path]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            return result.returncode == 0
+            
+        except Exception as e:
+            logger.error(f"Error converting final format: {e}")
+            return False
+    
+    def get_audio_info(self, file_path: str) -> Dict[str, Any]:
+        """Get detailed audio file information"""
+        try:
+            cmd = [
+                'ffprobe', '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_format',
+                '-show_streams',
+                file_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                return json.loads(result.stdout)
+            return {}
+            
+        except Exception as e:
+            logger.error(f"Error getting audio info: {e}")
+            return {}
+
+class AudioProcessingError(Exception):
+    """Base exception for audio processing errors"""
+    pass
+
 class FFmpegError(AudioProcessingError):
     """Raised when FFmpeg encounters an error"""
     pass

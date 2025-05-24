@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """
-interactive_mode.py - Snatch Premium Interactive Experience
+interactive_mode.py - Snatch Premium Interactive Experience V2.0
 
-A modern, feature-rich terminal interface for media downloads.
+A cutting-edge, neon-styled terminal interface for media downloads with P2P support.
 
 Features:
-- Responsive multi-pane TUI layout
-- Real-time media previews and metadata display
-- Holographic progress visualization
-- Intelligent format selection matrix
-- Context-sensitive help system
-- Smooth animated transitions
-- Advanced surround sound configuration
-- Download queue management
+- Cyberpunk neon aesthetics with animated borders
+- Real-time holographic progress visualization
+- Advanced 7.1 surround audio processing
+- P2P distributed downloading
+- Standalone audio processor mode
+- Matrix-style data visualization
+- AI-powered download optimization
 - System resource monitoring
 """
 
@@ -39,7 +38,7 @@ from rich.progress import (
 )
 from rich.layout import Layout
 from rich.live import Live
-from textual.widgets import Markdown  # Markdown support
+from textual.widgets import Markdown
 from rich.align import Align
 from rich.text import Text
 from rich.table import Table
@@ -62,8 +61,14 @@ from .defaults import (
 from .logging_config import setup_logging
 from .progress import HolographicProgress
 from .common_utils import sanitize_filename, format_size
-from .audio_processor import AudioProcessor
+from .audio_processor import EnhancedAudioProcessor
 from .advanced_config import AdvancedConfigManager, ConfigCategory
+from .p2p import P2PManager
+from .network import NetworkManager
+from .cyberpunk_ui import (
+    CyberpunkBanner, HolographicProgress, MatrixDataTable, 
+    CyberStatusPanel, NeonMenu, create_cyberpunk_layout
+)
 
 # Textual imports for TUI features
 from textual.app import App, ComposeResult
@@ -71,12 +76,14 @@ from textual.binding import Binding
 from textual.widgets import (
     Button, Header, Footer, Static, Input, Label, 
     Checkbox, DataTable, Select, ProgressBar, 
-    ContentSwitcher, RadioSet, RadioButton
+    ContentSwitcher, RadioSet, RadioButton, 
+    TextArea, Collapsible, Switch, Tabs, Tab, DirectoryTree
 )
 from textual.reactive import reactive
-from textual.containers import Container, Vertical, Horizontal
+from textual.containers import Container, Vertical, Horizontal, Grid
 from textual.worker import Worker, WorkerState
 from textual import work
+from textual.screen import Screen
 
 # Safe wrapper for table access to prevent RowDoesNotExist errors
 def safe_get_row(table, row_index, default_value=None):
@@ -110,14 +117,42 @@ UI_ELEMENTS = {
 }
 
 CONSTANTS = {
+    # UI Messages
     "PRESS_ENTER": "\n[dim]Press Enter to continue[/]",
     "FILE_ORG_NOT_AVAILABLE": "File organizer module not available",
+    
+    # File and Binary Names
     "FFMPEG_EXE": "ffmpeg.exe",
     "FFMPEG_BINARY": "ffmpeg",
+    
+    # Status Messages
     "DOWNLOAD_FAILED": "Download failed",
     "PROCESSING_COMPLETE": "Processing complete",
-    "CONVERSION_FAILED": "Conversion failed"
+    "CONVERSION_FAILED": "Conversion failed",
+    "NO_FILES_FOUND": "No files found to convert",
+    "NO_AUDIO_FILES": "No audio files found to process", 
+    "NO_VIDEO_FILES_CONVERT": "No video files found to convert",
+    "NO_VIDEO_FILES_PROCESS": "No video files found to process",
+    "FILE_NOT_FOUND": "File not found: {file_path}",
+    
+    # User Prompts
+    "PLEASE_SELECT_FILE": "Please select a file to convert",
+    "PLEASE_SELECT_AUDIO": "Please select an audio file to process",
+    "PLEASE_SELECT_VIDEO_CONVERT": "Please select a video file to convert", 
+    "PLEASE_SELECT_VIDEO_PROCESS": "Please select a video file to process",
+    
+    # Success Messages
+    "CONVERSION_COMPLETE": "Conversion completed successfully",
+    "PROCESSING_COMPLETE_SUCCESS": "Processing completed successfully",
+    
+    # Error Messages
+    "ERROR_CONVERTING": "Error converting file",
+    "ERROR_PROCESSING": "Error processing file"
 }
+
+# Define reusable constants to avoid duplication
+PRESS_ENTER_MSG = CONSTANTS["PRESS_ENTER"]
+FILE_ORG_NOT_AVAILABLE_MSG = CONSTANTS["FILE_ORG_NOT_AVAILABLE"]
 
 # Custom exception classes
 class DownloadManagerError(Exception):
@@ -1004,7 +1039,8 @@ class InteractiveApp(App):
                                 yield Checkbox("Stabilize Video", id="stabilize-video")
                                 yield Button("Process Video", id="process-video-btn")
                         
-                        # File Management screen                        with Container(id="files-screen"):
+                        # File Management screen
+                        with Container(id="files-screen"):
                             yield Static("File Management", classes="title")
                             with Container(classes="info-panel"):
                                 yield Static("Organize Downloads", classes="subtitle")
@@ -1299,9 +1335,8 @@ class InteractiveApp(App):
                 
         except Exception as e:
             logging.error(f"Error detecting FFmpeg: {e}")
-            self.notify(f"Error detecting FFmpeg: {e}", severity="error")
-
-    # Media Processing Methods    def convert_audio(self) -> None:
+            self.notify(f"Error detecting FFmpeg: {e}", severity="error")    # Media Processing Methods
+    def convert_audio(self) -> None:
         """Convert audio files to different formats"""        
         try:
             # Import audio processor
@@ -1310,22 +1345,22 @@ class InteractiveApp(App):
             # Get input file path from user
             files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
             if files_widget.row_count == 0:
-                self.notify("No files found to convert", severity="warning")
+                self.notify(CONSTANTS["NO_FILES_FOUND"], severity="warning")
                 return
             
             # Get selected file or use first available
             try:
-                row_key = files_widget.cursor_row
+                row_key = files_widget.cursor_row                
                 if row_key is None or row_key >= files_widget.row_count:
                     row_key = 0
                 row = files_widget.get_row_at(row_key)
                 file_path = str(row[1])  # File path is in the second column
             except Exception:
-                self.notify("Please select a file to convert", severity="error")
+                self.notify(CONSTANTS["PLEASE_SELECT_FILE"], severity="error")
                 return
             
             if not os.path.exists(file_path):
-                self.notify(f"File not found: {file_path}", severity="error")
+                self.notify(CONSTANTS["FILE_NOT_FOUND"].format(file_path=file_path), severity="error")
                 return
             
             # Initialize audio processor
@@ -1369,11 +1404,10 @@ class InteractiveApp(App):
         try:
             # Import audio processor
             from .audio_processor import AudioProcessor
-            
-            # Get input file path from user
+              # Get input file path from user
             files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
             if files_widget.row_count == 0:
-                self.notify("No audio files found to process", severity="warning")
+                self.notify(CONSTANTS["NO_AUDIO_FILES"], severity="warning")
                 return
             
             # Get selected file or use first available
@@ -1382,9 +1416,9 @@ class InteractiveApp(App):
                 if row_key is None or row_key >= files_widget.row_count:
                     row_key = 0
                 row = files_widget.get_row_at(row_key)
-                file_path = str(row[1])  # File path is in the second column
+                file_path = str(row[1])  # File path is in the second column            
             except Exception:
-                self.notify("Please select an audio file to process", severity="error")
+                self.notify(CONSTANTS["PLEASE_SELECT_AUDIO"], severity="error")
                 return
             
             if not os.path.exists(file_path):
@@ -1423,7 +1457,7 @@ class InteractiveApp(App):
     async def _start_audio_processing_task(self, audio_processor, input_path: str, process_audio: bool, upmix_audio: bool) -> None:
         """Background task for audio processing"""
         try:
-            # Apply audio processing effects
+            # Apply audio processing effects            
             result = await audio_processor.process_audio_async(
                 input_path, 
                 normalize=process_audio,
@@ -1438,14 +1472,15 @@ class InteractiveApp(App):
                 
         except Exception as e:
             logging.error(f"Background audio processing error: {e}")
-            self.notify(f"Audio processing failed: {str(e)}", severity="error")    
+            self.notify(f"Audio processing failed: {str(e)}", severity="error")
+    
     def convert_video(self) -> None:
         """Convert video files to different formats and resolutions"""
         try:
             # Get input file path from user
             files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
             if files_widget.row_count == 0:
-                self.notify("No video files found to convert", severity="warning")
+                self.notify(CONSTANTS["NO_VIDEO_FILES_CONVERT"], severity="warning")
                 return
             
             # Get selected file or use first available
@@ -1504,7 +1539,6 @@ class InteractiveApp(App):
                 self.notify(f"Video conversion to {target_format.upper()} completed!", severity="success")
             else:
                 self.notify(CONSTANTS["CONVERSION_FAILED"], severity="error")
-                
         except Exception as e:
             logging.error(f"Background video conversion error: {e}")
             self.notify(f"Video conversion failed: {str(e)}", severity="error")
@@ -1513,7 +1547,7 @@ class InteractiveApp(App):
         """Process video with effects, filters, and optimizations"""
         try:
             # Get input file path from user            
-            # files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
+            files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
             if files_widget.row_count == 0:
                 self.notify("No video files found to process", severity="warning")
                 return
@@ -1531,15 +1565,7 @@ class InteractiveApp(App):
             
             if not os.path.exists(file_path):
                 self.notify(f"File not found: {file_path}", severity="error")
-                return
-            
-            # Basic video processing using FFmpeg
-            ffmpeg_location = self.config.get("ffmpeg_location", "")
-            if ffmpeg_location:
-                ffmpeg_path = os.path.join(ffmpeg_location, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
-            else:
-                ffmpeg_path = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-            self.notify(f"Processing video file: {os.path.basename(file_path)}", severity="information")
+                return            self.notify(f"Processing video file: {os.path.basename(file_path)}", severity="information")
             
             # Apply video processing effects
             self.notify("Applying video stabilization and enhancement filters...", severity="information")
@@ -1595,12 +1621,11 @@ class InteractiveApp(App):
             # Organize video files
             video_count = organizer.organize_by_type(video_dir)
             audio_count = organizer.organize_by_type(audio_dir)
-            
             total_organized = video_count + audio_count
             self.notify(f"Organized {total_organized} files by type", severity="information")
             
         except ImportError:
-            self.notify("File organizer module not available", severity="error")
+            self.notify(CONSTANTS["FILE_ORG_NOT_AVAILABLE"], severity="error")
         except Exception as e:
             logging.error(f"Error organizing files by type: {e}")
             self.notify(f"Error organizing files: {str(e)}", severity="error")
@@ -1620,12 +1645,11 @@ class InteractiveApp(App):
             # Organize by date
             video_count = organizer.organize_by_date(video_dir)
             audio_count = organizer.organize_by_date(audio_dir)
-            
             total_organized = video_count + audio_count
             self.notify(f"Organized {total_organized} files by date", severity="information")
             
         except ImportError:
-            self.notify("File organizer module not available", severity="error")
+            self.notify(CONSTANTS["FILE_ORG_NOT_AVAILABLE"], severity="error")
         except Exception as e:
             logging.error(f"Error organizing files by date: {e}")
             self.notify(f"Error organizing files: {str(e)}", severity="error")
@@ -1645,12 +1669,10 @@ class InteractiveApp(App):
             # Organize by source
             video_count = organizer.organize_by_source(video_dir)
             audio_count = organizer.organize_by_source(audio_dir)
-            
             total_organized = video_count + audio_count
             self.notify(f"Organized {total_organized} files by source", severity="information")
-            
         except ImportError:
-            self.notify("File organizer module not available", severity="error")
+            self.notify(CONSTANTS["FILE_ORG_NOT_AVAILABLE"], severity="error")
         except Exception as e:
             logging.error(f"Error organizing files by source: {e}")
             self.notify(f"Error organizing files: {str(e)}", severity="error")
@@ -1662,28 +1684,13 @@ class InteractiveApp(App):
             video_dir = self.config.get('download', {}).get('video_output_dir', self.DEFAULT_VIDEO_DIR)
             audio_dir = self.config.get('download', {}).get('audio_output_dir', self.DEFAULT_AUDIO_DIR)
             
-            # Simple pattern-based renaming (remove special characters, normalize spaces)
-            import re
-            
             total_renamed = 0
+            directories = [video_dir, audio_dir]
             
-            for directory in [video_dir, audio_dir]:
+            for directory in directories:
                 if os.path.exists(directory):
-                    for root, dirs, files in os.walk(directory):
-                        for file in files:
-                            old_path = os.path.join(root, file)
-                            name, ext = os.path.splitext(file)
-                            
-                            # Clean filename
-                            clean_name = re.sub(r'[^\w\s-]', '', name)
-                            clean_name = re.sub(r'[-\s]+', '-', clean_name).strip('-')
-                            
-                            new_file = f"{clean_name}{ext}"
-                            new_path = os.path.join(root, new_file)
-                            
-                            if old_path != new_path and not os.path.exists(new_path):
-                                os.rename(old_path, new_path)
-                                total_renamed += 1
+                    renamed_count = self._rename_files_in_directory(directory)
+                    total_renamed += renamed_count
             
             self.notify(f"Renamed {total_renamed} files", severity="information")
             
@@ -1691,10 +1698,35 @@ class InteractiveApp(App):
             logging.error(f"Error renaming files: {e}")
             self.notify(f"Error renaming files: {str(e)}", severity="error")
 
+    def _rename_files_in_directory(self, directory: str) -> int:
+        """Helper method to rename files in a specific directory"""
+        import re
+        renamed_count = 0
+        
+        for root, dirs, files in os.walk(directory):
+            for file in files:
+                try:
+                    old_path = os.path.join(root, file)
+                    name, ext = os.path.splitext(file)
+                    
+                    # Clean filename
+                    clean_name = re.sub(r'[^\w\s-]', '', name)
+                    clean_name = re.sub(r'[-\s]+', '-', clean_name).strip('-')
+                    
+                    new_file = f"{clean_name}{ext}"
+                    new_path = os.path.join(root, new_file)
+                    
+                    if old_path != new_path and not os.path.exists(new_path):
+                        os.rename(old_path, new_path)
+                        renamed_count += 1
+                except OSError:
+                    continue
+                    
+        return renamed_count
+
     def cleanup_temp_files(self) -> None:
         """Clean up temporary files"""
         try:
-            # Get cache directory and temp directories
             cache_dir = self.config.get('cache_directory', os.path.join(os.path.expanduser("~"), ".cache", "snatch"))
             temp_extensions = ['.part', '.tmp', '.temp', '.ytdl']
             
@@ -1703,17 +1735,9 @@ class InteractiveApp(App):
             
             # Clean cache directory
             if os.path.exists(cache_dir):
-                for root, dirs, files in os.walk(cache_dir):
-                    for file in files:
-                        if any(file.endswith(ext) for ext in temp_extensions):
-                            file_path = os.path.join(root, file)
-                            try:
-                                file_size = os.path.getsize(file_path)
-                                os.remove(file_path)
-                                total_cleaned += 1
-                                total_size += file_size
-                            except OSError:
-                                pass
+                cleaned, size = self._cleanup_directory(cache_dir, temp_extensions)
+                total_cleaned += cleaned
+                total_size += size
             
             # Clean download directories
             video_dir = self.config.get('download', {}).get('video_output_dir', self.DEFAULT_VIDEO_DIR)
@@ -1721,24 +1745,35 @@ class InteractiveApp(App):
             
             for directory in [video_dir, audio_dir]:
                 if os.path.exists(directory):
-                    for root, dirs, files in os.walk(directory):
-                        for file in files:
-                            if any(file.endswith(ext) for ext in temp_extensions):
-                                file_path = os.path.join(root, file)
-                                try:
-                                    file_size = os.path.getsize(file_path)
-                                    os.remove(file_path)
-                                    total_cleaned += 1
-                                    total_size += file_size
-                                except OSError:
-                                    pass
+                    cleaned, size = self._cleanup_directory(directory, temp_extensions)
+                    total_cleaned += cleaned
+                    total_size += size
             
             size_str = format_size(total_size)
             self.notify(f"Cleaned up {total_cleaned} temporary files ({size_str})", severity="information")
             
         except Exception as e:
             logging.error(f"Error cleaning up temp files: {e}")
-            self.notify(f"Error cleaning up temp files: {str(e)}", severity="error")    # Download Methods (existing but might need updating)
+            self.notify(f"Error cleaning up temp files: {str(e)}", severity="error")
+
+    def _cleanup_directory(self, directory: str, temp_extensions: List[str]) -> Tuple[int, int]:
+        """Helper method to clean up temporary files in a directory"""
+        cleaned_count = 0
+        total_size = 0
+        
+        for root, dirs, files in os.walk(directory):
+            for file in files:
+                if any(file.endswith(ext) for ext in temp_extensions):
+                    file_path = os.path.join(root, file)
+                    try:
+                        file_size = os.path.getsize(file_path)
+                        os.remove(file_path)
+                        cleaned_count += 1
+                        total_size += file_size
+                    except OSError:
+                        continue
+                        
+        return cleaned_count, total_size# Download Methods (existing but might need updating)
     def analyze_url(self) -> None:
         """Analyze URL with yt-dlp to extract media information"""
         url_input = self.query_one("#url-input", Input)
@@ -1821,7 +1856,6 @@ class InteractiveApp(App):
                     'options': download_options
                 }
                 self.downloads.append(download_info)
-                
             else:
                 raise DownloadManagerError("Download manager not initialized")
                 
@@ -1833,6 +1867,12 @@ class InteractiveApp(App):
         """Run network speed test using NetworkManager"""
         self.notify("Running speed test...", severity="information")
         
+        # Use @work decorator for proper async handling in Textual
+        self._start_speed_test_task()
+
+    @work
+    async def _start_speed_test_task(self) -> None:
+        """Background task for speed test to fix async warnings"""
         try:
             # Import network module
             from .network import NetworkManager
@@ -1841,42 +1881,31 @@ class InteractiveApp(App):
             network_manager = NetworkManager(self.config)
             
             # Run speed test asynchronously
-            import asyncio
-            
-            async def run_test():
+            result = await network_manager.run_speed_test(detailed=True)
+            if result:
+                # Update network status display
                 try:
-                    result = await network_manager.run_speed_test(detailed=True)
-                    if result:
-                        # Update network status display
-                        network_status = self.query_one("#network-status", Static)
-                        status_text = f"""Speed Test Results:
-Download: {result.download_mbps:.1f} Mbps
-Upload: {result.upload_mbps:.1f} Mbps  
-Ping: {result.ping_ms:.1f} ms
-Jitter: {result.jitter_ms:.1f} ms
-Packet Loss: {result.packet_loss:.1f}%"""
-                        network_status.update(status_text)
-                        
-                        self.notify(f"Speed test completed! Download: {result.download_mbps:.1f} Mbps", severity="information")
-                    else:
-                        self.notify("Speed test failed - no results returned", severity="error")
-                except Exception as e:
-                    logging.error(f"Speed test error: {e}")
-                    self.notify(f"Speed test failed: {str(e)}", severity="error")
-            
-            # Run the async function
-            try:
-                loop = asyncio.get_event_loop()
-                loop.run_until_complete(run_test())
-            except RuntimeError:
-                # If no event loop, create one
-                asyncio.run(run_test())
+                    network_status = self.query_one("#network-status", Static)
+                    status_text = f"""Speed Test Results:
+                    Download: {result.download_mbps:.1f} Mbps
+                    Upload: {result.upload_mbps:.1f} Mbps  
+                    Ping: {result.ping_ms:.1f} ms
+                    Jitter: {result.jitter_ms:.1f} ms
+                    Packet Loss: {result.packet_loss:.1f}%"""
+                    network_status.update(status_text)
+                except Exception:
+                    # If network status widget not found, just log
+                    logging.info(f"Speed test completed: {result.download_mbps:.1f} Mbps down, {result.upload_mbps:.1f} Mbps up")
                 
-        except ImportError as e:
+                self.notify(f"Speed test completed! Download: {result.download_mbps:.1f} Mbps", severity="information")
+            else:
+                self.notify("Speed test failed - no results returned", severity="error")
+                
+        except ImportError:
             self.notify("Network module not available for speed testing", severity="error")
         except Exception as e:
-            logging.error(f"Error running speed test: {e}")
-            self.notify(f"Error running speed test: {str(e)}", severity="error")
+            logging.error(f"Speed test error: {e}")
+            self.notify(f"Speed test failed: {str(e)}", severity="error")
     
     # Initialization Methods
     def initialize_download_manager(self) -> None:
@@ -1948,9 +1977,7 @@ Packet Loss: {result.packet_loss:.1f}%"""
                 # Codec
                 codec = fmt.get('vcodec', 'N/A')
                 if codec == 'none':
-                    codec = fmt.get('acodec', 'N/A')
-                
-                # Size
+                    codec = fmt.get('acodec', 'N/A')                # Size
                 filesize = fmt.get('filesize') or fmt.get('filesize_approx')
                 size = format_size(filesize) if filesize else 'N/A'
                 
@@ -1962,8 +1989,7 @@ Packet Loss: {result.packet_loss:.1f}%"""
                 fps = str(fmt.get('fps', 'N/A')) if fmt.get('fps') else 'N/A'
                 
                 format_table.add_row(format_id, ext, resolution, codec, size, audio, fps)
-            
-            self.format_info = info
+                self.format_info = info
             
         except Exception as e:
             logging.error(f"Error populating format table: {e}")
@@ -2231,15 +2257,28 @@ async def _handle_download_interactive(console: Console, download_manager: Async
         # Start download
         console.print(f"[cyan]Starting download: {url}[/]")
         
-        async with download_manager:
+        async with download_manager:            
             try:
+                # Ensure proper method call with only required arguments
                 result = await download_manager.download_with_options([url], options)
-                if result:
+                if result and len(result) > 0:
                     console.print(f"[green]✅ Successfully downloaded: {result[0]}[/]")
+                    return result[0]
                 else:
-                    console.print("[red]❌ Download failed[/]")
+                    console.print("[red]❌ Download failed - no files returned[/]")
+                    return None
+            except TypeError as e:
+                if "positional arguments" in str(e):
+                    console.print(f"[red]❌ Method signature error: {e}[/]")
+                    logging.error(f"Download method signature mismatch: {e}")
+                else:
+                    console.print(f"[red]❌ Type error during download: {e}[/]")
+                    logging.error(f"Download type error: {e}")
+                return None
             except Exception as e:
                 console.print(f"[red]❌ Download error: {e}[/]")
+                logging.error(f"Download exception: {e}")
+                return None
                 
     except Exception as e:
         console.print(f"[red]Error in download process: {e}[/]")
@@ -2269,8 +2308,7 @@ async def _show_system_status(console: Console, download_manager: AsyncDownloadM
             table.add_row("Memory Usage", f"{status['memory_usage']:.1f}%")
             table.add_row("Disk Usage", f"{status['disk_usage']:.1f}%")
             table.add_row("Network Usage", f"{status['network_usage']:.1f} Mbps")
-        
-        console.print(table)
+            console.print(table)
         
         # Show recommendations if available
         if "performance_recommendations" in status:
@@ -2280,7 +2318,7 @@ async def _show_system_status(console: Console, download_manager: AsyncDownloadM
                 for rec in recommendations:
                     console.print(f"  • {rec}")
         
-        Prompt.ask("\n[dim]Press Enter to continue[/]", default="")
+        Prompt.ask(CONSTANTS["PRESS_ENTER"], default="")
         
     except Exception as e:
         console.print(f"[red]Error showing system status: {e}[/]")
@@ -2339,11 +2377,11 @@ async def _show_performance_monitor(console: Console, download_manager: AsyncDow
             if result.get("optimizations_applied"):
                 console.print("[green]✅ Optimizations applied:[/]")
                 for opt in result["optimizations_applied"]:
-                    console.print(f"  • {opt}")
+                    console.print(f"  • {opt}")            
             else:
                 console.print("[green]✅ System is already optimized[/]")
         
-        Prompt.ask("\n[dim]Press Enter to continue[/]", default="")
+        Prompt.ask(CONSTANTS["PRESS_ENTER"], default="")
         
     except Exception as e:
         console.print(f"[red]Error in performance monitor: {e}[/]")
@@ -2396,9 +2434,8 @@ async def _show_queue_management(console: Console, download_manager: AsyncDownlo
             if Confirm.ask("[red]Clear all queued downloads?[/]", default=False):
                 await download_manager.advanced_scheduler.clear_queue()
                 console.print("[green]✅ Queue cleared[/]")
-        
         if choice != "4":
-            Prompt.ask("\n[dim]Press Enter to continue[/]", default="")
+            Prompt.ask(CONSTANTS["PRESS_ENTER"], default="")
             
     except Exception as e:
         console.print(f"[red]Error in queue management: {e}[/]")
@@ -2421,7 +2458,6 @@ def _show_settings(console: Console, config: Dict[str, Any]) -> None:
         table.add_row("Audio Output Dir", config.get("audio_output", "downloads/audio"))
         table.add_row("Bandwidth Limit", f"{config.get('bandwidth_limit', 0)} Mbps" if config.get('bandwidth_limit') else "Unlimited")
         table.add_row("P2P Enabled", "Yes" if config.get("p2p_enabled", False) else "No")
-        
         console.print(table)
         
         # Settings modification
@@ -2429,7 +2465,7 @@ def _show_settings(console: Console, config: Dict[str, Any]) -> None:
             console.print("[cyan]Settings modification not implemented in this version[/]")
             console.print("[dim]Use the config.json file to modify settings[/]")
         
-        Prompt.ask("\n[dim]Press Enter to continue[/]", default="")
+        Prompt.ask(CONSTANTS["PRESS_ENTER"], default="")
         
     except Exception as e:
         console.print(f"[red]Error showing settings: {e}[/]")
@@ -2476,9 +2512,8 @@ def _show_help(console: Console) -> None:
 
 [green]For more help, visit the documentation or check the GitHub repository.[/]
         """
-        
         console.print(Panel(help_content, border_style="bright_cyan"))
-        Prompt.ask("\n[dim]Press Enter to continue[/]", default="")
+        Prompt.ask(CONSTANTS["PRESS_ENTER"], default="")
         
     except Exception as e:
         console.print(f"[red]Error showing help: {e}[/]")
