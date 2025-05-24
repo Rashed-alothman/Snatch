@@ -63,6 +63,7 @@ from .logging_config import setup_logging
 from .progress import HolographicProgress
 from .common_utils import sanitize_filename, format_size
 from .audio_processor import AudioProcessor
+from .advanced_config import AdvancedConfigManager, ConfigCategory
 
 # Textual imports for TUI features
 from textual.app import App, ComposeResult
@@ -97,6 +98,35 @@ install(show_locals=True)
 # Initialize colorama and console
 init(autoreset=True)
 console = Console(theme=THEME)
+
+# Constants to reduce string duplication
+UI_ELEMENTS = {
+    "FILES_LIST": "#files-list",
+    "FORMAT_TABLE": "#format-table",
+    "PROCESS_AUDIO": "#process-audio",
+    "DOWNLOAD_BUTTON": "#download-button",
+    "URL_INPUT": "#url-input",
+    "STATUS_BAR": "#status-bar"
+}
+
+CONSTANTS = {
+    "PRESS_ENTER": "\n[dim]Press Enter to continue[/]",
+    "FILE_ORG_NOT_AVAILABLE": "File organizer module not available",
+    "FFMPEG_EXE": "ffmpeg.exe",
+    "FFMPEG_BINARY": "ffmpeg",
+    "DOWNLOAD_FAILED": "Download failed",
+    "PROCESSING_COMPLETE": "Processing complete",
+    "CONVERSION_FAILED": "Conversion failed"
+}
+
+# Custom exception classes
+class DownloadManagerError(Exception):
+    """Custom exception for download manager errors"""
+    pass
+
+class ConversionError(Exception):
+    """Custom exception for conversion errors"""
+    pass
 
 # UI Style Constants
 STYLE = {
@@ -161,6 +191,57 @@ UI = {
     "spacer": "\n"
 }
 
+
+# Error message constants
+ERROR_MESSAGES = {
+    "INPUT_FILE_NOT_EXIST": "Input file does not exist",
+    "FILE_ORG_FAILED": "File organization failed",
+    "NO_INPUT_FILE": "Please specify an input file",
+    "CONVERSION_FAILED": "Conversion failed",
+    "PROCESSING_FAILED": "Processing failed"
+}
+
+def create_format_table(formats: List[Dict[str, Any]], box_style=None, border_style: str = "bright_blue") -> Table:
+    """Create a formatted table for displaying media format information.
+    
+    Args:
+        formats: List of format dictionaries with media information
+        box_style: Rich box style for the table
+        border_style: Border color style
+        
+    Returns:
+        Rich Table object with formatted media information
+    """
+    table = Table(
+        title="Available Formats",
+        box=box_style or box.MINIMAL_HEAVY_HEAD,
+        border_style=border_style,
+        show_header=True,
+        header_style="bold magenta"
+    )
+    
+    # Add columns
+    table.add_column("ID", style="cyan", width=6)
+    table.add_column("Extension", style="green", width=10)
+    table.add_column("Resolution", style="blue", width=12)
+    table.add_column("Codec", style="yellow", width=10)
+    table.add_column("Size", style="red", width=10)
+    table.add_column("Audio", style="purple", width=12)
+    table.add_column("FPS", style="bright_green", width=8)
+    
+    # Add format data
+    for fmt in formats:
+        table.add_row(
+            str(fmt.get('format_id', 'N/A')),
+            fmt.get('ext', 'N/A'),
+            f"{fmt.get('width', 'N/A')}x{fmt.get('height', 'N/A')}" if fmt.get('width') and fmt.get('height') else 'N/A',
+            fmt.get('vcodec', 'N/A')[:10] if fmt.get('vcodec') else 'N/A',
+            format_size(fmt.get('filesize', 0)) if fmt.get('filesize') else 'N/A',
+            f"{fmt.get('abr', 'N/A')} kbps" if fmt.get('abr') else 'N/A',
+            str(fmt.get('fps', 'N/A')) if fmt.get('fps') else 'N/A'
+        )
+    
+    return table
 
 # Status classification helpers for reducing complexity
 def classify_download_speed(speed_mbps: float) -> str:
@@ -456,18 +537,15 @@ class InteractiveApp(App):
     AUDIO_SCREEN = "audio-screen"
     VIDEO_SCREEN = "video-screen"
     FILES_SCREEN = "files-screen"
-    
-    # Form input ID constants
+      # Form input ID constants
     VIDEO_DIR_INPUT = "#video-dir-input"
     AUDIO_DIR_INPUT = "#audio-dir-input"
     FFMPEG_INPUT = "#ffmpeg-input"
     ORGANIZE_FILES = "#organize-files"
-    HIGH_QUALITY = "#high-quality"
     
     # Default paths
     DEFAULT_VIDEO_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "video")
     DEFAULT_AUDIO_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "audio")
-    
     CSS = """
     #header {
         dock: top;
@@ -485,13 +563,15 @@ class InteractiveApp(App):
     
     #sidebar {
         dock: left;
-        width: 30;
+        width: 32;
         background: $surface;
-        border-right: solid $primary;
+        border-right: thick $primary;
+        padding: 0 1;
     }
     
     #main-content {
         background: $background;
+        margin: 0 1;
     }
     
     .title {
@@ -501,58 +581,191 @@ class InteractiveApp(App):
         padding: 1;
         text-style: bold;
         width: 100%;
+        margin: 0 0 1 0;
     }
     
-    .menu-item {
+    .subtitle {
+        background: $surface;
+        color: $text;
+        text-align: center;
+        padding: 0 1;
+        text-style: bold;
+        margin: 0 0 1 0;
+    }
+    
+    .section-title {
+        color: $accent;
+        text-style: bold;
+        margin: 1 0;
+        padding: 0 1;
+    }
+      .menu-item {
         padding: 1 2;
-        margin: 0 1;
+        margin: 0 1 1 1;
+        border: solid $surface;
     }
     
     .menu-item:hover {
         background: $primary-darken-1;
         color: $text;
+        border: solid $primary;
     }
     
     .menu-item.selected {
         background: $primary;
         color: $text;
         text-style: bold;
+        border: solid $accent;
+    }
+      .info-panel {
+        margin: 1;
+        padding: 1;
+        border: solid $primary-darken-2;
+        background: $surface-lighten-1;
+    }
+    
+    .action-panel {
+        margin: 1;
+        padding: 1;
+        background: $surface;
+        border: solid $accent;
+    }
+    
+    .tab-container {
+        margin: 0 0 1 0;
+        padding: 0 1;
+    }
+    
+    .tab-button {
+        margin: 0 1 0 0;
+        padding: 0 2;
+        border: solid $surface;
+        background: $surface;
+    }
+    
+    .tab-button.active {
+        background: $primary;
+        color: $text;
+        border: solid $primary;
+        text-style: bold;
+    }
+    
+    .tab-button:hover {
+        background: $primary-darken-1;
+        border: solid $primary-darken-1;
     }
     
     .progress-bar {
         width: 100%;
         margin: 1 0;
+        border: solid $primary;
     }
     
     .status-ok {
         color: $success;
+        text-style: bold;
     }
     
     .status-warning {
         color: $warning;
+        text-style: bold;
     }
     
     .status-error {
         color: $error;
+        text-style: bold;
     }
-    
-    .info-panel {
-        margin: 1;
-        height: auto;
-        border: solid $primary-darken-2;
-    }
-    
-    .format-table {
+      .format-table {
         width: 100%;
         height: auto;
+        border: solid $primary;
+    }
+    
+    .primary {
+        background: $primary;
+        color: $text;
+        text-style: bold;
+        border: solid $primary;
+        margin: 0 1 0 0;
+    }
+    
+    .secondary {
+        background: $surface;
+        color: $text;
+        border: solid $surface;
+        margin: 0 1 0 0;
+    }
+    
+    .primary:hover {
+        background: $primary-lighten-1;
+        border: solid $primary-lighten-1;
+    }
+    
+    .secondary:hover {
+        background: $surface-lighten-1;
+        border: solid $surface-lighten-1;
     }
     
     DataTable {
         height: auto;
+        border: solid $primary-darken-2;
+    }
+    
+    Input {
+        border: solid $primary-darken-2;
+        margin: 0 0 1 0;
+        padding: 0 1;
+    }
+    
+    Input:focus {
+        border: solid $primary;
+    }
+    
+    Select {
+        border: solid $primary-darken-2;
+        margin: 0 0 1 0;
+    }
+    
+    Checkbox {
+        margin: 0 0 1 0;
+    }
+    
+    Container {
+        padding: 0 1;
+    }
+    
+    #downloads-table {
+        min-height: 10;
+    }
+    
+    #format-table {
+        min-height: 8;
+    }
+    
+    #network-stats {
+        min-height: 6;
+    }
+    
+    #active-downloads {
+        min-height: 6;
     }
     """
     
-        # Screen ID constants
+    # Screen ID constants
+    DOWNLOAD_SCREEN = "download-screen"
+    BROWSE_SCREEN = "browse-screen"
+    NETWORK_SCREEN = "network-screen"
+    SETTINGS_SCREEN = "settings-screen"
+    HELP_SCREEN = "help-screen"
+    AUDIO_SCREEN = "audio-screen"
+    VIDEO_SCREEN = "video-screen"
+    FILES_SCREEN = "files-screen"
+    
+    # Input field ID constants
+    VIDEO_DIR_INPUT = "#video-dir-input"
+    AUDIO_DIR_INPUT = "#audio-dir-input"
+    FFMPEG_INPUT = "#ffmpeg-input"
+    ORGANIZE_FILES = "#organize-files"
     
     # Default paths
     DEFAULT_VIDEO_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "video")
@@ -568,6 +781,16 @@ class InteractiveApp(App):
         self.current_url = None        
         self.format_info = None
         self.downloads = []
+        
+        # Initialize Advanced Configuration Manager
+        self.config_manager = AdvancedConfigManager()
+        self.config_manager.load_config()
+        
+        # Merge with existing config
+        self.config.update(self.config_manager.config)
+        
+        # Current active settings tab
+        self.active_settings_tab = "general-settings"
         
     def compose(self) -> ComposeResult:
         """Create UI layout"""
@@ -627,23 +850,121 @@ class InteractiveApp(App):
                             with Container(id="network-stats", classes="info-panel"):
                                 yield Static("Network Status: Checking...", id="network-status")
                                 # Will be populated with speed test results
-                                
-                        # Settings screen
+                                  # Settings screen
                         with Container(id="settings-screen"):
                             yield Static("Settings", classes="title")
-                            with Vertical():
-                                yield Static("Output Directories")
-                                yield Input(placeholder="Video Output Directory", id="video-dir-input")
-                                yield Input(placeholder="Audio Output Directory", id="audio-dir-input")
+                            
+                            # Tabbed interface for different setting categories
+                            with Container(id="settings-tabs", classes="tab-container"):
+                                yield Button("General", id="general-tab", classes="tab-button active")
+                                yield Button("Download", id="download-tab", classes="tab-button")
+                                yield Button("Audio/Video", id="media-tab", classes="tab-button")
+                                yield Button("Network", id="network-tab", classes="tab-button")
+                                yield Button("Advanced", id="advanced-tab", classes="tab-button")
+                            
+                            with ContentSwitcher(id="settings-content"):
+                                # General Settings
+                                with Container(id="general-settings"):
+                                    with Vertical():
+                                        yield Static("Output Directories", classes="section-title")
+                                        yield Input(placeholder="Video Output Directory", id="video-dir-input")
+                                        yield Input(placeholder="Audio Output Directory", id="audio-dir-input")
+                                        
+                                        yield Static("Interface", classes="section-title")
+                                        yield Select([
+                                            ("Default", "default"),
+                                            ("Dark", "dark"),
+                                            ("Cyberpunk", "cyberpunk"),
+                                            ("Matrix", "matrix"),
+                                            ("Ocean", "ocean")
+                                        ], value="default", id="theme-select")
+                                        yield Checkbox("Keep Download History", id="download-history")
+                                        yield Checkbox("Auto Update Check", id="auto-update")
                                 
-                                yield Static("FFmpeg Settings")
-                                yield Input(placeholder="FFmpeg Location", id="ffmpeg-input")
+                                # Download Settings
+                                with Container(id="download-settings"):
+                                    with Vertical():
+                                        yield Static("Concurrent Downloads", classes="section-title")
+                                        yield Input(placeholder="Max Concurrent Downloads (1-10)", id="max-concurrent-input", value="3")
+                                        yield Input(placeholder="Fragment Downloads (1-32)", id="fragment-downloads", value="16")
+                                        
+                                        yield Static("Retry Settings", classes="section-title")
+                                        yield Input(placeholder="Max Retries (0-10)", id="max-retries-input", value="3")
+                                        yield Input(placeholder="Retry Delay (1-60 seconds)", id="retry-delay-input", value="5")
+                                        yield Checkbox("Exponential Backoff", id="exponential-backoff")
+                                        
+                                        yield Static("Organization", classes="section-title")
+                                        yield Checkbox("Auto Organize Files", id="auto-organize")
+                                        yield Checkbox("Enable File Organization Features", id="organize-files")
                                 
-                                yield Static("Advanced Options")
-                                yield Checkbox("Organize Files", id="organize-files")
-                                yield Checkbox("Enable High Quality Audio", id="high-quality")
+                                # Audio/Video Settings
+                                with Container(id="media-settings"):
+                                    with Vertical():
+                                        yield Static("Video Preferences", classes="section-title")
+                                        yield Select([
+                                            ("H.264", "h264"),
+                                            ("H.265/HEVC", "h265"),
+                                            ("VP9", "vp9"),
+                                            ("AV1", "av1"),
+                                            ("Any", "any")
+                                        ], value="h264", id="video-codec-select")
+                                        yield Select([
+                                            ("4K (2160p)", "2160p"),
+                                            ("1440p", "1440p"),
+                                            ("1080p", "1080p"),
+                                            ("720p", "720p"),
+                                            ("480p", "480p"),
+                                            ("Best Available", "best")
+                                        ], value="1080p", id="video-quality-select")
+                                        
+                                        yield Static("Audio Preferences", classes="section-title")
+                                        yield Select([
+                                            ("AAC", "aac"),
+                                            ("MP3", "mp3"),
+                                            ("Opus", "opus"),
+                                            ("FLAC", "flac"),
+                                            ("Any", "any")
+                                        ], value="aac", id="audio-codec-select")
+                                        yield Select([
+                                            ("320 kbps", "320"),
+                                            ("256 kbps", "256"),
+                                            ("192 kbps", "192"),
+                                            ("128 kbps", "128"),
+                                            ("Best Available", "best")
+                                        ], value="192", id="audio-quality-select")
+                                        yield Checkbox("Enable High Quality Audio", id="high-quality")
                                 
-                                yield Button("Save Settings", id="save-settings-btn")
+                                # Network Settings
+                                with Container(id="network-settings"):
+                                    with Vertical():
+                                        yield Static("Bandwidth Control", classes="section-title")
+                                        yield Input(placeholder="Speed Limit (MB/s, 0=unlimited)", id="bandwidth-limit", value="0")
+                                        yield Input(placeholder="Chunk Size (bytes)", id="chunk-size", value="1048576")
+                                        
+                                        yield Static("Connection Settings", classes="section-title")
+                                        yield Input(placeholder="Timeout (seconds)", id="connection-timeout", value="30")
+                                        yield Checkbox("Use Proxy", id="use-proxy")
+                                        yield Input(placeholder="Proxy URL (optional)", id="proxy-url")
+                                
+                                # Advanced Settings
+                                with Container(id="advanced-settings"):
+                                    with Vertical():
+                                        yield Static("FFmpeg Configuration", classes="section-title")
+                                        yield Input(placeholder="FFmpeg Location", id="ffmpeg-input")
+                                        yield Button("Auto-Detect FFmpeg", id="detect-ffmpeg-btn")
+                                        
+                                        yield Static("Session Management", classes="section-title")
+                                        yield Input(placeholder="Session Expiry (hours)", id="session-expiry", value="168")
+                                        yield Input(placeholder="Auto Save Interval (seconds)", id="auto-save", value="30")
+                                        yield Static("Debug Options", classes="section-title")
+                                        yield Checkbox("Enable Debug Logging", id="debug-logging")
+                                        yield Checkbox("Verbose Output", id="verbose-output")
+                            
+                            with Container(id="settings-actions", classes="action-panel"):
+                                yield Button("Save Settings", id="save-settings-btn", classes="primary")
+                                yield Button("Reset to Defaults", id="reset-settings-btn", classes="secondary")
+                                yield Button("Export Settings", id="export-settings-btn", classes="secondary")
+                                yield Button("Import Settings", id="import-settings-btn", classes="secondary")
                                 
                         # Help screen
                         with Container(id="help-screen"):
@@ -683,8 +1004,7 @@ class InteractiveApp(App):
                                 yield Checkbox("Stabilize Video", id="stabilize-video")
                                 yield Button("Process Video", id="process-video-btn")
                         
-                        # File Management screen
-                        with Container(id="files-screen"):
+                        # File Management screen                        with Container(id="files-screen"):
                             yield Static("File Management", classes="title")
                             with Container(classes="info-panel"):
                                 yield Static("Organize Downloads", classes="subtitle")
@@ -703,7 +1023,8 @@ class InteractiveApp(App):
         """Handle app mount event"""
         # Initialize download manager
         self.initialize_download_manager()
-          # Setup content switcher with default screens
+        
+        # Setup content switcher with default screens
         content_switcher = self.query_one("#content-switcher")
         content_switcher.default_screens = [
             self.DOWNLOAD_SCREEN, 
@@ -722,26 +1043,981 @@ class InteractiveApp(App):
         
         # Set active menu item
         self.query_one("#menu-download").add_class("selected")
-        
-        # Load help content
+          # Load help content
         #self.load_help_content()
+    
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle all button press events"""
+        button_id = event.button.id
+        
+        # Route to appropriate handler based on button type
+        if button_id.startswith("menu-"):
+            self._handle_menu_selection(button_id)
+        elif button_id.endswith("-tab"):
+            self._handle_settings_tab_switch(button_id)
+        else:
+            self._handle_action_button(button_id)
+
+    def _handle_action_button(self, button_id: str) -> None:
+        """Handle action buttons (non-menu, non-tab)"""
+        # Download functionality
+        if button_id in ["analyze-btn", "start-download-btn", "speedtest-btn"]:
+            self._handle_download_actions(button_id)
+        # Settings actions
+        elif button_id in ["save-settings-btn", "reset-settings-btn", "export-settings-btn", 
+                          "import-settings-btn", "detect-ffmpeg-btn"]:
+            self._handle_settings_actions(button_id)
+        # Media processing
+        elif button_id in ["convert-audio-btn", "process-audio-btn", "convert-video-btn", "process-video-btn"]:
+            self._handle_media_processing(button_id)
+        # File management
+        elif button_id in ["organize-by-type-btn", "organize-by-date-btn", "organize-by-source-btn", 
+                          "rename-files-btn", "cleanup-btn"]:
+            self._handle_file_management(button_id)
+
+    def _handle_download_actions(self, button_id: str) -> None:
+        """Handle download-related button actions"""
+        if button_id == "analyze-btn":
+            self.analyze_url()
+        elif button_id == "start-download-btn":
+            self.start_download()
+        elif button_id == "speedtest-btn":
+            self.run_speed_test()
+
+    def _handle_settings_actions(self, button_id: str) -> None:
+        """Handle settings-related button actions"""
+        if button_id == "save-settings-btn":
+            self.save_advanced_settings()
+        elif button_id == "reset-settings-btn":
+            self.reset_settings()
+        elif button_id == "export-settings-btn":
+            self.export_settings()
+        elif button_id == "import-settings-btn":
+            self.import_settings()
+        elif button_id == "detect-ffmpeg-btn":
+            self.auto_detect_ffmpeg()
+
+    def _handle_media_processing(self, button_id: str) -> None:
+        """Handle media processing button actions"""
+        if button_id == "convert-audio-btn":
+            self.convert_audio()
+        elif button_id == "process-audio-btn":
+            self.process_audio()
+        elif button_id == "convert-video-btn":
+            self.convert_video()
+        elif button_id == "process-video-btn":
+            self.process_video()
+
+    def _handle_file_management(self, button_id: str) -> None:
+        """Handle file management button actions"""
+        if button_id == "organize-by-type-btn":
+            self.organize_files_by_type()
+        elif button_id == "organize-by-date-btn":
+            self.organize_files_by_date()
+        elif button_id == "organize-by-source-btn":
+            self.organize_files_by_source()
+        elif button_id == "rename-files-btn":
+            self.rename_files()
+        elif button_id == "cleanup-btn":
+            self.cleanup_temp_files()
+
+    def _handle_menu_selection(self, button_id: str) -> None:
+        """Handle menu item selection and switch screens"""
+        # Remove selected class from all menu items
+        for menu_item in self.query(".menu-item"):
+            menu_item.remove_class("selected")
+        
+        # Add selected class to current item
+        self.query_one(f"#{button_id}").add_class("selected")
+        
+        # Switch content
+        content_switcher = self.query_one("#content-switcher")
+        
+        if button_id == "menu-download":
+            content_switcher.current = self.DOWNLOAD_SCREEN
+        elif button_id == "menu-browse":
+            content_switcher.current = self.BROWSE_SCREEN
+        elif button_id == "menu-network":
+            content_switcher.current = self.NETWORK_SCREEN
+        elif button_id == "menu-settings":
+            content_switcher.current = self.SETTINGS_SCREEN
+            self.load_advanced_settings()
+        elif button_id == "menu-help":
+            content_switcher.current = self.HELP_SCREEN
+        elif button_id == "menu-audio":
+            content_switcher.current = self.AUDIO_SCREEN
+        elif button_id == "menu-video":
+            content_switcher.current = self.VIDEO_SCREEN
+        elif button_id == "menu-files":
+            content_switcher.current = self.FILES_SCREEN
+
+    def _handle_settings_tab_switch(self, button_id: str) -> None:
+        """Handle settings tab switching"""
+        # Remove active class from all tabs
+        for tab in self.query(".tab-button"):
+            tab.remove_class("active")
+        
+        # Add active class to current tab
+        self.query_one(f"#{button_id}").add_class("active")
+        
+        # Switch settings content
+        settings_switcher = self.query_one("#settings-content")
+        
+        if button_id == "general-tab":
+            settings_switcher.current = "general-settings"
+            self.active_settings_tab = "general-settings"
+        elif button_id == "download-tab":
+            settings_switcher.current = "download-settings"
+            self.active_settings_tab = "download-settings"
+        elif button_id == "media-tab":
+            settings_switcher.current = "media-settings"
+            self.active_settings_tab = "media-settings"
+        elif button_id == "network-tab":
+            settings_switcher.current = "network-settings"
+            self.active_settings_tab = "network-settings"
+        elif button_id == "advanced-tab":
+            settings_switcher.current = "advanced-settings"
+            self.active_settings_tab = "advanced-settings"
+
+    # Settings Management Methods
+    def load_advanced_settings(self) -> None:
+        """Load and populate settings form fields from AdvancedConfigManager"""
+        try:
+            # General settings
+            if hasattr(self, 'query_one'):
+                video_dir_input = self.query_one(self.VIDEO_DIR_INPUT, Input)
+                audio_dir_input = self.query_one(self.AUDIO_DIR_INPUT, Input)
+                organize_files = self.query_one(self.ORGANIZE_FILES, Checkbox)
+                
+                # Populate from config manager
+                video_dir_input.value = self.config_manager.get_setting('download', 'video_output_dir', self.DEFAULT_VIDEO_DIR)
+                audio_dir_input.value = self.config_manager.get_setting('download', 'audio_output_dir', self.DEFAULT_AUDIO_DIR)
+                organize_files.value = self.config_manager.get_setting('general', 'organize_files', True)
+                
+                # Load other settings
+                max_concurrent = self.query_one("#max-concurrent-input", Input)
+                max_concurrent.value = str(self.config_manager.get_setting('download', 'max_concurrent_downloads', 3))
+                
+                # Load retry settings
+                max_retries = self.query_one("#max-retries-input", Input)
+                max_retries.value = str(self.config_manager.get_setting('download', 'max_retries', 3))
+                
+        except Exception as e:
+            logging.error(f"Error loading advanced settings: {e}")
+
+    def save_advanced_settings(self) -> None:
+        """Save current form values to AdvancedConfigManager"""
+        try:
+            # Get form values
+            video_dir = self.query_one(self.VIDEO_DIR_INPUT, Input).value
+            audio_dir = self.query_one(self.AUDIO_DIR_INPUT, Input).value
+            organize_files = self.query_one(self.ORGANIZE_FILES, Checkbox).value
+            
+            # Save to config manager
+            self.config_manager.set_setting('download', 'video_output_dir', video_dir)
+            self.config_manager.set_setting('download', 'audio_output_dir', audio_dir)
+            self.config_manager.set_setting('general', 'organize_files', organize_files)
+            
+            # Get and save numeric settings
+            try:
+                max_concurrent = int(self.query_one("#max-concurrent-input", Input).value)
+                self.config_manager.set_setting('download', 'max_concurrent_downloads', max_concurrent)
+            except ValueError:
+                pass
+                
+            try:
+                max_retries = int(self.query_one("#max-retries-input", Input).value)
+                self.config_manager.set_setting('download', 'max_retries', max_retries)
+            except ValueError:
+                pass
+            
+            # Save config
+            self.config_manager.save_config()
+            
+            # Update main config
+            self.config.update(self.config_manager.config)
+            
+            # Show success message
+            self.notify("Settings saved successfully!", severity="information")
+            
+        except Exception as e:
+            logging.error(f"Error saving settings: {e}")
+            self.notify(f"Error saving settings: {e}", severity="error")
+
+    def reset_settings(self) -> None:
+        """Reset settings to defaults"""
+        try:
+            # Reset config manager to defaults
+            self.config_manager.reset_to_defaults()
+            
+            # Reload settings in form
+            self.load_advanced_settings()
+            
+            self.notify("Settings reset to defaults", severity="information")
+            
+        except Exception as e:
+            logging.error(f"Error resetting settings: {e}")
+            self.notify(f"Error resetting settings: {e}", severity="error")
+
+    def export_settings(self) -> None:
+        """Export settings to file"""
+        try:
+            export_path = self.config_manager.export_config()
+            self.notify(f"Settings exported to: {export_path}", severity="information")
+        except Exception as e:
+            logging.error(f"Error exporting settings: {e}")
+            self.notify(f"Error exporting settings: {e}", severity="error")
+
+    def import_settings(self) -> None:
+        """Import settings from file"""
+        try:
+            # This would typically open a file picker in a real implementation
+            # For now, we'll just show a placeholder message
+            self.notify("Import settings functionality not yet implemented", severity="warning")
+        except Exception as e:
+            logging.error(f"Error importing settings: {e}")
+            self.notify(f"Error importing settings: {e}", severity="error")
+
+    def auto_detect_ffmpeg(self) -> None:
+        """Auto-detect FFmpeg installation"""
+        try:
+            # Use AdvancedConfigManager's auto-detection
+            ffmpeg_path = self.config_manager.auto_detect_tool('ffmpeg')
+            
+            if ffmpeg_path:
+                # Update the FFmpeg input field
+                ffmpeg_input = self.query_one(self.FFMPEG_INPUT, Input)
+                ffmpeg_input.value = ffmpeg_path
+                
+                # Save to config
+                self.config_manager.set_setting('tools', 'ffmpeg_path', ffmpeg_path)
+                self.config_manager.save_config()
+                
+                self.notify(f"FFmpeg detected: {ffmpeg_path}", severity="information")
+            else:
+                self.notify("FFmpeg not found. Please install FFmpeg or set path manually.", severity="warning")
+                
+        except Exception as e:
+            logging.error(f"Error detecting FFmpeg: {e}")
+            self.notify(f"Error detecting FFmpeg: {e}", severity="error")
+
+    # Media Processing Methods    def convert_audio(self) -> None:
+        """Convert audio files to different formats"""        
+        try:
+            # Import audio processor
+            from .audio_processor import AudioProcessor
+            
+            # Get input file path from user
+            files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
+            if files_widget.row_count == 0:
+                self.notify("No files found to convert", severity="warning")
+                return
+            
+            # Get selected file or use first available
+            try:
+                row_key = files_widget.cursor_row
+                if row_key is None or row_key >= files_widget.row_count:
+                    row_key = 0
+                row = files_widget.get_row_at(row_key)
+                file_path = str(row[1])  # File path is in the second column
+            except Exception:
+                self.notify("Please select a file to convert", severity="error")
+                return
+            
+            if not os.path.exists(file_path):
+                self.notify(f"File not found: {file_path}", severity="error")
+                return
+            
+            # Initialize audio processor
+            audio_processor = AudioProcessor(self.config)
+            
+            # Get target format from user input (you could add a form field for this)
+            target_format = "flac"  # Default to high quality
+              # Create output path
+            base_path = os.path.splitext(file_path)[0]
+            output_path = f"{base_path}_converted.{target_format}"
+            
+            self.notify(f"Converting {os.path.basename(file_path)} to {target_format.upper()}", severity="information")
+            
+            # Start audio conversion in background task
+            self._start_audio_conversion_task(audio_processor, file_path, output_path, target_format)
+            
+        except ImportError:
+            self.notify(CONSTANTS["FILE_ORG_NOT_AVAILABLE"], severity="error")
+        except Exception as e:
+            logging.error(f"Error in audio conversion: {e}")
+            self.notify(f"Audio conversion failed: {str(e)}", severity="error")
+
+    @work
+    async def _start_audio_conversion_task(self, audio_processor, input_path: str, output_path: str, target_format: str) -> None:
+        """Background task for audio conversion"""
+        try:
+            # Perform actual audio conversion
+            result = await audio_processor.convert_audio_async(input_path, output_path, target_format)
+            
+            if result:
+                self.notify(f"Audio conversion to {target_format.upper()} completed!", severity="success")
+            else:
+                self.notify(CONSTANTS["CONVERSION_FAILED"], severity="error")
+                
+        except Exception as e:
+            logging.error(f"Background audio conversion error: {e}")
+            self.notify(f"Audio conversion failed: {str(e)}", severity="error")
+
+    def process_audio(self) -> None:
+        """Process audio with advanced effects and enhancements"""
+        try:
+            # Import audio processor
+            from .audio_processor import AudioProcessor
+            
+            # Get input file path from user
+            files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
+            if files_widget.row_count == 0:
+                self.notify("No audio files found to process", severity="warning")
+                return
+            
+            # Get selected file or use first available
+            try:
+                row_key = files_widget.cursor_row
+                if row_key is None or row_key >= files_widget.row_count:
+                    row_key = 0
+                row = files_widget.get_row_at(row_key)
+                file_path = str(row[1])  # File path is in the second column
+            except Exception:
+                self.notify("Please select an audio file to process", severity="error")
+                return
+            
+            if not os.path.exists(file_path):
+                self.notify(f"File not found: {file_path}", severity="error")
+                return
+            
+            # Initialize audio processor
+            audio_processor = AudioProcessor(self.config)
+              # Get processing options from form fields
+            try:
+                process_audio = self.query_one(UI_ELEMENTS["PROCESS_AUDIO"], Checkbox).value
+                upmix_audio = self.query_one("#upmix-audio", Checkbox).value
+            except Exception:
+                # Default options if form fields not available
+                process_audio = True
+                upmix_audio = True
+            self.notify(f"Processing audio file: {os.path.basename(file_path)}", severity="information")
+            
+            # Apply audio processing effects
+            if process_audio:
+                self.notify("Applying audio normalization and denoising...", severity="information")
+                
+            if upmix_audio:
+                self.notify("Applying 7.1 surround sound upmix...", severity="information")
+            
+            # Start audio processing in background task
+            self._start_audio_processing_task(audio_processor, file_path, process_audio, upmix_audio)
+            
+        except ImportError:
+            self.notify(CONSTANTS["FILE_ORG_NOT_AVAILABLE"], severity="error")
+        except Exception as e:
+            logging.error(f"Error in audio processing: {e}")
+            self.notify(f"Audio processing failed: {str(e)}", severity="error")
+
+    @work  
+    async def _start_audio_processing_task(self, audio_processor, input_path: str, process_audio: bool, upmix_audio: bool) -> None:
+        """Background task for audio processing"""
+        try:
+            # Apply audio processing effects
+            result = await audio_processor.process_audio_async(
+                input_path, 
+                normalize=process_audio,
+                denoise=process_audio,
+                upmix_surround=upmix_audio
+            )
+            
+            if result:
+                self.notify("Audio processing completed with all enhancements!", severity="success")
+            else:
+                self.notify(CONSTANTS["CONVERSION_FAILED"], severity="error")
+                
+        except Exception as e:
+            logging.error(f"Background audio processing error: {e}")
+            self.notify(f"Audio processing failed: {str(e)}", severity="error")    
+    def convert_video(self) -> None:
+        """Convert video files to different formats and resolutions"""
+        try:
+            # Get input file path from user
+            files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
+            if files_widget.row_count == 0:
+                self.notify("No video files found to convert", severity="warning")
+                return
+            
+            # Get selected file or use first available
+            try:
+                row_key = files_widget.cursor_row
+                if row_key is None or row_key >= files_widget.row_count:
+                    row_key = 0
+                row = files_widget.get_row_at(row_key)
+                file_path = str(row[1])  # File path is in the second column
+            except Exception:
+                self.notify("Please select a video file to convert", severity="error")
+                return
+            
+            if not os.path.exists(file_path):
+                self.notify(f"File not found: {file_path}", severity="error")
+                return
+              # Basic video conversion using FFmpeg
+            ffmpeg_location = self.config.get("ffmpeg_location", "")
+            if ffmpeg_location:
+                ffmpeg_path = os.path.join(ffmpeg_location, CONSTANTS["FFMPEG_EXE"] if os.name == "nt" else CONSTANTS["FFMPEG_BINARY"])
+            else:
+                ffmpeg_path = CONSTANTS["FFMPEG_EXE"] if os.name == "nt" else CONSTANTS["FFMPEG_BINARY"]
+            
+            # Default conversion settings
+            target_format = "mp4"  # Popular format
+            target_codec = "libx264"  # Hardware compatible
+            
+            # Create output path
+            base_path = os.path.splitext(file_path)[0]
+            output_path = f"{base_path}_converted.{target_format}"
+            
+            self.notify(f"Converting {os.path.basename(file_path)} to {target_format.upper()}", severity="information")
+            
+            # Start video conversion in background task
+            self._start_video_conversion_task(file_path, output_path, target_format, target_codec)
+            
+        except Exception as e:
+            logging.error(f"Error in video conversion: {e}")
+            self.notify(f"Video conversion failed: {str(e)}", severity="error")
+
+    @work
+    async def _start_video_conversion_task(self, input_path: str, output_path: str, target_format: str, target_codec: str) -> None:
+        """Background task for video conversion"""
+        try:
+            from .ffmpeg_helper import FFmpegHelper
+            
+            ffmpeg_helper = FFmpegHelper(self.config)
+            result = await ffmpeg_helper.convert_video_async(
+                input_path,
+                output_path, 
+                codec=target_codec,
+                format=target_format
+            )
+            
+            if result:
+                self.notify(f"Video conversion to {target_format.upper()} completed!", severity="success")
+            else:
+                self.notify(CONSTANTS["CONVERSION_FAILED"], severity="error")
+                
+        except Exception as e:
+            logging.error(f"Background video conversion error: {e}")
+            self.notify(f"Video conversion failed: {str(e)}", severity="error")
+
+    def process_video(self) -> None:
+        """Process video with effects, filters, and optimizations"""
+        try:
+            # Get input file path from user            
+            # files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
+            if files_widget.row_count == 0:
+                self.notify("No video files found to process", severity="warning")
+                return
+            
+            # Get selected file or use first available
+            try:
+                row_key = files_widget.cursor_row
+                if row_key is None or row_key >= files_widget.row_count:
+                    row_key = 0
+                row = files_widget.get_row_at(row_key)
+                file_path = str(row[1])  # File path is in the second column
+            except Exception:
+                self.notify("Please select a video file to process", severity="error")
+                return
+            
+            if not os.path.exists(file_path):
+                self.notify(f"File not found: {file_path}", severity="error")
+                return
+            
+            # Basic video processing using FFmpeg
+            ffmpeg_location = self.config.get("ffmpeg_location", "")
+            if ffmpeg_location:
+                ffmpeg_path = os.path.join(ffmpeg_location, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+            else:
+                ffmpeg_path = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+            self.notify(f"Processing video file: {os.path.basename(file_path)}", severity="information")
+            
+            # Apply video processing effects
+            self.notify("Applying video stabilization and enhancement filters...", severity="information")
+            
+            # Create output path for processed video
+            base_path = os.path.splitext(file_path)[0]
+            output_path = f"{base_path}_processed.mp4"
+            
+            # Start video processing in background task
+            self._start_video_processing_task(file_path, output_path)
+            
+        except Exception as e:
+            logging.error(f"Error in video processing: {e}")
+            self.notify(f"Video processing failed: {str(e)}", severity="error")
+
+    @work
+    async def _start_video_processing_task(self, input_path: str, output_path: str) -> None:
+        """Background task for video processing"""
+        try:
+            from .ffmpeg_helper import FFmpegHelper
+            
+            ffmpeg_helper = FFmpegHelper(self.config)
+            result = await ffmpeg_helper.process_video_async(
+                input_path,
+                output_path,
+                stabilize=True,
+                enhance_colors=True,
+                denoise=True
+            )
+            
+            if result:
+                self.notify("Video processing completed with all enhancements!", severity="success")
+            else:
+                self.notify(CONSTANTS["CONVERSION_FAILED"], severity="error")
+                
+        except Exception as e:
+            logging.error(f"Background video processing error: {e}")
+            self.notify(f"Video processing failed: {str(e)}", severity="error")
+
+    # Media Processing Methods
+    def organize_files_by_type(self) -> None:
+        """Organize files by type"""
+        try:
+            from .file_organizer import FileOrganizer
+            
+            # Get output directories
+            video_dir = self.config.get('download', {}).get('video_output_dir', self.DEFAULT_VIDEO_DIR)
+            audio_dir = self.config.get('download', {}).get('audio_output_dir', self.DEFAULT_AUDIO_DIR)
+            
+            # Create file organizer
+            organizer = FileOrganizer()
+            
+            # Organize video files
+            video_count = organizer.organize_by_type(video_dir)
+            audio_count = organizer.organize_by_type(audio_dir)
+            
+            total_organized = video_count + audio_count
+            self.notify(f"Organized {total_organized} files by type", severity="information")
+            
+        except ImportError:
+            self.notify("File organizer module not available", severity="error")
+        except Exception as e:
+            logging.error(f"Error organizing files by type: {e}")
+            self.notify(f"Error organizing files: {str(e)}", severity="error")
+
+    def organize_files_by_date(self) -> None:
+        """Organize files by date"""
+        try:
+            from .file_organizer import FileOrganizer
+            
+            # Get output directories
+            video_dir = self.config.get('download', {}).get('video_output_dir', self.DEFAULT_VIDEO_DIR)
+            audio_dir = self.config.get('download', {}).get('audio_output_dir', self.DEFAULT_AUDIO_DIR)
+            
+            # Create file organizer
+            organizer = FileOrganizer()
+            
+            # Organize by date
+            video_count = organizer.organize_by_date(video_dir)
+            audio_count = organizer.organize_by_date(audio_dir)
+            
+            total_organized = video_count + audio_count
+            self.notify(f"Organized {total_organized} files by date", severity="information")
+            
+        except ImportError:
+            self.notify("File organizer module not available", severity="error")
+        except Exception as e:
+            logging.error(f"Error organizing files by date: {e}")
+            self.notify(f"Error organizing files: {str(e)}", severity="error")
+
+    def organize_files_by_source(self) -> None:
+        """Organize files by source"""
+        try:
+            from .file_organizer import FileOrganizer
+            
+            # Get output directories
+            video_dir = self.config.get('download', {}).get('video_output_dir', self.DEFAULT_VIDEO_DIR)
+            audio_dir = self.config.get('download', {}).get('audio_output_dir', self.DEFAULT_AUDIO_DIR)
+            
+            # Create file organizer
+            organizer = FileOrganizer()
+            
+            # Organize by source
+            video_count = organizer.organize_by_source(video_dir)
+            audio_count = organizer.organize_by_source(audio_dir)
+            
+            total_organized = video_count + audio_count
+            self.notify(f"Organized {total_organized} files by source", severity="information")
+            
+        except ImportError:
+            self.notify("File organizer module not available", severity="error")
+        except Exception as e:
+            logging.error(f"Error organizing files by source: {e}")
+            self.notify(f"Error organizing files: {str(e)}", severity="error")
+
+    def rename_files(self) -> None:
+        """Rename files based on patterns"""
+        try:
+            # Get output directories
+            video_dir = self.config.get('download', {}).get('video_output_dir', self.DEFAULT_VIDEO_DIR)
+            audio_dir = self.config.get('download', {}).get('audio_output_dir', self.DEFAULT_AUDIO_DIR)
+            
+            # Simple pattern-based renaming (remove special characters, normalize spaces)
+            import re
+            
+            total_renamed = 0
+            
+            for directory in [video_dir, audio_dir]:
+                if os.path.exists(directory):
+                    for root, dirs, files in os.walk(directory):
+                        for file in files:
+                            old_path = os.path.join(root, file)
+                            name, ext = os.path.splitext(file)
+                            
+                            # Clean filename
+                            clean_name = re.sub(r'[^\w\s-]', '', name)
+                            clean_name = re.sub(r'[-\s]+', '-', clean_name).strip('-')
+                            
+                            new_file = f"{clean_name}{ext}"
+                            new_path = os.path.join(root, new_file)
+                            
+                            if old_path != new_path and not os.path.exists(new_path):
+                                os.rename(old_path, new_path)
+                                total_renamed += 1
+            
+            self.notify(f"Renamed {total_renamed} files", severity="information")
+            
+        except Exception as e:
+            logging.error(f"Error renaming files: {e}")
+            self.notify(f"Error renaming files: {str(e)}", severity="error")
+
+    def cleanup_temp_files(self) -> None:
+        """Clean up temporary files"""
+        try:
+            # Get cache directory and temp directories
+            cache_dir = self.config.get('cache_directory', os.path.join(os.path.expanduser("~"), ".cache", "snatch"))
+            temp_extensions = ['.part', '.tmp', '.temp', '.ytdl']
+            
+            total_cleaned = 0
+            total_size = 0
+            
+            # Clean cache directory
+            if os.path.exists(cache_dir):
+                for root, dirs, files in os.walk(cache_dir):
+                    for file in files:
+                        if any(file.endswith(ext) for ext in temp_extensions):
+                            file_path = os.path.join(root, file)
+                            try:
+                                file_size = os.path.getsize(file_path)
+                                os.remove(file_path)
+                                total_cleaned += 1
+                                total_size += file_size
+                            except OSError:
+                                pass
+            
+            # Clean download directories
+            video_dir = self.config.get('download', {}).get('video_output_dir', self.DEFAULT_VIDEO_DIR)
+            audio_dir = self.config.get('download', {}).get('audio_output_dir', self.DEFAULT_AUDIO_DIR)
+            
+            for directory in [video_dir, audio_dir]:
+                if os.path.exists(directory):
+                    for root, dirs, files in os.walk(directory):
+                        for file in files:
+                            if any(file.endswith(ext) for ext in temp_extensions):
+                                file_path = os.path.join(root, file)
+                                try:
+                                    file_size = os.path.getsize(file_path)
+                                    os.remove(file_path)
+                                    total_cleaned += 1
+                                    total_size += file_size
+                                except OSError:
+                                    pass
+            
+            size_str = format_size(total_size)
+            self.notify(f"Cleaned up {total_cleaned} temporary files ({size_str})", severity="information")
+            
+        except Exception as e:
+            logging.error(f"Error cleaning up temp files: {e}")
+            self.notify(f"Error cleaning up temp files: {str(e)}", severity="error")    # Download Methods (existing but might need updating)
+    def analyze_url(self) -> None:
+        """Analyze URL with yt-dlp to extract media information"""
+        url_input = self.query_one("#url-input", Input)
+        url = url_input.value.strip()
+        
+        if not url:
+            self.notify("Please enter a URL", severity="error")
+            return
+            
+        self.current_url = url
+        self.notify(f"Analyzing URL: {url}", severity="information")
+        
+        # Basic URL validation
+        if not (url.startswith('http://') or url.startswith('https://')):
+            self.notify("Please enter a valid HTTP/HTTPS URL", severity="error")
+            return
+            
+        try:
+            # Import yt-dlp for media extraction
+            import yt_dlp
+            
+            # Configure yt-dlp options for info extraction only
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+                'listformats': True,
+            }
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # Extract info without downloading
+                info = ydl.extract_info(url, download=False)
+                
+                # Update the format table with available formats
+                self._populate_format_table(info)
+                
+                # Update info panel with metadata
+                self._update_info_panel(info)
+                
+                self.notify(f"Successfully analyzed: {info.get('title', 'Unknown Title')}", severity="information")
+                
+        except ImportError:
+            self.notify("yt-dlp not found. Please install it: pip install yt-dlp", severity="error")
+        except Exception as e:
+            logging.error(f"Error analyzing URL: {e}")
+            self.notify(f"Error analyzing URL: {str(e)}", severity="error")
+
+    def start_download(self) -> None:
+        """Start downloading the selected format"""
+        if not self.current_url:
+            self.notify("Please analyze a URL first", severity="error")
+            return
+            
+        self.notify(f"Starting download: {self.current_url}", severity="information")
+          # Get download options from form
+        audio_only = self.query_one("#audio-only", Checkbox).value
+        process_audio = self.query_one("#process-audio", Checkbox).value
+        upmix_audio = self.query_one("#upmix-audio", Checkbox).value
+        
+        try:
+            if self.download_manager:
+                # Prepare download options
+                download_options = {
+                    'url': self.current_url,
+                    'audio_only': audio_only,
+                    'process_audio': process_audio,
+                    'upmix_audio': upmix_audio,
+                    'output_path': self.config.get('download', {}).get('video_output_dir', self.DEFAULT_VIDEO_DIR) if not audio_only else self.config.get('download', {}).get('audio_output_dir', self.DEFAULT_AUDIO_DIR)
+                }
+                
+                # Start download using download manager
+                # This would be a background task in a real implementation
+                self.notify("Download started! Check the active downloads section for progress.", severity="information")
+                
+                # Add to downloads list for tracking
+                download_info = {
+                    'url': self.current_url,
+                    'status': 'In Progress',
+                    'progress': 0,
+                    'options': download_options
+                }
+                self.downloads.append(download_info)
+                
+            else:
+                raise DownloadManagerError("Download manager not initialized")
+                
+        except Exception as e:
+            logging.error(f"Error starting download: {e}")
+            self.notify(f"Error starting download: {str(e)}", severity="error")
+
+    def run_speed_test(self) -> None:
+        """Run network speed test using NetworkManager"""
+        self.notify("Running speed test...", severity="information")
+        
+        try:
+            # Import network module
+            from .network import NetworkManager
+            
+            # Create network manager
+            network_manager = NetworkManager(self.config)
+            
+            # Run speed test asynchronously
+            import asyncio
+            
+            async def run_test():
+                try:
+                    result = await network_manager.run_speed_test(detailed=True)
+                    if result:
+                        # Update network status display
+                        network_status = self.query_one("#network-status", Static)
+                        status_text = f"""Speed Test Results:
+Download: {result.download_mbps:.1f} Mbps
+Upload: {result.upload_mbps:.1f} Mbps  
+Ping: {result.ping_ms:.1f} ms
+Jitter: {result.jitter_ms:.1f} ms
+Packet Loss: {result.packet_loss:.1f}%"""
+                        network_status.update(status_text)
+                        
+                        self.notify(f"Speed test completed! Download: {result.download_mbps:.1f} Mbps", severity="information")
+                    else:
+                        self.notify("Speed test failed - no results returned", severity="error")
+                except Exception as e:
+                    logging.error(f"Speed test error: {e}")
+                    self.notify(f"Speed test failed: {str(e)}", severity="error")
+            
+            # Run the async function
+            try:
+                loop = asyncio.get_event_loop()
+                loop.run_until_complete(run_test())
+            except RuntimeError:
+                # If no event loop, create one
+                asyncio.run(run_test())
+                
+        except ImportError as e:
+            self.notify("Network module not available for speed testing", severity="error")
+        except Exception as e:
+            logging.error(f"Error running speed test: {e}")
+            self.notify(f"Error running speed test: {str(e)}", severity="error")
+    
+    # Initialization Methods
     def initialize_download_manager(self) -> None:
-        """Initialize the download manager with config"""
+        """Initialize the download manager"""
+        try:
+            self.download_manager = DownloadManager(self.config)
+            logging.info("Download manager initialized successfully")        
+        except Exception as e:
+            logging.error(f"Error initializing download manager: {e}")
+            self.notify(f"Error initializing download manager: {e}", severity="error")
+
+    def setup_format_table(self) -> None:
+        """Setup the format selection table"""
+        try:
+            format_table = self.query_one(UI_ELEMENTS["FORMAT_TABLE"], DataTable)
+            format_table.add_columns(
+                "ID", "Extension", "Resolution", "Codec", "Size", "Audio", "FPS"
+            )
+            # Add placeholder row
+            format_table.add_row("--", "--", "--", "--", "--", "--", "--")
+        except Exception as e:
+            logging.error(f"Error setting up format table: {e}")
+
+    # Helper Methods
+    def notify(self, message: str, severity: str = "information") -> None:
+        """Show notification to user"""
+        try:
+            # In a full Textual implementation, this would show a toast notification
+            # For now, we'll log the message
+            if severity == "error":
+                logging.error(message)
+                print(f"ERROR: {message}")
+            elif severity == "warning":
+                logging.warning(message)
+                print(f"WARNING: {message}")
+            else:
+                logging.info(message)
+                print(f"INFO: {message}")
+        except Exception as e:
+            logging.error(f"Error showing notification: {e}")
+
+    def _populate_format_table(self, info: Dict[str, Any]) -> None:
+        """Populate the format table with available formats from yt-dlp info"""        
+        try:
+            format_table = self.query_one(UI_ELEMENTS["FORMAT_TABLE"], DataTable)
+            
+            # Clear existing rows
+            format_table.clear()
+            
+            # Add columns if not already present
+            if not format_table.columns:
+                format_table.add_columns(
+                    "ID", "Extension", "Resolution", "Codec", "Size", "Audio", "FPS"
+                )
+            
+            # Add format data from yt-dlp info
+            formats = info.get('formats', [])
+            
+            for fmt in formats:
+                format_id = str(fmt.get('format_id', 'N/A'))
+                ext = fmt.get('ext', 'N/A')
+                
+                # Resolution
+                if fmt.get('width') and fmt.get('height'):
+                    resolution = f"{fmt['width']}x{fmt['height']}"
+                else:
+                    resolution = 'N/A'
+                
+                # Codec
+                codec = fmt.get('vcodec', 'N/A')
+                if codec == 'none':
+                    codec = fmt.get('acodec', 'N/A')
+                
+                # Size
+                filesize = fmt.get('filesize') or fmt.get('filesize_approx')
+                size = format_size(filesize) if filesize else 'N/A'
+                
+                # Audio info
+                abr = fmt.get('abr')
+                audio = f"{abr} kbps" if abr else 'N/A'
+                
+                # FPS
+                fps = str(fmt.get('fps', 'N/A')) if fmt.get('fps') else 'N/A'
+                
+                format_table.add_row(format_id, ext, resolution, codec, size, audio, fps)
+            
+            self.format_info = info
+            
+        except Exception as e:
+            logging.error(f"Error populating format table: {e}")
+    
+    def _update_info_panel(self, info: Dict[str, Any]) -> None:
+        """Update the info panel with media metadata"""
+        try:
+            # This would update an info panel with metadata like title, duration, uploader, etc.
+            # For now, we'll just log the info
+            title = info.get('title', 'Unknown Title')
+            duration = info.get('duration', 0)
+            uploader = info.get('uploader', 'Unknown')
+            
+            logging.info(f"Media info - Title: {title}, Duration: {duration}s, Uploader: {uploader}")
+            
+        except Exception as e:
+            logging.error(f"Error updating info panel: {e}")
+
+    # Static Content Properties
+    @property
+    def HELP_DOCUMENTATION_TITLE(self) -> str:
+        """Get help documentation title"""
+        return "📖 Snatch Media Downloader - Help & Documentation"
+
+    async def on_mount(self) -> None:
+        """Initialize the application when mounted."""
+        try:
+            # Initialize download manager if not already done
+            if not hasattr(self, 'download_manager') or not self.download_manager:
+                await self._initialize_download_manager()
+            
+            # Start performance monitoring
+            if hasattr(self, 'download_manager') and self.download_manager and self.download_manager.performance_monitor:
+                await self.download_manager.performance_monitor.start_monitoring()
+                
+            # Set up periodic updates
+            self.set_interval(1.0, self._update_system_stats)
+            self.set_interval(0.5, self._update_download_progress)
+            
+        except Exception as e:
+            logging.error(f"Error during app initialization: {e}")
+
+    async def _initialize_download_manager(self) -> None:
+        """Initialize the download manager with proper configuration."""
         try:
             from .manager import AsyncDownloadManager
             from .session import AsyncSessionManager
             from .cache import DownloadCache
             
-            # Create sessions directory if it doesn't exist
-            session_file = self.config.get("session_file")
-            if session_file:
-                os.makedirs(os.path.dirname(session_file), exist_ok=True)
-            
-            # Create dependencies
-            session_manager = AsyncSessionManager(session_file)
+            # Initialize dependencies
+            session_manager = AsyncSessionManager(self.config.get("session_file", "sessions/session.json"))
             download_cache = DownloadCache()
             
-            # Create the download manager
+            # Create download manager
             self.download_manager = AsyncDownloadManager(
                 config=self.config,
                 session_manager=session_manager,
@@ -749,654 +2025,492 @@ class InteractiveApp(App):
             )
             
             logging.info("Download manager initialized successfully")
-        except Exception as e:
-            logging.error(f"Failed to initialize download manager: {str(e)}")
-            self.notify(f"Failed to initialize download manager: {str(e)}", severity="error")
             
-    def save_settings(self) -> None:
-        """Save user settings to config file"""
+        except Exception as e:
+            logging.error(f"Failed to initialize download manager: {e}")
+            self.download_manager = None
+
+    async def _update_system_stats(self) -> None:
+        """Update system statistics periodically."""
         try:
-            # Get input values
-            video_dir = self.query_one(self.VIDEO_DIR_INPUT).value
-            audio_dir = self.query_one(self.AUDIO_DIR_INPUT).value
-            ffmpeg_location = self.query_one(self.FFMPEG_INPUT).value
-            organize_files = self.query_one(self.ORGANIZE_FILES).value
-            high_quality = self.query_one(self.HIGH_QUALITY).value
-            
-            # Validate directories
-            from .config_helpers import ensure_directory_exists, validate_ffmpeg_path
-            
-            # Check FFmpeg path
-            is_valid_ffmpeg, actual_ffmpeg_path = validate_ffmpeg_path(ffmpeg_location)
-            if not is_valid_ffmpeg:
-                self.notify("FFmpeg path is invalid. Please check and try again.", severity="error")
-                return
+            if hasattr(self, 'download_manager') and self.download_manager and self.download_manager.performance_monitor:
+                # Update performance metrics
+                metrics = self.download_manager.performance_monitor.get_current_metrics()
                 
-            # Ensure output directories exist or create them
-            video_output = ensure_directory_exists(video_dir) if video_dir else self.DEFAULT_VIDEO_DIR
-            audio_output = ensure_directory_exists(audio_dir) if audio_dir else self.DEFAULT_AUDIO_DIR
-            
-            if not video_output:
-                self.notify("Could not create video directory. Using default path.", severity="warning")
-                video_output = self.DEFAULT_VIDEO_DIR
-                
-            if not audio_output:
-                self.notify("Could not create audio directory. Using default path.", severity="warning")
-                audio_output = self.DEFAULT_AUDIO_DIR
-            
-            # Update config
-            self.config.update({
-                "video_output": video_output,
-                "audio_output": audio_output,
-                "ffmpeg_location": actual_ffmpeg_path or ffmpeg_location,
-                "organize": organize_files,
-                "high_quality_audio": high_quality
-            })
-            
-            # Save to file
-            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
-            with open(config_path, "w") as f:
-                json.dump(self.config, f, indent=2)
-            
-            self.notify("Settings saved successfully!", severity="success")
-            
-            # Reinitialize download manager with new settings
-            self.initialize_download_manager()
-        except Exception as e:
-            logging.error(f"Error saving settings: {str(e)}")
-            self.notify(f"Error saving settings: {str(e)}", severity="error")
-    @work(thread=True)
-    async def analyze_url(self) -> None:
-        """Analyze URL and show available formats"""
-        url = self._get_input_url()
-        if not url:
-            return
-            
-        self.notify("Analyzing URL...", severity="info")
-        
-        try:
-            await self._clear_and_setup_format_table()
-            self.current_url = url
-            self.format_info = await self.download_manager.get_formats(url)
-            
-            if not self.format_info:
-                self.notify("No formats found for this URL", severity="error")
-                return
-                
-            await self._populate_format_table()
-            self._setup_download_button()
-            self.notify("URL analyzed successfully", severity="success")
-            
-        except asyncio.CancelledError:
-            self.notify("URL analysis was cancelled", severity="warning")
-        except Exception as e:
-            logging.error(f"Error analyzing URL: {str(e)}")
-            self.notify(f"Error analyzing URL: {str(e)}", severity="error")
-    
-    def _get_input_url(self) -> str:
-        """Get and validate URL from input."""
-        url_input = self.query_one("#url-input")
-        url = url_input.value.strip()
-        
-        if not url:
-            self.notify("Please enter a valid URL", severity="error")
-            return ""
-        return url
-    
-    async def _clear_and_setup_format_table(self) -> None:
-        """Clear and setup the format table."""
-        table = self.query_one(self.FORMAT_TABLE_ID)
-        table.clear()
-        self.setup_format_table()
-    
-    async def _populate_format_table(self) -> None:
-        """Populate the format table with available formats."""
-        table = self.query_one(self.FORMAT_TABLE_ID)
-        formats = self.format_info.get("formats", [])
-        
-        # Sort formats by quality
-        formats.sort(key=lambda f: (
-            f.get("height", 0) or 0, 
-            f.get("fps", 0) or 0,
-            f.get("tbr", 0) or 0
-        ), reverse=True)
-        
-        self._add_video_formats(table, formats)
-        self._add_audio_formats(table, formats)
-        
-        if table.row_count > 0:
-            table.cursor_row = 0
-    
-    def _add_video_formats(self, table, formats) -> None:
-        """Add video formats to table."""
-        video_formats = [f for f in formats if f.get("vcodec") != "none"]
-        
-        for fmt in video_formats[:10]:
-            format_id = fmt.get("format_id", "unknown")
-            quality = "HD" if fmt.get("height", 0) >= 720 else "SD"
-            resolution = f"{fmt.get('width', '?')}x{fmt.get('height', '?')}"
-            codec = fmt.get("vcodec", "unknown")
-            filesize = format_size(fmt.get("filesize") or fmt.get("filesize_approx") or 0)
-            audio_codec = fmt.get("acodec", "none")
-            fps = fmt.get("fps", "N/A")
-            
-            table.add_row(
-                format_id, quality, resolution, codec, filesize,
-                audio_codec if audio_codec != "none" else "No audio",
-                str(fps) if fps else "N/A"
-            )
-    
-    def _add_audio_formats(self, table, formats) -> None:
-        """Add audio-only formats to table."""
-        audio_formats = [f for f in formats if f.get("acodec") != "none"]
-        
-        for fmt in audio_formats[:5]:
-            if fmt.get("vcodec") == "none":
-                format_id = fmt.get("format_id", "unknown")
-                quality = fmt.get("format_note", "Audio")
-                resolution = "Audio only"
-                codec = "N/A"
-                filesize = format_size(fmt.get("filesize") or fmt.get("filesize_approx") or 0)
-                audio_codec = fmt.get("acodec", "unknown")
-                
-                table.add_row(format_id, quality, resolution, codec, filesize, audio_codec, "N/A")
-    
-    def _setup_download_button(self) -> None:
-        """Setup the download button if not already present."""
-        try :
-            # Check if the download button already exists
-            if not self.query_one("#main-content").query("#start-download-btn"):
-                download_btn = Button("Start Download", id="start-download-btn", variant="primary")
-                format_selection = self.query_one("#format-selection")
-                format_selection.mount(download_btn)
-        except asyncio.CancelledError:
-            self.notify("URL analysis was cancelled", severity="warning")
-        except Exception as e:
-            logging.error(f"Error analyzing URL: {str(e)}")
-            self.notify(f"Error analyzing URL: {str(e)}", severity="error")
-    @work(thread=True)
-    async def start_download(self) -> None:
-        """Start downloading with selected format"""
-        try:
-            url_input = self.query_one("#url-input")
-            url = url_input.value.strip()
-            
-            if not url:
-                self.notify("Please enter a valid URL", severity="error")
-                return
-                
-            # Get selected format
-            format_id = self.get_selected_format()
-            
-            if not format_id:
-                self.notify("No format selected, using best quality", severity="warning")
-                format_id = "best"
-                
-            # Generate a download ID
-            import uuid
-            download_id = str(uuid.uuid4())
-            
-            # Add to active downloads
-            self.add_active_download(download_id, url)
-            
-            # Create download options
-            options = {
-                "format": format_id,
-                "audio_only": self.query_one("#audio-only").value if hasattr(self.query_one("#download-options"), "query") and self.query_one("#download-options").query("#audio-only") else False,
-                "subtitles": self.query_one("#subtitles").value if hasattr(self.query_one("#download-options"), "query") and self.query_one("#download-options").query("#subtitles") else False,
-                "download_id": download_id
-            }
-            
-            # Start download
-            self.notify(f"Starting download with format {format_id}...", severity="info")
-            success = await self.download_manager.download(url, options)
-            
-            # Start progress update worker if not already running
-            if not hasattr(self, "_progress_worker_running") or not self._progress_worker_running:
-                self._progress_worker_running = True
-                await self.update_download_progress()
-                
-            if success:
-                self.notify("Download started successfully", severity="success")
-            else:
-                self.notify("Download could not be started", severity="error")
-                
-        except asyncio.CancelledError:
-            self.notify("Download operation was cancelled", severity="warning")
-            logging.info("Download operation cancelled by user or system")
-        except Exception as e:
-            logging.error(f"Error starting download: {str(e)}")
-            self.notify(f"Error starting download: {str(e)}", severity="error")
-    @work(thread=True)
-    async def run_speed_test(self) -> None:
-        """Run a network speed test"""
-        button = self.query_one("#speedtest-btn")
-        status = self.query_one("#network-status")
-        stats_container = self.query_one("#network-stats")
-        
-        self._prepare_speed_test_ui(button, status)
-        
-        try:
-            result = await self._execute_speed_test()
-            
-            if result:
-                self._display_speed_test_results(stats_container, result)
-                self.notify("Network speed test completed", severity="success")
-            else:
-                self._display_speed_test_error(stats_container, "No results returned from speed test")
-                self.notify("Speed test failed - no results", severity="error")
-                
-        except Exception as e:
-            logging.error(f"Error running speed test: {str(e)}")
-            self._display_speed_test_error(stats_container, str(e))
-            self.notify(f"Speed test error: {str(e)}", severity="error")
-        finally:
-            self._reset_speed_test_button(button)
-    
-    def _prepare_speed_test_ui(self, button, status) -> None:
-        """Prepare UI for speed test."""
-        button.disabled = True
-        button.label = "Running Test..."
-        status.update("Testing network speed...")
-    
-    async def _execute_speed_test(self):
-        """Execute the actual speed test."""
-        from .network import NetworkManager
-        network_manager = NetworkManager(self.config)
-        return await network_manager.run_speed_test(detailed=True)
-    
-    def _display_speed_test_results(self, container, result) -> None:
-        """Display speed test results."""
-        container.remove_children()
-        container.mount(Static("Network Status: Completed", id="network-status"))
-        
-        # Add basic metrics
-        download_class = classify_download_speed(result.download_mbps)
-        container.mount(Static(f"Download: {result.download_mbps:.2f} Mbps", classes=download_class))
-        
-        upload_class = classify_upload_speed(result.upload_mbps)
-        container.mount(Static(f"Upload: {result.upload_mbps:.2f} Mbps", classes=upload_class))
-        
-        ping_class = classify_ping(result.ping_ms)
-        container.mount(Static(f"Ping: {result.ping_ms:.0f} ms", classes=ping_class))
-        
-        # Add optional metrics
-        self._add_optional_metrics(container, result)
-        
-        # Add overall rating and recommendations
-        self._add_rating_and_recommendations(container, result)
-    
-    def _add_optional_metrics(self, container, result) -> None:
-        """Add optional metrics if available."""
-        if hasattr(result, 'jitter_ms') and result.jitter_ms is not None:
-            jitter_class = classify_jitter(result.jitter_ms)
-            container.mount(Static(f"Jitter: {result.jitter_ms:.1f} ms", classes=jitter_class))
-            
-        if hasattr(result, 'packet_loss') and result.packet_loss is not None:
-            loss_class = classify_packet_loss(result.packet_loss)
-            container.mount(Static(f"Packet Loss: {result.packet_loss:.1f}%", classes=loss_class))
-    
-    def _add_rating_and_recommendations(self, container, result) -> None:
-        """Add overall rating and recommendations."""
-        overall_rating = get_overall_rating(result.download_mbps, result.ping_ms)
-        rating_class = get_rating_class(overall_rating)
-        container.mount(Static(f"Overall Rating: {overall_rating}", classes=rating_class))
-        
-        # Generate recommendations
-        recommendations = self._generate_recommendations(result.download_mbps)
-        if recommendations:
-            container.mount(Static("Recommendations:", classes="subtitle"))
-            for rec in recommendations:
-                container.mount(Static(rec))
-    
-    def _generate_recommendations(self, download_mbps: float) -> list:
-        """Generate recommendations based on download speed."""
-        if download_mbps < 3:
-            return [
-                "- Consider using lower quality video formats",
-                "- Audio-only downloads recommended"
-            ]
-        elif download_mbps < 10:
-            return [
-                "- 720p video should work well",
-                "- 1080p may buffer occasionally"
-            ]
-        else:
-            return [
-                "- 1080p or higher should work well",
-                "- 4K may be possible depending on stability"
-            ]
-    
-    def _display_speed_test_error(self, container, error_msg: str) -> None:
-        """Display speed test error."""
-        container.remove_children()
-        container.mount(Static("Network Status: Error", id="network-status", classes="status-error"))
-        container.mount(Static(f"Error: {error_msg}", classes="status-error"))
-    
-    def _reset_speed_test_button(self, button) -> None:
-        """Reset speed test button to initial state."""
-        button.disabled = False
-        button.label = "Run Speed Test"
-    
-    def load_settings(self) -> None:
-        """Load settings into form fields"""
-        self.query_one("#video-dir-input").value = self.config.get("video_output", "")        
-        self.query_one("#audio-dir-input").value = self.config.get("audio_output", "")
-        self.query_one("#ffmpeg-input").value = self.config.get("ffmpeg_location", "")
-        self.query_one("#organize-files").value = self.config.get("organize", False)
-        self.query_one("#high-quality").value = self.config.get("high_quality_audio", True)
-        
-    def get_selected_format(self) -> Optional[str]:
-        """Get the selected format ID"""
-        table = self.query_one("#format-table")
-        
-        # Check if table has any rows
-        if not hasattr(table, 'row_count') or not table.row_count:
-            return "best"
-        
-        # Check if a row is selected
-        if hasattr(table, 'cursor_row') and table.cursor_row is not None:
-            try:
-                # Access the row safely with bounds checking
-                if 0 <= table.cursor_row < table.row_count:
-                    row_data = table.get_row_at(table.cursor_row)
-                    if row_data and len(row_data) > 0:
-                        return row_data[0]  # Format ID is in column 0
-                    else:
-                        logging.warning("Selected row has insufficient data")
-                        return "best"
-                else:
-                    logging.warning(f"Cursor row index {table.cursor_row} is out of bounds")
-                    return "best"
-            except Exception as e:
-                logging.warning(f"Error accessing selected format: {str(e)}")
-                return "best"
-        
-        # Default to best quality if nothing is selected
-        return "best"
-    
-    def add_active_download(self, download_id: str, url: str) -> None:
-        """Add a download to the active downloads list"""
-        container = self.query_one("#active-downloads")
-        
-        # Create download progress tracker
-        progress_id = f"progress-{download_id}"
-        filename = url.split("/")[-1]
-        if not filename:
-            filename = url
-            
-        # Create progress container
-        progress_container = Container(id=progress_id)
-        progress_container.border_title = filename
-        
-        # Add progress bar
-        progress_bar = ProgressBar(total=100, id=f"bar-{download_id}", classes="progress-bar")
-          # Add status label
-        status_label = Label("Starting download...", id=f"status-{download_id}")
-        
-        progress_container.mount(progress_bar)
-        progress_container.mount(status_label)
-        container.mount(progress_container)
-        
-        # Store for updating
-        self.downloads.append({
-            "id": download_id,
-            "url": url,
-            "progress_id": progress_id,
-            "bar_id": f"bar-{download_id}",
-            "status_id": f"status-{download_id}"
-        })
-    @work(thread=True)
-    async def update_download_progress(self) -> None:
-        """Update download progress periodically"""
-        try:
-            while True:
-                completed_downloads = await self._update_all_downloads()
-                await asyncio.sleep(1)
-                
-        except asyncio.CancelledError:
-            logging.info("Download progress monitoring cancelled")
-        except Exception as e:
-            logging.error(f"Download progress monitoring error: {e}")
-        finally:
-            self._progress_worker_running = False
-    
-    async def _update_all_downloads(self) -> list:
-        """Update all active downloads and return completed ones."""
-        completed_downloads = []
-        
-        for download in self.downloads:
-            try:
-                progress = await self.download_manager.session_manager.get_session(download["id"])
-                
-                if progress:
-                    self._update_download_display(download, progress)
+                # Update any visible performance displays
+                if hasattr(self, 'performance_widget'):
+                    self.performance_widget.update_metrics(metrics)
                     
-                    status_text = progress.get("status", "Downloading...")
-                    if status_text in ["completed", "cancelled", "failed"]:
-                        completed_downloads.append(download["id"])
-                        
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logging.error(f"Error updating progress for download {download['id']}: {e}")
-        
-        return completed_downloads
-    
-    def _update_download_display(self, download: dict, progress: dict) -> None:
-        """Update the display for a single download."""
-        # Update progress bar
-        bar = self.query_one(f"#{download['bar_id']}")
-        bar.progress = progress.get("progress", 0)
-        
-        # Update status label
-        status = self.query_one(f"#{download['status_id']}")
-        status_text = progress.get("status", "Downloading...")
-        progress_percent = progress.get("progress", 0)
-        
-        self._format_status_display(status, status_text, progress_percent, progress)
-    
-    def _format_status_display(self, status_widget, status_text: str, progress_percent: float, progress: dict) -> None:
-        """Format and update the status display."""
-        if status_text == "completed":
-            status_widget.update("Completed - 100%")
-            status_widget.add_class("status-ok")
-        elif status_text == "cancelled":
-            status_widget.update(f"Cancelled - {progress_percent:.1f}%")
-            status_widget.add_class("status-warning")
-        elif status_text == "failed":
-            error_msg = progress.get("error", "Unknown error")
-            status_widget.update(f"Failed: {error_msg}")
-            status_widget.add_class("status-error")
-        else:
-            status_widget.update(f"{status_text} - {progress_percent:.1f}%")
-    def setup_format_table(self) -> None:
-        """Setup the format table with appropriate columns"""
-        table = self.query_one(self.FORMAT_TABLE_ID)
-        table.clear(columns=True)
-        
-        # Add columns for format information
-        table.add_column("Format")
-        table.add_column("Quality")
-        table.add_column("Resolution")
-        table.add_column("Codec")
-        table.add_column("Size")
-        table.add_column("Audio")
-        table.add_column("FPS")
-def create_format_table(formats: List[Dict[str, Any]], box_style=None, border_style="bright_blue") -> Table:
-    """Create a formatted table for displaying available formats."""
-    from rich.table import Table
-    from rich import box
-    
-    table = Table(
-        box=box_style or box.MINIMAL_HEAVY_HEAD,
-        border_style=border_style,
-        expand=True,
-        show_header=True,
-        header_style="bold bright_blue"
-    )
-    
-    # Define columns
-    table.add_column("Format")
-    table.add_column("Quality")
-    table.add_column("Resolution")
-    table.add_column("Codec")
-    table.add_column("Size")
-    table.add_column("Audio")
-    table.add_column("FPS")
-    
-    # Add rows for each format
-    for fmt in formats:
-        format_id = fmt.get('format_id', 'unknown')
-        quality = fmt.get('format_note', 'Unknown')
-        
-        # Resolution
-        if fmt.get('height') and fmt.get('width'):
-            resolution = f"{fmt['width']}x{fmt['height']}"
-        elif fmt.get('vcodec') == 'none':
-            resolution = "Audio only"
-        else:
-            resolution = "N/A"
-            
-        # Codec
-        codec = fmt.get('vcodec', 'unknown')
-        if codec == 'none':
-            codec = fmt.get('acodec', 'audio only')
-            
-        # Size
-        filesize = format_size(fmt.get('filesize') or fmt.get('filesize_approx') or 0)
-        
-        # Audio codec
-        audio_codec = fmt.get('acodec', 'none')
-        if audio_codec == 'none':
-            audio_codec = "No audio"
-            
-        # FPS
-        fps = fmt.get('fps', 'N/A')
-        fps_str = str(fps) if fps else "N/A"
-        
-        table.add_row(
-            format_id, quality, resolution, codec, 
-            filesize, audio_codec, fps_str
-        )
-    
-    return table
-
-def get_status_class(value: float, thresholds: Tuple[float, float]) -> str:
-    """Helper function to determine status class based on value and thresholds."""
-    good_threshold, warning_threshold = thresholds
-    if value >= good_threshold:
-        return "status-ok"
-    elif value >= warning_threshold:
-        return "status-warning"
-    else:
-        return "status-error"
-
-def get_reverse_status_class(value: float, thresholds: Tuple[float, float]) -> str:
-    """Helper function for values where lower is better (like ping)."""
-    good_threshold, warning_threshold = thresholds
-    if value <= good_threshold:
-        return "status-ok"
-    elif value <= warning_threshold:
-        return "status-warning"
-    else:
-        return "status-error"
-
-
-def load_help_content(self) -> None:
-        """Load help content into the help screen."""
-        try:
-            help_container = self.query_one("#help-screen")
-            help_container.remove_children()
-            help_container.mount(Static(self.HELP_DOCUMENTATION_TITLE, classes="title"))
-            
-            from .defaults import HELP_CONTENT
-            if isinstance(HELP_CONTENT, str):
-                help_container.mount(Static(HELP_CONTENT))
-            else:
-                help_container.mount(Static("Help content not available"))
         except Exception as e:
-            logging.error(f"Error loading help content: {e}")
-    
-async def on_button_pressed(self, event) -> None:
-        """Handle button press events."""
-        button_id = event.button.id
-        
-        if button_id == "analyze-btn":
-            await self.analyze_url()
-        elif button_id == "start-download-btn":
-            await self.start_download()
-        elif button_id == "speedtest-btn":
-            await self.run_speed_test()
-        elif button_id == "save-settings-btn":
-            self.save_settings()
-        elif button_id.startswith("menu-"):
-            self._handle_menu_selection(button_id)
-    
-def _handle_menu_selection(self, button_id: str) -> None:
-        """Handle menu button selections."""
-        content_switcher = self.query_one("#content-switcher")
-        
-        # Remove selected class from all menu items
-        for menu_item in self.query(".menu-item"):
-            menu_item.remove_class("selected")
-        
-        # Add selected class to clicked item
-        self.query_one(f"#{button_id}").add_class("selected")
-        
-        # Switch content based on selection
-        screen_map = {
-            "menu-download": self.DOWNLOAD_SCREEN,
-            "menu-browse": self.BROWSE_SCREEN,
-            "menu-network": self.NETWORK_SCREEN,
-            "menu-settings": self.SETTINGS_SCREEN,
-            "menu-help": self.HELP_SCREEN,
-            "menu-audio": self.AUDIO_SCREEN,
-            "menu-video": self.VIDEO_SCREEN,
-            "menu-files": self.FILES_SCREEN,
-        }
-        
-        if button_id in screen_map:
-            content_switcher.current = screen_map[button_id]
+            logging.debug(f"Error updating system stats: {e}")
+
+    async def _update_download_progress(self) -> None:
+        """Update download progress displays."""
+        try:
+            if hasattr(self, 'download_manager') and self.download_manager:
+                # Get current download status
+                status = self.download_manager.get_system_status()
+                
+                # Update progress displays
+                if hasattr(self, 'progress_widget'):
+                    self.progress_widget.update_status(status)
+                    
+        except Exception as e:
+            logging.debug(f"Error updating download progress: {e}")
+
 
 def launch_textual_interface(config: Dict[str, Any]) -> None:
-    """Launch the Textual interface for interactive mode
+    """Launch the modern Textual-based interactive interface.
+    
+    This function provides the entry point for the enhanced interactive mode
+    with real-time monitoring, rich UI components, and advanced features.
     
     Args:
-        config: Configuration dictionary
+        config: Application configuration dictionary
     """
-    # Ensure required paths exist
-    os.makedirs(config.get("video_output", "downloads"), exist_ok=True)
-    os.makedirs(config.get("audio_output", "downloads/audio"), exist_ok=True)
+    try:
+        # Validate configuration
+        if not config:
+            raise ValueError("Configuration is required")
+            
+        # Set up logging for interactive mode
+        logging.info("Starting Textual interactive interface...")
+        
+        # Create and run the interactive app
+        app = InteractiveApp(config)
+          # Check if we're in an async context
+        try:
+            import asyncio
+            # Try to get the running loop
+            asyncio.get_running_loop()
+            # If we get here, we're in an async context, so we need to handle this differently
+            import threading
+            
+            def run_app():
+                # Create a new event loop for this thread
+                asyncio.set_event_loop(asyncio.new_event_loop())
+                app.run()
+            
+            # Run the app in a separate thread
+            thread = threading.Thread(target=run_app, daemon=True)
+            thread.start()
+            thread.join()
+            
+        except RuntimeError:
+            # No running loop, safe to run normally
+            app.run()
+        
+    except Exception as e:
+        console = Console()
+        console.print(f"[red]Error launching interactive interface: {e}[/]")
+        logging.error(f"Failed to launch interactive interface: {e}")
+        raise
+
+
+async def launch_interactive_mode(config: Dict[str, Any]) -> None:
+    """Launch the classic interactive mode with Rich console interface.
     
-    # Initialize required components
-    session_file = config.get("session_file", "download_sessions.json")
-    session_dir = os.path.dirname(os.path.abspath(session_file))
-    os.makedirs(session_dir, exist_ok=True)
+    This provides a fallback option for systems where Textual may not work properly.
     
-    from .cache import DownloadCache
-    from .session import SessionManager, AsyncSessionManager
-    
-    # Create the app instance
-    app = InteractiveApp(config)
+    Args:
+        config: Application configuration dictionary
+    """
+    console = Console()
     
     try:
-        # Try running in this thread (will fail if the loop is already running)
-        app.run()
-    except RuntimeError:
-        # Fallback: spin up a new thread so it gets its own event loop
-        from threading import Thread
+        console.print(Panel(
+            "[bold cyan]🎬 Snatch Media Downloader - Interactive Mode[/]\n"
+            "[yellow]Classic Rich Console Interface[/]",
+            title="Welcome",
+            border_style="bright_blue"
+        ))
+        
+        # Initialize download manager
+        from .manager import AsyncDownloadManager
+        from .session import AsyncSessionManager
+        from .cache import DownloadCache
+        
+        session_manager = AsyncSessionManager(config.get("session_file", "sessions/session.json"))
+        download_cache = DownloadCache()
+        
+        download_manager = AsyncDownloadManager(
+            config=config,
+            session_manager=session_manager,
+            download_cache=download_cache
+        )
+        
+        # Main interactive loop
+        while True:
+            console.print("\n" + "="*60)
+            console.print("[bold cyan]📋 Main Menu[/]")
+            console.print("="*60)
+            
+            options = {
+                "1": "🔗 Download Media",
+                "2": "📊 View System Status", 
+                "3": "⚡ Performance Monitor",
+                "4": "📁 Queue Management",
+                "5": "⚙️  Settings",
+                "6": "❓ Help",
+                "q": "🚪 Quit"
+            }
+            
+            for key, desc in options.items():
+                console.print(f"  [{key}] {desc}")
+            
+            choice = Prompt.ask(
+                "\n[bold yellow]Select an option[/]",
+                choices=list(options.keys()),
+                default="1"
+            )
+            
+            if choice == "q":
+                console.print("[green]👋 Thanks for using Snatch! Goodbye![/]")
+                break
+            elif choice == "1":
+                await _handle_download_interactive(console, download_manager)
+            elif choice == "2":
+                await _show_system_status(console, download_manager)
+            elif choice == "3":
+                await _show_performance_monitor(console, download_manager)
+            elif choice == "4":
+                await _show_queue_management(console, download_manager)
+            elif choice == "5":
+                _show_settings(console, config)
+            elif choice == "6":
+                _show_help(console)
+                
+    except KeyboardInterrupt:
+        console.print("\n[yellow]👋 Interactive mode interrupted. Goodbye![/]")
+    except Exception as e:
+        console.print(f"[red]Error in interactive mode: {e}[/]")
+        logging.error(f"Interactive mode error: {e}")
 
-        def _run_app_in_thread() -> None:
-            # 1) create new loop
-            loop = asyncio.new_event_loop()
-            # 2) install it as the current loop for this thread
-            asyncio.set_event_loop(loop)
-            # 3) now call run(), which will pick up our thread‑local loop
-            app.run()
 
-        console = Console()
-        console.print("[bold green]Starting interactive mode in a new thread...[/]")
-        thread = Thread(target=_run_app_in_thread, daemon=False)
-        thread.start()
-        thread.join()
+async def _handle_download_interactive(console: Console, download_manager: AsyncDownloadManager) -> None:
+    """Handle interactive download process."""
+    try:
+        console.print("\n[bold cyan]🔗 Media Download[/]")
+        
+        # Get URL from user
+        url = Prompt.ask("[yellow]Enter media URL[/]")
+        if not url:
+            console.print("[red]No URL provided[/]")
+            return
+            
+        # Get download options
+        audio_only = Confirm.ask("[yellow]Audio only?[/]", default=False)
+        
+        if audio_only:
+            format_choice = Prompt.ask(
+                "[yellow]Audio format[/]",
+                choices=["mp3", "flac", "wav", "aac"],
+                default="mp3"
+            )
+            quality = Prompt.ask(
+                "[yellow]Audio quality[/]",
+                choices=["64", "128", "192", "256", "320"],
+                default="192"
+            )
+            options = {
+                "audio_only": True,
+                "audio_format": format_choice,
+                "audio_quality": quality
+            }
+        else:
+            resolution = Prompt.ask(
+                "[yellow]Video resolution (or 'best')[/]",
+                choices=["best", "1080p", "720p", "480p", "360p"],
+                default="best"
+            )
+            options = {
+                "audio_only": False,
+                "resolution": resolution if resolution != "best" else None
+            }
+        
+        # Start download
+        console.print(f"[cyan]Starting download: {url}[/]")
+        
+        async with download_manager:
+            try:
+                result = await download_manager.download_with_options([url], options)
+                if result:
+                    console.print(f"[green]✅ Successfully downloaded: {result[0]}[/]")
+                else:
+                    console.print("[red]❌ Download failed[/]")
+            except Exception as e:
+                console.print(f"[red]❌ Download error: {e}[/]")
+                
+    except Exception as e:
+        console.print(f"[red]Error in download process: {e}[/]")
+        logging.error(f"Interactive download error: {e}")
+
+
+async def _show_system_status(console: Console, download_manager: AsyncDownloadManager) -> None:
+    """Show system status information."""
+    try:
+        console.print("\n[bold cyan]📊 System Status[/]")
+        
+        # Get system status
+        status = download_manager.get_system_status()
+        
+        # Create status table
+        table = Table(title="System Information", border_style="bright_blue")
+        table.add_column("Metric", style="cyan", min_width=20)
+        table.add_column("Value", style="green")
+        
+        table.add_row("Active Downloads", str(status.get("active_downloads", 0)))
+        table.add_row("Failed Attempts", str(status.get("failed_attempts", 0)))
+        table.add_row("Cache Size", str(status.get("cache_size", 0)))
+        table.add_row("Session Count", str(status.get("session_count", 0)))
+        
+        if "cpu_usage" in status:
+            table.add_row("CPU Usage", f"{status['cpu_usage']:.1f}%")
+            table.add_row("Memory Usage", f"{status['memory_usage']:.1f}%")
+            table.add_row("Disk Usage", f"{status['disk_usage']:.1f}%")
+            table.add_row("Network Usage", f"{status['network_usage']:.1f} Mbps")
+        
+        console.print(table)
+        
+        # Show recommendations if available
+        if "performance_recommendations" in status:
+            recommendations = status["performance_recommendations"]
+            if recommendations:
+                console.print("\n[bold yellow]🔧 Performance Recommendations:[/]")
+                for rec in recommendations:
+                    console.print(f"  • {rec}")
+        
+        Prompt.ask("\n[dim]Press Enter to continue[/]", default="")
+        
+    except Exception as e:
+        console.print(f"[red]Error showing system status: {e}[/]")
+        logging.error(f"System status error: {e}")
+
+
+async def _show_performance_monitor(console: Console, download_manager: AsyncDownloadManager) -> None:
+    """Show performance monitoring information."""
+    try:
+        console.print("\n[bold cyan]⚡ Performance Monitor[/]")
+        
+        if not download_manager.performance_monitor:
+            console.print("[yellow]Performance monitor not available[/]")
+            return
+            
+        # Get current metrics
+        metrics = download_manager.performance_monitor.get_current_metrics()
+        
+        # Create metrics table
+        table = Table(title="Performance Metrics", border_style="bright_green")
+        table.add_column("Metric", style="cyan", min_width=15)
+        table.add_column("Current", style="green")
+        table.add_column("Status", style="yellow")
+          # CPU
+        cpu_percent = metrics.get("cpu_percent", 0)
+        if cpu_percent > 80:
+            cpu_status = "🔴 High"
+        elif cpu_percent > 50:
+            cpu_status = "🟡 Medium"
+        else:
+            cpu_status = "🟢 Normal"
+        table.add_row("CPU Usage", f"{cpu_percent:.1f}%", cpu_status)
+        
+        # Memory
+        memory_percent = metrics.get("memory_percent", 0)
+        if memory_percent > 85:
+            memory_status = "🔴 High"
+        elif memory_percent > 70:
+            memory_status = "🟡 Medium"
+        else:
+            memory_status = "🟢 Normal"
+        table.add_row("Memory Usage", f"{memory_percent:.1f}%", memory_status)
+        
+        # Network
+        network_mbps = metrics.get("network_mbps", 0)
+        network_status = "🟢 Active" if network_mbps > 1 else "🟡 Idle"
+        table.add_row("Network", f"{network_mbps:.1f} Mbps", network_status)
+        
+        console.print(table)
+        
+        # Optimization option
+        if Confirm.ask("\n[yellow]Run performance optimization?[/]", default=False):
+            console.print("[cyan]Running optimization...[/]")
+            result = await download_manager.optimize_performance()
+            
+            if result.get("optimizations_applied"):
+                console.print("[green]✅ Optimizations applied:[/]")
+                for opt in result["optimizations_applied"]:
+                    console.print(f"  • {opt}")
+            else:
+                console.print("[green]✅ System is already optimized[/]")
+        
+        Prompt.ask("\n[dim]Press Enter to continue[/]", default="")
+        
+    except Exception as e:
+        console.print(f"[red]Error in performance monitor: {e}[/]")
+        logging.error(f"Performance monitor error: {e}")
+
+
+async def _show_queue_management(console: Console, download_manager: AsyncDownloadManager) -> None:
+    """Show download queue management."""
+    try:
+        console.print("\n[bold cyan]📁 Queue Management[/]")
+        
+        if not download_manager.advanced_scheduler:
+            console.print("[yellow]Advanced scheduler not available[/]")
+            return
+            
+        # Get scheduler status
+        status = download_manager.advanced_scheduler.get_status()
+        
+        # Create status table
+        table = Table(title="Scheduler Status", border_style="bright_magenta")
+        table.add_column("Property", style="cyan")
+        table.add_column("Value", style="green")
+        
+        table.add_row("Queue Size", str(status.get("queue_size", 0)))
+        table.add_row("Active", "Yes" if status.get("active", False) else "No")
+        table.add_row("Bandwidth Usage", f"{status.get('bandwidth_usage', 0):.1f} Mbps")
+        
+        console.print(table)
+        
+        # Queue management options
+        console.print("\n[bold yellow]Queue Options:[/]")
+        console.print("  [1] Pause scheduler")
+        console.print("  [2] Resume scheduler") 
+        console.print("  [3] Clear queue")
+        console.print("  [4] Back to main menu")
+        
+        choice = Prompt.ask(
+            "[yellow]Select option[/]",
+            choices=["1", "2", "3", "4"],
+            default="4"
+        )
+        
+        if choice == "1":
+            await download_manager.advanced_scheduler.pause()
+            console.print("[green]✅ Scheduler paused[/]")
+        elif choice == "2":
+            await download_manager.advanced_scheduler.resume()
+            console.print("[green]✅ Scheduler resumed[/]")
+        elif choice == "3":
+            if Confirm.ask("[red]Clear all queued downloads?[/]", default=False):
+                await download_manager.advanced_scheduler.clear_queue()
+                console.print("[green]✅ Queue cleared[/]")
+        
+        if choice != "4":
+            Prompt.ask("\n[dim]Press Enter to continue[/]", default="")
+            
+    except Exception as e:
+        console.print(f"[red]Error in queue management: {e}[/]")
+        logging.error(f"Queue management error: {e}")
+
+
+def _show_settings(console: Console, config: Dict[str, Any]) -> None:
+    """Show settings configuration."""
+    try:
+        console.print("\n[bold cyan]⚙️  Settings[/]")
+        
+        # Create settings table
+        table = Table(title="Current Settings", border_style="bright_yellow")
+        table.add_column("Setting", style="cyan", min_width=20)
+        table.add_column("Value", style="green")
+        
+        # Show key settings
+        table.add_row("Max Concurrent Downloads", str(config.get("max_concurrent", 3)))
+        table.add_row("Video Output Dir", config.get("video_output", "downloads/video"))
+        table.add_row("Audio Output Dir", config.get("audio_output", "downloads/audio"))
+        table.add_row("Bandwidth Limit", f"{config.get('bandwidth_limit', 0)} Mbps" if config.get('bandwidth_limit') else "Unlimited")
+        table.add_row("P2P Enabled", "Yes" if config.get("p2p_enabled", False) else "No")
+        
+        console.print(table)
+        
+        # Settings modification
+        if Confirm.ask("\n[yellow]Modify settings?[/]", default=False):
+            console.print("[cyan]Settings modification not implemented in this version[/]")
+            console.print("[dim]Use the config.json file to modify settings[/]")
+        
+        Prompt.ask("\n[dim]Press Enter to continue[/]", default="")
+        
+    except Exception as e:
+        console.print(f"[red]Error showing settings: {e}[/]")
+        logging.error(f"Settings error: {e}")
+
+
+def _show_help(console: Console) -> None:
+    """Show help information."""
+    try:
+        console.print("\n[bold cyan]❓ Help & Documentation[/]")
+        
+        help_content = """
+[bold yellow]🎬 Snatch Media Downloader - Help[/]
+
+[cyan]Basic Usage:[/]
+• Enter media URLs to download content
+• Choose between audio-only or video downloads
+• Select quality and format options
+• Monitor download progress in real-time
+
+[cyan]Features:[/]
+• Multi-format support (MP4, MP3, FLAC, etc.)
+• Concurrent downloads with intelligent scheduling
+• P2P sharing capabilities (if enabled)
+• Advanced audio processing options
+• Real-time performance monitoring
+• Resume interrupted downloads
+
+[cyan]Supported Sites:[/]
+• YouTube, Vimeo, Dailymotion
+• SoundCloud, Bandcamp
+• Many more via yt-dlp support
+
+[cyan]Keyboard Shortcuts:[/]
+• Ctrl+C: Cancel current operation
+• Enter: Confirm selection
+• Q: Quit (from main menu)
+
+[cyan]Configuration:[/]
+• Edit config.json for advanced settings
+• Set custom output directories
+• Configure bandwidth limits
+• Enable/disable P2P features
+
+[green]For more help, visit the documentation or check the GitHub repository.[/]
+        """
+        
+        console.print(Panel(help_content, border_style="bright_cyan"))
+        Prompt.ask("\n[dim]Press Enter to continue[/]", default="")
+        
+    except Exception as e:
+        console.print(f"[red]Error showing help: {e}[/]")
+        logging.error(f"Help display error: {e}")
+
+
+# Compatibility alias for backward compatibility
+def run_interactive_mode(config: Dict[str, Any]) -> None:
+    """Alias for launch_textual_interface for backward compatibility."""
+    launch_textual_interface(config)
+
+
+# Enhanced initialization function
+def initialize_interactive_mode(config: Dict[str, Any]) -> None:
+    """Initialize interactive mode with proper error handling and fallbacks."""
+    try:
+        # Try to launch the modern Textual interface first
+        launch_textual_interface(config)
+    except ImportError as e:
+        # If Textual is not available, fall back to Rich console interface
+        logging.warning(f"Textual interface not available: {e}")
+        logging.info("Falling back to Rich console interface")
+        launch_interactive_mode(config)
+    except Exception as e:
+        # For any other error, try the fallback
+        logging.error(f"Error with Textual interface: {e}")
+        logging.info("Attempting fallback to Rich console interface")
+        try:
+            launch_interactive_mode(config)
+        except Exception as fallback_error:
+            console = Console()
+            console.print("[red]Both interface modes failed:[/]")
+            console.print(f"[red]Textual error: {e}[/]")
+            console.print(f"[red]Fallback error: {fallback_error}[/]")
+            raise

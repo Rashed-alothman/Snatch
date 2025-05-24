@@ -24,12 +24,16 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager, asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable, Tuple, TypeVar, Protocol, Union, Set
+from typing import Dict, Any, List, Optional, Callable, Tuple, TypeVar, Protocol, Union, Set, TYPE_CHECKING
 import platform
 import tempfile
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from .performance_monitor import PerformanceMonitor
+    from .advanced_scheduler import AdvancedScheduler
 
 # Define custom exception classes
 class DownloadError(Exception):
@@ -329,7 +333,34 @@ class DownloadManager:
     - Advanced audio/video format options
     - Resource-aware downloads
     """
-    
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        session_manager: Optional[SessionManager] = None,
+        download_cache: Optional[DownloadCache] = None,
+        file_organizer: Optional[FileOrganizer] = None,
+        download_stats: Optional[DownloadStats] = None,
+        performance_monitor: Optional['PerformanceMonitor'] = None,
+        advanced_scheduler: Optional['AdvancedScheduler'] = None
+    ):
+        """Initialize download manager with injected dependencies."""
+        if not config:
+            raise ValueError(ERROR_MSGS["CONFIG_NONE"])
+            
+        self.config = config.copy()
+        
+        # Validate required paths
+        for dir_key in ["video_output", "audio_output"]:
+            if path := config.get(dir_key):
+                os.makedirs(path, exist_ok=True)
+            else:
+                raise ValueError(f"Missing required configuration field: {dir_key}")
+        
+        # Initialize dependencies (with defaults if not injected)
+        self.session_manager = session_manager or SessionManager(DOWNLOAD_SESSIONS_FILE)
+        self.download_cache = download_cache or DownloadCache() 
+        self.file_organizer = file_organizer or FileOrganizer(config)
+        self.download_stats = download_stats or DownloadStats(keep_history=True)
     def __init__(
         self,
         config: Dict[str, Any],
@@ -356,6 +387,9 @@ class DownloadManager:
         self.download_cache = download_cache or DownloadCache() 
         self.file_organizer = file_organizer or FileOrganizer(config)
         self.download_stats = download_stats or DownloadStats(keep_history=True)
+        
+        # Initialize advanced systems
+        self._initialize_advanced_systems()
         
         # Track state
         self.current_download_url = None
@@ -802,10 +836,13 @@ class DownloadHooks(ABC):
 
 class AsyncDownloadManager:
     """Async download manager with resumable downloads and chunk validation"""
+    
     def __init__(self, config: Dict[str, Any],
                  session_manager: SessionManager,
                  download_cache: DownloadCache,
-                 http_client: Optional[HTTPClientProtocol] = None):
+                 http_client: Optional[HTTPClientProtocol] = None,
+                 performance_monitor: Optional['PerformanceMonitor'] = None,
+                 advanced_scheduler: Optional['AdvancedScheduler'] = None):
         self.config = config
         self.session_manager = session_manager 
         self.download_cache = download_cache
@@ -820,8 +857,32 @@ class AsyncDownloadManager:
         error_log_path = config.get("error_log_path", "logs/snatch_errors.log")
         self.error_handler = EnhancedErrorHandler(log_file=error_log_path)
         
+        # Set or initialize advanced components
+        self.performance_monitor = performance_monitor
+        self.advanced_scheduler = advanced_scheduler
+        
+        # Initialize advanced systems if not provided
+        if not self.performance_monitor or not self.advanced_scheduler:
+            self._initialize_advanced_systems()
+        
         # Create audio processor instance
         self.audio_processor = AudioProcessor(config) if 'AudioProcessor' in globals() else None
+        
+        # Initialize P2P manager if enabled
+        self.p2p_manager = None
+        if config.get("p2p_enabled", False):
+            try:
+                from .p2p import P2PManager
+                self.p2p_manager = P2PManager(config, session_manager)
+                logging.info("P2P manager initialized successfully")
+            except ImportError as e:
+                logging.warning(f"P2P functionality not available: {e}")
+            except Exception as e:
+                logging.error(f"Failed to initialize P2P manager: {e}")
+        
+        # Active downloads tracking for P2P coordination
+        self.active_downloads: Dict[str, Dict[str, Any]] = {}
+        self.download_lock = asyncio.Lock()
         
         # Import dependencies
         self._import_dependencies()
@@ -998,54 +1059,197 @@ class AsyncDownloadManager:
         for hook in self.hooks:
             await hook.post_download(url, output_path)
             
-        return output_path
-
-    @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.ERROR)
-    async def download_with_options(self, urls: List[str], options: Dict[str, Any], non_interactive: bool = False) -> List[str]:
+        return output_path    
+    @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.ERROR)    
+    async def download_with_options(self, urls: List[str], options: Dict[str, Any]) -> List[str]:
         """
         Download media with specified options from a list of URLs
         
         Args:
             urls: List of URLs to download
             options: Dictionary of download options (audio_only, resolution, etc.)
-            non_interactive: Whether to run in non-interactive mode
-              Returns:
+            
+        Returns:
             List of paths to downloaded files
         """
         if not urls:
             logging.error("No URLs provided for download")
             return []
         
-        # Validate that required tools are available for download options
+        # Prepare download environment
+        self._prepare_download_environment(options)
+        
+        # Process downloads
+        return await self._process_downloads(urls, options)
+    
+    def _prepare_download_environment(self, options: Dict[str, Any]) -> None:
+        """Prepare the download environment and validate requirements"""
         self._validate_download_requirements(options)
+        self._normalize_audio_options(options)
+    
+    def _normalize_audio_options(self, options: Dict[str, Any]) -> None:
+        """Normalize CLI audio option names to processor-expected names"""
+        # Map CLI flags to audio processor parameters
+        if options.get('upmix_71'):
+            options['upmix_audio'] = True
+        if options.get('denoise'):
+            options['denoise_audio'] = True
         
-        # Setup yt-dlp download options based on user preferences
+        # Set enhancement flag if any audio processing is requested
+        if any(options.get(key, False) for key in ['upmix_audio', 'denoise_audio', 'normalize_audio']):
+            options['process_audio'] = True
+    async def _process_downloads(self, urls: List[str], options: Dict[str, Any]) -> List[str]:
+        """Process all downloads with advanced scheduling and performance monitoring"""
+        # Check if advanced scheduler is available and should be used
+        if self.advanced_scheduler and len(urls) > 1:
+            return await self._process_downloads_with_scheduler(urls, options)
+        else:
+            return await self._process_downloads_sequentially(urls, options)
+    
+    async def _process_downloads_with_scheduler(self, urls: List[str], options: Dict[str, Any]) -> List[str]:
+        """Process downloads using the advanced scheduler for optimal performance"""
+        console = Console()
+        downloaded_files = []
+        
+        # Add downloads to scheduler queue
+        download_tasks = []
+        for url in urls:
+            task_id = await self.advanced_scheduler.add_download(
+                url=url,
+                options=options,
+                priority=options.get('priority', 5),  # Default priority
+                callback=self._download_progress_callback
+            )
+            download_tasks.append((task_id, url))
+            
+        console.print(f"[cyan]Added {len(download_tasks)} downloads to scheduler queue[/]")
+        
+        # Monitor progress
+        with console.status("[bold green]Processing downloads with scheduler...") as status:
+            completed = 0
+            while completed < len(download_tasks):
+                # Check scheduler status
+                scheduler_status = self.advanced_scheduler.get_status()
+                active_downloads = scheduler_status.get('active_downloads', 0)
+                queue_size = scheduler_status.get('queue_size', 0)
+                
+                status.update(f"[bold green]Active: {active_downloads}, Queued: {queue_size}, Completed: {completed}/{len(download_tasks)}[/]")
+                
+                # Check for completed downloads
+                for task_id, url in download_tasks:
+                    task_status = await self.advanced_scheduler.get_download_status(task_id)
+                    if task_status.get('status') == 'completed' and task_status.get('result'):
+                        downloaded_files.append(task_status['result'])
+                        completed += 1
+                    elif task_status.get('status') == 'failed':
+                        console.print(f"[bold red]Failed: {url}[/]")
+                        completed += 1
+                        
+                await asyncio.sleep(0.5)  # Brief pause
+                
+        self._report_download_results(downloaded_files, console)
+        return downloaded_files
+    
+    async def _process_downloads_sequentially(self, urls: List[str], options: Dict[str, Any]) -> List[str]:
+        """Process downloads sequentially (fallback method)"""
         ydl_opts = self._setup_download_options(options)
-        
         downloaded_files = []
         console = Console()
         
-        # Process each URL
         with console.status("[bold green]Downloading...") as _:
             for url in urls:
                 try:
                     console.print(f"[cyan]Downloading:[/] {url}")
+                    file_path = await self._download_single_file(url, ydl_opts, options, console)
                     
-                    # Download a single URL with the given options
-                    file_path = await self._download_single_url(url, ydl_opts, console)
                     if file_path:
                         downloaded_files.append(file_path)
-                
                 except Exception as e:
-                    console.print(f"[bold red]Error downloading {url}:[/] {str(e)}")
+                    console.print(f"[bold red]Error downloading {url}: {str(e)}[/]")
                     logging.error(f"Download error for {url}: {str(e)}")
         
+        self._report_download_results(downloaded_files, console)
+        return downloaded_files
+    
+    async def _download_progress_callback(self, task_id: str, progress_data: Dict[str, Any]) -> None:
+        """Callback for download progress updates from scheduler"""
+        if self.performance_monitor:
+            # Update performance metrics
+            self.performance_monitor.update_download_metrics(progress_data)
+            
+            # Check if performance optimization is needed
+            metrics = self.performance_monitor.get_current_metrics()
+            if metrics.get('cpu_percent', 0) > 90 or metrics.get('memory_percent', 0) > 90:
+                await self.optimize_performance()
+    def _report_download_results(self, downloaded_files: List[str], console: Console) -> None:
+        """Report download results to the user"""
         if not downloaded_files:
             console.print("[bold yellow]No files were successfully downloaded.[/]")
         else:
             console.print(f"[bold green]Successfully downloaded {len(downloaded_files)} files.[/]")
+    
+    async def _download_single_file(self, url: str, ydl_opts: Dict[str, Any], options: Dict[str, Any], console: Console) -> Optional[str]:
+        """Download a single file with all processing options"""
+        # Try P2P download first if enabled
+        file_path = await self._try_p2p_download(url, options, console)
+        
+        # Fall back to traditional download if P2P failed
+        if not file_path:
+            console.print("[blue]Using traditional download method[/]")
+            file_path = await self._download_single_url(url, ydl_opts, console)
             
-        return downloaded_files
+            # Apply audio processing for traditional downloads
+            if file_path and self._needs_audio_processing(options):
+                console.print(f"[yellow]Processing audio for:[/] {file_path}")
+                await self._process_audio_async(file_path, options)
+        
+        # Handle P2P sharing if requested
+        if file_path:
+            await self._handle_p2p_sharing(file_path, options, console)
+        
+        return file_path
+    
+    async def _try_p2p_download(self, url: str, options: Dict[str, Any], console: Console) -> Optional[str]:
+        """Try P2P download if enabled and available"""
+        if not options.get('try_p2p', True) or not self.p2p_manager:
+            return None
+            
+        console.print(f"[yellow]Checking P2P availability for:[/] {url}")
+        p2p_available = await self.check_p2p_availability(url)
+        
+        if p2p_available:
+            console.print("[green]Content found in P2P network, downloading...[/]")
+            output_dir = self.config.get(
+                "audio_output" if options.get("audio_only") else "video_output", 
+                "downloads"
+            )
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, f"p2p_download_{int(time.time())}")
+            
+            file_path = await self.download_via_p2p(url, output_path, **options)
+            if file_path:
+                console.print(f"[green]P2P download completed:[/] {file_path}")
+                return file_path
+        
+        return None
+    
+    async def _handle_p2p_sharing(self, file_path: str, options: Dict[str, Any], console: Console) -> None:
+        """Handle P2P file sharing if requested"""
+        if options.get('share_p2p', False) and self.p2p_manager:
+            console.print("[cyan]Sharing file via P2P network...[/]")
+            share_code = await self.share_file_p2p(file_path)
+            if share_code:
+                console.print(f"[green]File shared! Share code: {share_code}[/]")
+    
+    def _needs_audio_processing(self, options: Dict[str, Any]) -> bool:
+        """Check if audio processing is needed based on options"""
+        return any([
+            options.get('process_audio', False),
+            options.get('upmix_audio', False),
+            options.get('enhance_audio', False),
+            options.get('denoise_audio', False),
+            options.get('normalize_audio', False)
+        ])
     
     def _validate_download_requirements(self, options: Dict[str, Any]) -> None:
         """Validate that required tools are available for download options."""
@@ -1185,3 +1389,288 @@ class AsyncDownloadManager:
             )
             console.print(f"[red]Error downloading {url}:[/] {str(e)}")
             return None
+
+    async def start_p2p_server(self) -> bool:
+        """Start P2P server for peer-to-peer downloads"""
+        if not self.p2p_manager:
+            logging.warning("P2P manager not initialized")
+            return False
+        
+        try:
+            success = await self.p2p_manager.start_server()
+            if success:
+                logging.info(f"P2P server started on port {self.p2p_manager.port}")
+                # Set up progress callbacks
+                self.p2p_manager.on_transfer_progress = self._on_p2p_progress
+                self.p2p_manager.on_transfer_complete = self._on_p2p_complete
+                return True
+            return False
+        except Exception as e:
+            logging.error(f"Failed to start P2P server: {e}")
+            return False
+    
+    async def stop_p2p_server(self) -> None:
+        """Stop P2P server"""
+        if self.p2p_manager:
+            await self.p2p_manager.stop_server()
+            logging.info("P2P server stopped")
+    
+    def _on_p2p_progress(self, progress) -> None:
+        """Handle P2P transfer progress updates"""
+        # Update session with P2P progress
+        if hasattr(progress, 'file_id') and progress.file_id in self.active_downloads:
+            download_info = self.active_downloads[progress.file_id]
+            download_info['p2p_progress'] = progress.progress_percent
+            download_info['speed'] = progress.speed_bps
+            download_info['eta'] = progress.eta_seconds
+    
+    def _on_p2p_complete(self, file_id: str, file_path: str) -> None:
+        """Handle P2P transfer completion"""
+        if file_id in self.active_downloads:
+            download_info = self.active_downloads[file_id]
+            download_info['status'] = 'completed'
+            download_info['file_path'] = file_path
+            logging.info(f"P2P download completed: {file_path}")
+    
+    async def check_p2p_availability(self, url: str) -> bool:
+        """Check if content is available via P2P"""
+        if not self.p2p_manager:
+            return False
+        
+        try:
+            # Generate content hash for P2P lookup
+            content_hash = hashlib.sha256(url.encode()).hexdigest()
+            return await self.p2p_manager.is_content_available(content_hash)
+        except Exception as e:
+            logging.debug(f"P2P availability check failed: {e}")
+            return False
+    
+    async def download_via_p2p(self, url: str, output_path: str, **options) -> Optional[str]:
+        """Attempt download via P2P network"""
+        if not self.p2p_manager:
+            return None
+        
+        try:
+            content_hash = hashlib.sha256(url.encode()).hexdigest()
+            file_id = f"download_{int(time.time())}"
+            
+            # Add to active downloads
+            async with self.download_lock:
+                self.active_downloads[file_id] = {
+                    'url': url,
+                    'output_path': output_path,
+                    'status': 'starting',
+                    'method': 'p2p'
+                }
+            
+            # Attempt P2P download
+            success = await self.p2p_manager.download_file(content_hash, output_path)
+            
+            if success:
+                # Apply audio processing if needed
+                if options.get('process_audio') and self.audio_processor:
+                    await self._process_audio_async(output_path, options)
+                
+                return output_path
+            
+            return None
+            
+        except Exception as e:
+            logging.error(f"P2P download failed: {e}")
+            return None
+        finally:
+            # Clean up active downloads
+            async with self.download_lock:
+                self.active_downloads.pop(file_id, None)
+    
+    async def _process_audio_async(self, file_path: str, options: Dict[str, Any]) -> bool:
+        """Process audio file with enhanced async operations"""
+        if not self.audio_processor:
+            logging.warning("Audio processor not available")
+            return False
+        
+        try:
+            # Check if file is audio
+            audio_extensions = {'.mp3', '.wav', '.flac', '.aac', '.ogg', '.opus', '.m4a', '.wma'}
+            if not any(file_path.lower().endswith(ext) for ext in audio_extensions):
+                return True  # Not an audio file, no processing needed
+            
+            logging.info(f"Starting audio processing for: {file_path}")
+            
+            # Apply processing in optimal order
+            processing_chain = []
+            
+            # 1. Denoising first (removes artifacts before other processing)
+            if options.get('denoise_audio', False):
+                processing_chain.append(('denoise', self.audio_processor.denoise_audio))
+            
+            # 2. Upmix to 7.1 surround sound if requested
+            if options.get('upmix_audio', False):
+                processing_chain.append(('upmix_7.1', self.audio_processor.upmix_to_7_1))
+            
+            # 3. Normalization last (final level adjustment)
+            if options.get('normalize_audio', False):
+                processing_chain.append(('normalize', self.audio_processor.normalize))
+            
+            # Execute processing chain
+            for process_name, process_func in processing_chain:
+                logging.info(f"Applying {process_name} to {file_path}")
+                try:
+                    success = await process_func(file_path)
+                    if not success:
+                        logging.warning(f"{process_name} failed for {file_path}")
+                    else:
+                        logging.info(f"{process_name} completed successfully for {file_path}")
+                except Exception as e:
+                    logging.error(f"Error during {process_name}: {e}")
+            
+            # Apply complete enhancement chain if requested
+            if options.get('enhance_audio', False):
+                logging.info(f"Applying complete audio enhancement chain to {file_path}")
+                await self.audio_processor.apply_all_enhancements(file_path)
+            
+            return True
+            
+        except Exception as e:
+            logging.error(f"Audio processing failed for {file_path}: {e}")
+            return False
+    
+    async def get_p2p_peers(self) -> List[Dict[str, Any]]:
+        """Get list of connected P2P peers"""
+        if not self.p2p_manager:
+            return []
+        
+        try:
+            peers = []
+            for peer_id, peer_info in self.p2p_manager.peers.items():
+                peers.append({
+                    'peer_id': peer_id,
+                    'ip': peer_info.ip,
+                    'port': peer_info.port,
+                    'connected': peer_info.connected,
+                    'last_seen': peer_info.last_seen,
+                    'nat_type': peer_info.nat_type
+                })
+            return peers
+        except Exception as e:
+            logging.error(f"Error getting P2P peers: {e}")
+            return []
+    
+    async def share_file_p2p(self, file_path: str) -> Optional[str]:
+        """Share a file via P2P network and return share code"""
+        if not self.p2p_manager:
+            logging.warning("P2P manager not available")
+            return None
+        
+        try:
+            return await self.p2p_manager.share_file(file_path)
+        except Exception as e:
+            logging.error(f"Failed to share file via P2P: {e}")
+            return None    
+    def _initialize_advanced_systems(self) -> None:
+        """Initialize advanced systems with graceful fallbacks."""
+        # Initialize performance monitor if not already provided
+        if not self.performance_monitor:
+            try:
+                from .performance_monitor import PerformanceMonitor
+                self.performance_monitor = PerformanceMonitor(self.config)
+                logging.info("Performance monitoring system initialized")
+            except ImportError:
+                logging.warning("Performance monitor not available")
+                self.performance_monitor = None
+            except Exception as e:
+                logging.error(f"Failed to initialize performance monitor: {e}")
+                self.performance_monitor = None
+            
+        # Initialize advanced scheduler if not already provided        if not self.advanced_scheduler:
+            try:
+                from .advanced_scheduler import AdvancedScheduler
+                self.advanced_scheduler = AdvancedScheduler(self.config)
+                logging.info("Advanced scheduler system initialized")
+            except ImportError:
+                logging.warning("Advanced scheduler not available")
+                self.advanced_scheduler = None
+            except Exception as e:
+                logging.error(f"Failed to initialize advanced scheduler: {e}")
+                self.advanced_scheduler = None
+              # Initialize audio processor if available
+        if not hasattr(self, 'audio_processor') or not self.audio_processor:
+            try:
+                from .audio_processor import EnhancedAudioProcessor
+                self.audio_processor = EnhancedAudioProcessor(self.config)
+                logging.info("Enhanced audio processor initialized")
+            except ImportError:
+                logging.warning("Enhanced audio processor not available")
+                self.audio_processor = None
+            except Exception as e:
+                logging.error(f"Failed to initialize audio processor: {e}")
+                self.audio_processor = None
+
+    def get_system_status(self) -> Dict[str, Any]:
+        """Get current system status and performance metrics."""
+        status = {
+            "active_downloads": self._active_downloads,
+            "failed_attempts": len(self._failed_attempts),
+            "cache_size": len(self.download_cache._cache) if self.download_cache else 0,
+            "session_count": len(self.session_manager._sessions) if self.session_manager else 0,
+        }
+        
+        # Add performance metrics if available
+        if self.performance_monitor:
+            metrics = self.performance_monitor.get_current_metrics()
+            status.update({
+                "cpu_usage": metrics.get("cpu_percent", 0),
+                "memory_usage": metrics.get("memory_percent", 0),
+                "disk_usage": metrics.get("disk_percent", 0),
+                "network_usage": metrics.get("network_mbps", 0),
+                "performance_recommendations": self.performance_monitor.get_optimization_recommendations()
+            })
+            
+        # Add scheduler status if available
+        if self.advanced_scheduler:
+            scheduler_status = self.advanced_scheduler.get_status()
+            status.update({
+                "queue_size": scheduler_status.get("queue_size", 0),
+                "bandwidth_usage": scheduler_status.get("bandwidth_usage", 0),
+                "scheduler_active": scheduler_status.get("active", False)
+            })
+            
+        return status
+
+    async def optimize_performance(self) -> Dict[str, Any]:
+        """Optimize system performance based on current conditions."""
+        if not self.performance_monitor:
+            return {"status": "performance_monitor_unavailable"}
+            
+        metrics = self.performance_monitor.get_current_metrics()
+        recommendations = self.performance_monitor.get_optimization_recommendations()
+        
+        optimizations_applied = []
+        
+        # Apply CPU optimization
+        if metrics.get("cpu_percent", 0) > 80:
+            if self.advanced_scheduler:
+                current_concurrent = self.config.get("max_concurrent", 3)
+                new_concurrent = max(1, current_concurrent - 1)
+                self.config["max_concurrent"] = new_concurrent
+                optimizations_applied.append(f"Reduced concurrent downloads to {new_concurrent}")
+                
+        # Apply memory optimization
+        if metrics.get("memory_percent", 0) > 85:
+            current_chunk = self.config.get("chunk_size", 1048576)
+            new_chunk = max(262144, current_chunk // 2)  # Minimum 256KB
+            self.config["chunk_size"] = new_chunk
+            optimizations_applied.append(f"Reduced chunk size to {new_chunk}")
+            
+        # Apply disk space optimization
+        if metrics.get("disk_percent", 0) > 90:
+            # Enable compression for temporary files
+            self.config["compress_temp"] = True
+            optimizations_applied.append("Enabled temporary file compression")
+            
+        return {
+            "status": "optimized",
+            "metrics": metrics,
+            "recommendations": recommendations,
+            "optimizations_applied": optimizations_applied
+        }

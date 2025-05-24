@@ -36,7 +36,7 @@ def ensure_directory_exists(path: str) -> str:
         return path
     except OSError as e:
         logger.warning(f"Failed to create directory {path}: {str(e)}")
-        return None
+        
 
 def validate_ffmpeg_path(ffmpeg_path: str) -> Tuple[bool, Optional[str]]:
     """

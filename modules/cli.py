@@ -82,8 +82,9 @@ class EnhancedCLI:
                 context={"config_keys": list(config.keys()) if config else []}
             )
             msg = f"Failed to initialize CLI: {str(error)}"
-            logging.error(msg)
-            raise RuntimeError(msg) from error    
+            logging.error(msg)            
+            raise RuntimeError(msg) from error
+    
     def get_or_create_event_loop(self):
         """Get the current event loop or create a new one if none exists"""
         try:
@@ -100,7 +101,7 @@ class EnhancedCLI:
             try:
                 console = Console()
                 console.print(f"[bold cyan]Processing {len(urls)} URLs[/]")
-                result = await self.download_manager.download_with_options(urls, options, non_interactive)
+                result = await self.download_manager.download_with_options(urls, options)
                 if result:
                     console.print(f"[bold green]Successfully downloaded {len(result)} files[/]")
                     self.error_handler.log_error(
@@ -311,8 +312,7 @@ class EnhancedCLI:
             
             # Use the execute_download method to handle all download logic
             return self.execute_download(all_urls, options)
-        
-        # Interactive mode command
+          # Interactive mode command
         @app.command("interactive", help="Run in interactive mode")
         def interactive():
             """Run in classic interactive mode"""
@@ -370,6 +370,40 @@ class EnhancedCLI:
             self.run_async(self._show_active_downloads_async())
             return 0
         
+        # Advanced system management commands
+        @app.command("scheduler", help="Manage download scheduler")
+        def scheduler_command(
+            action: str = typer.Argument(..., help="Action: status, pause, resume, clear"),
+            priority: int = typer.Option(5, "--priority", help="Set priority for queue operations"),
+        ):
+            """Manage the advanced download scheduler"""
+            return self.run_async(self._scheduler_command_async(action, priority))
+            
+        @app.command("performance", help="Show performance metrics and optimization")
+        def performance_command(
+            action: str = typer.Argument("status", help="Action: status, optimize, monitor"),
+            duration: int = typer.Option(10, "--duration", help="Monitoring duration in seconds"),
+        ):
+            """Show performance metrics and optimization"""
+            return self.run_async(self._performance_command_async(action, duration))
+            
+        @app.command("queue", help="Manage download queue")
+        def queue_command(
+            action: str = typer.Argument(..., help="Action: list, add, remove, clear"),
+            url: str = typer.Option(None, "--url", help="URL for add operation"),
+            priority: int = typer.Option(5, "--priority", help="Priority for add operation (1-10)"),
+            task_id: str = typer.Option(None, "--id", help="Task ID for remove operation"),        ):
+            """Manage the download queue"""
+            return self.run_async(self._queue_command_async(action, url, priority, task_id))
+            
+        @app.command("monitor", help="Real-time system monitoring")
+        def monitor_command(
+            interval: int = typer.Option(2, "--interval", help="Update interval in seconds"),
+            duration: int = typer.Option(60, "--duration", help="Total monitoring duration"),
+        ):
+            """Real-time system monitoring dashboard"""
+            return self.run_async(self._monitor_command_async(interval, duration))
+            
         return app
     
     async def _show_active_downloads_async(self) -> None:
@@ -381,7 +415,8 @@ class EnhancedCLI:
                 console_obj.print("[bold green]Active downloads:[/]")
                 for session in sessions:
                     console_obj.print(f"- {session.get('url', 'Unknown URL')}")
-            else:                console_obj.print("[bold yellow]No active downloads[/]")
+            else:
+                console_obj.print("[bold yellow]No active downloads[/]")
                 
     async def interactive_mode(self) -> None:
         """Rich interactive mode with command history"""
@@ -461,7 +496,217 @@ class EnhancedCLI:
             await self.download_manager.download(url, **options)
             console_obj.print(f"[bold green]Download complete:[/] {url}")
         except Exception as e:
-            console_obj.print(f"[bold red]Download error:[/] {str(e)}")
+            console_obj.print(f"[bold red]Download error:[/] {str(e)}")    
+    async def _scheduler_command_async(self, action: str, _priority: int) -> int:
+        """Handle scheduler command asynchronously"""
+        if not self.download_manager.advanced_scheduler:
+            console.print("[bold red]Advanced scheduler not available[/]")
+            return 1
+            
+        scheduler = self.download_manager.advanced_scheduler
+        
+        if action == "status":
+            return self._show_scheduler_status(scheduler)
+        elif action in ["pause", "resume", "clear"]:
+            return await self._handle_scheduler_action(scheduler, action)
+        else:
+            console.print(f"[bold red]Unknown action: {action}[/]")
+            console.print("Available actions: status, pause, resume, clear")
+            return 1
+
+    def _show_scheduler_status(self, scheduler) -> int:
+        """Show scheduler status"""
+        status = scheduler.get_status()
+        console.print("[bold cyan]Scheduler Status:[/]")
+        console.print(f"  Active: {status.get('active', False)}")
+        console.print(f"  Queue Size: {status.get('queue_size', 0)}")
+        console.print(f"  Active Downloads: {status.get('active_downloads', 0)}")
+        console.print(f"  Bandwidth Usage: {status.get('bandwidth_usage', 0):.2f} MB/s")
+        return 0
+        
+    async def _handle_scheduler_action(self, scheduler, action: str) -> int:
+        """Handle scheduler actions"""
+        if action == "pause":
+            await scheduler.pause_all()
+            console.print("[yellow]Scheduler paused[/]")
+        elif action == "resume":
+            await scheduler.resume_all()
+            console.print("[green]Scheduler resumed[/]")
+        elif action == "clear":
+            await scheduler.clear_queue()
+            console.print("[yellow]Queue cleared[/]")
+        return 0
+
+    async def _performance_command_async(self, action: str, duration: int) -> int:
+        """Handle performance command asynchronously"""
+        if not self.download_manager.performance_monitor:
+            console.print("[bold red]Performance monitor not available[/]")
+            return 1
+            
+        monitor = self.download_manager.performance_monitor
+        
+        if action == "status":
+            metrics = monitor.get_current_metrics()
+            recommendations = monitor.get_optimization_recommendations()
+            
+            console.print("[bold cyan]System Performance:[/]")
+            console.print(f"  CPU Usage: {metrics.get('cpu_percent', 0):.1f}%")
+            console.print(f"  Memory Usage: {metrics.get('memory_percent', 0):.1f}%")
+            console.print(f"  Disk Usage: {metrics.get('disk_percent', 0):.1f}%")
+            console.print(f"  Network: {metrics.get('network_mbps', 0):.2f} MB/s")
+            
+            if recommendations:
+                console.print("\n[bold yellow]Recommendations:[/]")
+                for rec in recommendations:
+                    console.print(f"  • {rec}")
+                    
+        elif action == "optimize":
+            result = await self.download_manager.optimize_performance()
+            console.print("[bold cyan]Performance Optimization:[/]")
+            console.print(f"  Status: {result.get('status', 'unknown')}")
+            
+            optimizations = result.get('optimizations_applied', [])
+            if optimizations:
+                console.print("  Applied optimizations:")
+                for opt in optimizations:
+                    console.print(f"    • {opt}")
+            else:
+                console.print("  No optimizations needed")
+                
+        elif action == "monitor":
+            console.print(f"[cyan]Monitoring performance for {duration} seconds...[/]")
+            
+            import time
+            start_time = time.time()
+            while time.time() - start_time < duration:
+                metrics = monitor.get_current_metrics()
+                console.print(f"\rCPU: {metrics.get('cpu_percent', 0):.1f}% | "
+                            f"Memory: {metrics.get('memory_percent', 0):.1f}% | "
+                            f"Network: {metrics.get('network_mbps', 0):.2f} MB/s", end="")
+                await asyncio.sleep(1)
+            console.print("\n[green]Monitoring complete[/]")
+            
+        else:
+            console.print(f"[bold red]Unknown action: {action}[/]")
+            console.print("Available actions: status, optimize, monitor")
+            return 1
+            
+        return 0
+
+    async def _queue_command_async(self, action: str, url: str, priority: int, task_id: str) -> int:
+        """Handle queue command asynchronously"""
+        if not self.download_manager.advanced_scheduler:
+            console.print("[bold red]Advanced scheduler not available[/]")
+            return 1
+            
+        scheduler = self.download_manager.advanced_scheduler
+        
+        if action == "list":
+            queue_info = scheduler.get_queue_info()
+            console.print("[bold cyan]Download Queue:[/]")
+            
+            if not queue_info:
+                console.print("  Queue is empty")
+            else:
+                for item in queue_info:
+                    console.print(f"  ID: {item.get('id', 'N/A')} | "
+                                f"URL: {item.get('url', 'N/A')[:50]}... | "
+                                f"Priority: {item.get('priority', 0)} | "
+                                f"Status: {item.get('status', 'unknown')}")
+                                
+        elif action == "add":
+            if not url:
+                console.print("[bold red]URL required for add operation[/]")
+                return 1
+                
+            task_id = await scheduler.add_download(
+                url=url,
+                options={},
+                priority=priority
+            )
+            console.print(f"[green]Added download to queue with ID: {task_id}[/]")
+            
+        elif action == "remove":
+            if not task_id:
+                console.print("[bold red]Task ID required for remove operation[/]")
+                return 1
+                
+            success = await scheduler.cancel_download(task_id)
+            if success:
+                console.print(f"[green]Removed task {task_id} from queue[/]")
+            else:
+                console.print(f"[red]Failed to remove task {task_id}[/]")
+                
+        elif action == "clear":
+            await scheduler.clear_queue()
+            console.print("[yellow]Queue cleared[/]")
+            
+        else:
+            console.print(f"[bold red]Unknown action: {action}[/]")
+            console.print("Available actions: list, add, remove, clear")
+            return 1
+            
+        return 0
+
+    async def _monitor_command_async(self, interval: int, duration: int) -> int:
+        """Handle real-time monitoring command"""
+        if not self.download_manager.performance_monitor:
+            console.print("[bold red]Performance monitor not available[/]")
+            return 1
+            
+        from rich.live import Live
+        from rich.table import Table
+        from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
+        
+        monitor = self.download_manager.performance_monitor
+        
+        def create_monitor_table():
+            table = Table(title="System Performance Monitor")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Current", style="green")
+            table.add_column("Status", style="yellow")
+            
+            metrics = monitor.get_current_metrics()
+            
+            # CPU
+            cpu_percent = metrics.get('cpu_percent', 0)
+            cpu_status = "HIGH" if cpu_percent > 80 else "NORMAL"
+            table.add_row("CPU Usage", f"{cpu_percent:.1f}%", cpu_status)
+            
+            # Memory
+            mem_percent = metrics.get('memory_percent', 0)
+            mem_status = "HIGH" if mem_percent > 80 else "NORMAL"
+            table.add_row("Memory Usage", f"{mem_percent:.1f}%", mem_status)
+            
+            # Network
+            network_mbps = metrics.get('network_mbps', 0)
+            table.add_row("Network", f"{network_mbps:.2f} MB/s", "ACTIVE" if network_mbps > 0.1 else "IDLE")
+            
+            # Downloads
+            if self.download_manager.advanced_scheduler:
+                status = self.download_manager.advanced_scheduler.get_status()
+                active_downloads = status.get('active_downloads', 0)
+                queue_size = status.get('queue_size', 0)
+                table.add_row("Active Downloads", str(active_downloads), "BUSY" if active_downloads > 0 else "IDLE")
+                table.add_row("Queue Size", str(queue_size), "QUEUED" if queue_size > 0 else "EMPTY")
+            
+            return table
+        
+        console.print(f"[cyan]Starting real-time monitoring for {duration} seconds...[/]")
+        console.print("[yellow]Press Ctrl+C to stop early[/]")
+        
+        import time
+        start_time = time.time()
+        
+        try:
+            with Live(create_monitor_table(), refresh_per_second=1/interval) as live:
+                while time.time() - start_time < duration:
+                    await asyncio.sleep(interval)
+                    live.update(create_monitor_table())
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Monitoring stopped by user[/]")
+            console.print("[green]Monitoring complete[/]")
+        return 0
 
 def signal_handler(sig: int, frame: Any) -> NoReturn:
     """Handle Ctrl+C gracefully"""

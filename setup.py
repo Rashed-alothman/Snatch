@@ -39,7 +39,12 @@ setup(
         "ffmpeg>=1.4",
         "mutagen>=1.47.0",
         "psutil>=7.0.0",
-        
+        "librosa",
+        "soundfile>=0.13.1",  # For audio file handling 
+        "noisereduce>=3.0.3",
+        "pyloudnorm>=0.1.1",  # For loudness normalization
+        "scipy>=1.15.3", 
+
         # HTTP and networking
         "requests>=2.32.3",
         "urllib3>=2.4.0",
