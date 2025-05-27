@@ -14,6 +14,9 @@ import typer
 import yaml
 from rich.console import Console
 from rich.traceback import install
+from rich.prompt import Confirm
+from rich.live import Live
+from rich.table import Table
 
 # Local imports
 from .constants import VERSION, EXAMPLES, APP_NAME
@@ -26,6 +29,8 @@ from .network import run_speedtest
 from .common_utils import list_supported_sites, display_system_stats
 from .cache import DownloadCache
 from .error_handler import EnhancedErrorHandler, handle_errors, ErrorCategory, ErrorSeverity
+from .config_manager import ConfigurationManager, CacheType
+from .customization_manager import CustomizationManager, ThemePreset, ConfigFormat, InterfaceMode, ProgressStyle, NotificationLevel
 
 # Enable Rich traceback formatting
 install(show_locals=True)
@@ -62,10 +67,16 @@ class EnhancedCLI:
             
             # Create sessions directory if it doesn't exist
             os.makedirs(os.path.dirname(session_file), exist_ok=True)
-            
-            # Initialize dependencies
+              # Initialize dependencies
             self.session_manager = AsyncSessionManager(session_file)
             self.download_cache = DownloadCache()
+              # Initialize configuration manager
+            config_file = config.get("config_file", "config.json")
+            self.config_manager = ConfigurationManager(config_file)
+            
+            # Initialize customization manager
+            customization_file = config.get("customization_file", "customization.yaml")
+            self.customization_manager = CustomizationManager(customization_file)
             
             # Create download manager with dependencies
             self.download_manager = AsyncDownloadManager(
@@ -331,13 +342,33 @@ class EnhancedCLI:
             from .interactive_mode import launch_enhanced_interactive_mode
             launch_enhanced_interactive_mode(self.config)
             return 0
-              # New textual interface command
+            
+        # Modern interactive interface command
+        @app.command("modern", help="Run with modern interactive interface")
+        def modern():
+            """Run with modern beautiful interactive interface"""
+            try:
+                from Theme.modern_interactive import run_modern_interactive
+                run_modern_interactive(self.config)
+            except ImportError as e:
+                console.print(f"[bold red]Modern interface not available: {str(e)}[/]")
+                console.print("[yellow]Falling back to enhanced interactive mode.[/]")
+                from .interactive_mode import launch_enhanced_interactive_mode
+                launch_enhanced_interactive_mode(self.config)
+            except Exception as e:
+                console.print(f"[bold red]Error launching modern interface: {str(e)}[/]")
+                console.print("[yellow]Falling back to enhanced interactive mode.[/]")
+                from .interactive_mode import launch_enhanced_interactive_mode
+                launch_enhanced_interactive_mode(self.config)
+            return 0
+            
+        # New textual interface command
         @app.command("textual", help="Run with modern Textual interface")
         def textual():
             """Run with modern Textual interface"""
             try:
                 # Import at runtime to avoid dependencies if not used
-                from .textual_interface import start_textual_interface
+                from Theme.textual_interface import start_textual_interface
                 # Pass the current CLI instance to maintain state
                 start_textual_interface(self.config)
             except ImportError as e:
@@ -392,8 +423,7 @@ class EnhancedCLI:
         @app.command("performance", help="Show performance metrics and optimization")
         def performance_command(
             action: str = typer.Argument("status", help="Action: status, optimize, monitor"),
-            duration: int = typer.Option(10, "--duration", help="Monitoring duration in seconds"),
-        ):
+            duration: int = typer.Option(10, "--duration", help="Monitoring duration in seconds"),        ):
             """Show performance metrics and optimization"""
             return self.run_async(self._performance_command_async(action, duration))
             
@@ -402,7 +432,8 @@ class EnhancedCLI:
             action: str = typer.Argument(..., help="Action: list, add, remove, clear"),
             url: str = typer.Option(None, "--url", help="URL for add operation"),
             priority: int = typer.Option(5, "--priority", help="Priority for add operation (1-10)"),
-            task_id: str = typer.Option(None, "--id", help="Task ID for remove operation"),        ):
+            task_id: str = typer.Option(None, "--id", help="Task ID for remove operation"),
+        ):
             """Manage the download queue"""
             return self.run_async(self._queue_command_async(action, url, priority, task_id))
             
@@ -413,6 +444,131 @@ class EnhancedCLI:
         ):
             """Real-time system monitoring dashboard"""
             return self.run_async(self._monitor_command_async(interval, duration))
+        
+        # Configuration management commands
+        @app.command("clear-cache", help="Clear cache data")
+        def clear_cache_command(
+            cache_type: str = typer.Option("all", "--type", help="Cache type to clear (all, metadata, downloads, sessions, thumbnails, temp)"),
+            dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without actually deleting"),
+            no_confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+        ):
+            """Clear cached data with safety checks"""
+            return self._clear_cache_command(cache_type, dry_run, not no_confirm)
+        
+        # Config subcommands using a group
+        config_app = typer.Typer(help="Configuration management commands")
+        app.add_typer(config_app, name="config")
+        
+        @config_app.command("edit", help="Edit configuration file")
+        def config_edit(
+            editor: str = typer.Option(None, "--editor", help="Editor to use (auto-detect if not specified)"),
+            no_backup: bool = typer.Option(False, "--no-backup", help="Skip creating backup before editing"),
+        ):
+            """Open configuration file in editor with validation and backup"""
+            return self._config_edit_command(editor, not no_backup)
+        
+        @config_app.command("show", help="Display current configuration")
+        def config_show(
+            format_type: str = typer.Option("table", "--format", "-f", help="Output format (table, json, yaml)"),
+            category: str = typer.Option(None, "--category", "-c", help="Filter by category (download, video, audio, network, interface, advanced)"),
+            non_default: bool = typer.Option(False, "--non-default", help="Only show non-default values"),
+            output: str = typer.Option(None, "--output", "-o", help="Save to file instead of displaying"),
+        ):
+            """Display current configuration settings"""
+            return self._config_show_command(format_type, category, non_default, output)
+        
+        @config_app.command("backup", help="Manage configuration backups")
+        def config_backup(
+            action: str = typer.Argument("list", help="Action: list, create, restore"),
+            backup_name: str = typer.Option(None, "--name", help="Backup name for restore action"),
+        ):
+            """Manage configuration backups"""
+            return self._config_backup_command(action, backup_name)
+        @config_app.command("reset", help="Reset configuration to defaults")
+        def config_reset(
+            category: str = typer.Option(None, "--category", help="Reset only specific category"),            no_confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+        ):
+            """Reset configuration to default values"""
+            return self._config_reset_command(category, not no_confirm)
+            
+        # Customization subcommands using a group
+        customize_app = typer.Typer(help="Customization and theming commands")
+        app.add_typer(customize_app, name="customize")
+        
+        @customize_app.command("theme", help="Manage themes")
+        def customize_theme(
+            action: str = typer.Argument("show", help="Action: show, set, list, create"),
+            theme_name: str = typer.Option(None, "--theme", help="Theme name for set action"),
+            colors: str = typer.Option(None, "--colors", help="Custom colors in JSON format"),
+        ):
+            """Manage application themes"""
+            return self._customize_theme_command(action, theme_name, colors)
+        
+        @customize_app.command("performance", help="Configure performance settings")
+        def customize_performance(
+            setting: str = typer.Option(None, "--setting", help="Setting to modify"),
+            value: str = typer.Option(None, "--value", help="New value for the setting"),
+            show_all: bool = typer.Option(False, "--show", help="Show all performance settings"),
+        ):
+            """Configure performance settings"""
+            return self._customize_performance_command(setting, value, show_all)
+        
+        @customize_app.command("interface", help="Configure interface preferences")
+        def customize_interface(
+            setting: str = typer.Option(None, "--setting", help="Setting to modify"),
+            value: str = typer.Option(None, "--value", help="New value for the setting"),
+            show_all: bool = typer.Option(False, "--show", help="Show all interface settings"),
+        ):
+            """Configure interface preferences"""
+            return self._customize_interface_command(setting, value, show_all)
+        
+        @customize_app.command("behavior", help="Configure behavior preferences")
+        def customize_behavior(
+            setting: str = typer.Option(None, "--setting", help="Setting to modify"),
+            value: str = typer.Option(None, "--value", help="New value for the setting"),
+            show_all: bool = typer.Option(False, "--show", help="Show all behavior settings"),
+        ):
+            """Configure behavior preferences"""
+            return self._customize_behavior_command(setting, value, show_all)
+        
+        @customize_app.command("alias", help="Manage command aliases")
+        def customize_alias(
+            action: str = typer.Argument("list", help="Action: list, add, remove"),
+            alias: str = typer.Option(None, "--alias", help="Alias name"),
+            command: str = typer.Option(None, "--command", help="Command for alias"),
+        ):
+            """Manage command aliases"""
+            return self._customize_alias_command(action, alias, command)
+        
+        @customize_app.command("profile", help="Manage configuration profiles")
+        def customize_profile(
+            action: str = typer.Argument("list", help="Action: list, create, load, delete"),
+            profile_name: str = typer.Option(None, "--name", help="Profile name"),
+        ):
+            """Manage configuration profiles"""
+            return self._customize_profile_command(action, profile_name)
+        
+        @customize_app.command("export", help="Export customization settings")
+        def customize_export(
+            output_file: str = typer.Argument(..., help="Output file path"),
+            format_type: str = typer.Option("yaml", "--format", help="Export format (yaml, json, toml)"),
+        ):
+            """Export customization settings to file"""
+            return self._customize_export_command(output_file, format_type)
+        
+        @customize_app.command("import", help="Import customization settings")
+        def customize_import(
+            input_file: str = typer.Argument(..., help="Input file path"),
+        ):
+            """Import customization settings from file"""
+            return self._customize_import_command(input_file)
+        
+        @customize_app.command("reset", help="Reset customization to defaults")
+        def customize_reset(
+            no_confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+        ):
+            """Reset all customization settings to defaults"""
+            return self._customize_reset_command(not no_confirm)
             
         return app
     
@@ -699,7 +855,6 @@ class EnhancedCLI:
                 table.add_row("Queue Size", str(queue_size), "QUEUED" if queue_size > 0 else "EMPTY")
             
             return table
-        
         console.print(f"[cyan]Starting real-time monitoring for {duration} seconds...[/]")
         console.print("[yellow]Press Ctrl+C to stop early[/]")
         
@@ -713,8 +868,522 @@ class EnhancedCLI:
                     live.update(create_monitor_table())
         except KeyboardInterrupt:
             console.print("\n[yellow]Monitoring stopped by user[/]")
-            console.print("[green]Monitoring complete[/]")
+        
+        console.print("[green]Monitoring complete[/]")
         return 0
+
+    # Configuration management command implementations
+    
+    def _clear_cache_command(self, cache_type: str, dry_run: bool, confirm: bool) -> int:
+        """Implementation for clear-cache command"""
+        try:
+            # Convert string to CacheType enum
+            if cache_type.lower() == "all":
+                cache_types = [CacheType.ALL]
+            else:
+                try:
+                    cache_types = [CacheType(cache_type.lower())]
+                except ValueError:
+                    console.print(f"[red]Invalid cache type: {cache_type}[/]")
+                    console.print("[yellow]Valid types: all, metadata, downloads, sessions, thumbnails, temp[/]")
+                    return 1
+            
+            # Execute cache clearing
+            result = self.config_manager.clear_cache(
+                cache_types=cache_types,
+                confirm=confirm,
+                dry_run=dry_run
+            )
+            
+            return 0 if result["success"] else 1
+            
+        except Exception as e:
+            console.print(f"[red]Error clearing cache: {str(e)}[/]")
+            return 1    
+    def _config_edit_command(self, editor: str, create_backup: bool) -> int:
+        """Implementation for config edit command"""
+        try:
+            result = self.config_manager.edit_config(
+                editor=editor,
+                create_backup=create_backup
+            )
+            
+            return 0 if result["success"] else 1
+            
+        except Exception as e:
+            console.print(f"[red]Error editing configuration: {str(e)}[/]")
+            return 1
+    def _config_show_command(self, format_type: str, category: str, non_default: bool, output: str) -> int:
+        """Implementation for config show command"""
+        try:
+            result = self.config_manager.show_config(
+                format_type=format_type,
+                filter_category=category,
+                filter_non_default=non_default,
+                output_file=output
+            )
+            
+            return 0 if result else 1
+            
+        except Exception as e:
+            console.print(f"[red]Error displaying configuration: {str(e)}[/]")
+            return 1
+    def _config_backup_command(self, action: str, backup_name: str) -> int:
+        """Implementation for config backup command"""
+        try:
+            if action == "list":
+                backups = self.config_manager.list_backups_simple()
+                if backups:
+                    console.print("[bold cyan]Available configuration backups:[/]")
+                    for backup in backups:
+                        console.print(f"  - {backup}")
+                else:
+                    console.print("[yellow]No configuration backups found[/]")
+                return 0
+                
+            elif action == "create":
+                result = self.config_manager.create_backup()
+                if result["success"]:
+                    console.print(f"[green]Backup created: {result['backup_file']}[/]")
+                else:
+                    console.print(f"[red]Failed to create backup: {result.get('error', 'Unknown error')}[/]")
+                return 0 if result["success"] else 1
+                
+            elif action == "restore":
+                if not backup_name:
+                    console.print("[red]Backup name required for restore action[/]")
+                    return 1
+                    
+                result = self.config_manager.restore_backup(backup_name)
+                if result["success"]:
+                    console.print(f"[green]Configuration restored from: {backup_name}[/]")
+                else:
+                    console.print(f"[red]Failed to restore backup: {result.get('error', 'Unknown error')}[/]")
+                return 0 if result["success"] else 1
+                
+            else:
+                console.print(f"[red]Invalid action: {action}[/]")
+                console.print("[yellow]Valid actions: list, create, restore[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error managing backups: {str(e)}[/]")
+            return 1
+
+    def _config_reset_command(self, category: str, confirm: bool) -> int:
+        """Implementation for config reset command"""
+        try:
+            if confirm:
+                if category:
+                    message = f"reset the '{category}' configuration category to defaults"
+                else:
+                    message = "reset ALL configuration to defaults"
+                    
+                if not Confirm.ask(f"Are you sure you want to {message}?"):
+                    console.print("[yellow]Reset cancelled by user[/]")
+                    return 0
+            
+            result = self.config_manager.reset_config(category=category)
+            
+            if result["success"]:
+                if category:
+                    console.print(f"[green]Configuration category '{category}' reset to defaults[/]")
+                else:
+                    console.print("[green]All configuration reset to defaults[/]")
+            else:
+                console.print(f"[red]Failed to reset configuration: {result.get('error', 'Unknown error')}[/]")
+                
+            return 0 if result["success"] else 1
+        except Exception as e:
+            console.print(f"[red]Error resetting configuration: {str(e)}[/]")
+            return 1
+
+    # Customization command implementations
+    def _customize_theme_command(self, action: str, theme_name: str, colors: str) -> int:
+        """Implementation for customize theme command"""
+        try:
+            if action == "show":
+                config = self.customization_manager.load_config()
+                console.print(f"[cyan]Current theme:[/] {config.theme_preset.value}")
+                if config.custom_theme_colors:
+                    console.print("[cyan]Custom colors are active[/]")
+                return 0
+                
+            elif action == "list":
+                console.print("[cyan]Available themes:[/]")
+                for theme in ThemePreset:
+                    console.print(f"  - {theme.value}")
+                return 0
+                
+            elif action == "set":
+                if not theme_name:
+                    console.print("[red]Theme name required for set action[/]")
+                    return 1
+                    
+                try:
+                    theme_preset = ThemePreset(theme_name)
+                    success = self.customization_manager.update_theme(theme_preset=theme_preset)
+                    if success:
+                        console.print(f"[green]Theme set to: {theme_name}[/]")
+                    else:
+                        console.print(f"[red]Failed to set theme: {theme_name}[/]")
+                    return 0 if success else 1
+                except ValueError:
+                    console.print(f"[red]Unknown theme: {theme_name}[/]")
+                    console.print("[yellow]Use 'customize theme list' to see available themes[/]")
+                    return 1
+                    
+            elif action == "create":
+                if not colors:
+                    console.print("[red]Colors JSON required for create action[/]")
+                    console.print("[yellow]Example: --colors '{\"primary\": \"#ff0000\", \"secondary\": \"#00ff00\"}'[/]")
+                    return 1
+                    
+                try:
+                    import json
+                    color_dict = json.loads(colors)
+                    from .customization_manager import ThemeColors
+                    custom_colors = ThemeColors(**color_dict)
+                    success = self.customization_manager.update_theme(custom_colors=custom_colors)
+                    if success:
+                        console.print("[green]Custom theme created and applied[/]")
+                    else:
+                        console.print("[red]Failed to create custom theme[/]")
+                    return 0 if success else 1
+                except (json.JSONDecodeError, TypeError) as e:
+                    console.print(f"[red]Invalid colors JSON: {e}[/]")
+                    return 1
+                    
+            else:
+                console.print(f"[red]Invalid action: {action}[/]")
+                console.print("[yellow]Valid actions: show, list, set, create[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error managing themes: {str(e)}[/]")
+            return 1
+
+    def _customize_performance_command(self, setting: str, value: str, show_all: bool) -> int:
+        """Implementation for customize performance command"""
+        try:
+            if show_all or (not setting and not value):
+                config = self.customization_manager.load_config()
+                console.print("[cyan]Performance Settings:[/]")
+                
+                table = Table()
+                table.add_column("Setting", style="cyan")
+                table.add_column("Value", style="green")
+                table.add_column("Description", style="dim")
+                
+                perf = config.performance
+                table.add_row("max_concurrent_downloads", str(perf.max_concurrent_downloads), "Maximum simultaneous downloads")
+                table.add_row("concurrent_fragment_downloads", str(perf.concurrent_fragment_downloads), "Fragments per download")
+                table.add_row("chunk_size", str(perf.chunk_size), "Download chunk size (bytes)")
+                table.add_row("connection_timeout", str(perf.connection_timeout), "Connection timeout (seconds)")
+                table.add_row("max_retries", str(perf.max_retries), "Maximum retry attempts")
+                table.add_row("global_bandwidth_limit", str(perf.global_bandwidth_limit), "Global bandwidth limit (0=unlimited)")
+                table.add_row("max_memory_usage_mb", str(perf.max_memory_usage_mb), "Memory limit (MB)")
+                
+                console.print(table)
+                return 0
+                
+            if setting and value:
+                # Convert value to appropriate type
+                try:
+                    if setting in ["max_concurrent_downloads", "concurrent_fragment_downloads", "chunk_size", 
+                                   "max_retries", "global_bandwidth_limit", "per_download_bandwidth_limit", 
+                                   "max_memory_usage_mb", "cache_size_mb", "temp_cleanup_interval"]:
+                        value = int(value)
+                    elif setting in ["connection_timeout", "read_timeout", "retry_delay"]:
+                        value = float(value)
+                    elif setting in ["exponential_backoff"]:
+                        value = value.lower() in ["true", "1", "yes", "on"]
+                    
+                    success = self.customization_manager.update_performance(**{setting: value})
+                    if success:
+                        console.print(f"[green]Performance setting updated: {setting} = {value}[/]")
+                    else:
+                        console.print(f"[red]Failed to update setting: {setting}[/]")
+                    return 0 if success else 1
+                    
+                except ValueError:
+                    console.print(f"[red]Invalid value for {setting}: {value}[/]")
+                    return 1
+            else:
+                console.print("[red]Both setting and value required, or use --show[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error configuring performance: {str(e)}[/]")
+            return 1
+
+    def _customize_interface_command(self, setting: str, value: str, show_all: bool) -> int:
+        """Implementation for customize interface command"""
+        try:
+            if show_all or (not setting and not value):
+                config = self.customization_manager.load_config()
+                console.print("[cyan]Interface Settings:[/]")
+                
+                table = Table()
+                table.add_column("Setting", style="cyan")
+                table.add_column("Value", style="green")
+                table.add_column("Description", style="dim")
+                
+                interface = config.interface
+                table.add_row("interface_mode", interface.interface_mode.value, "Display mode")
+                table.add_row("enable_keyboard_shortcuts", str(interface.enable_keyboard_shortcuts), "Enable shortcuts")
+                table.add_row("auto_complete", str(interface.auto_complete), "Auto-completion")
+                table.add_row("show_progress_bars", str(interface.show_progress_bars), "Show progress bars")
+                table.add_row("show_status_bar", str(interface.show_status_bar), "Show status bar")
+                table.add_row("animate_progress", str(interface.animate_progress), "Animate progress")
+                table.add_row("sidebar_width", str(interface.sidebar_width), "Sidebar width")
+                table.add_row("max_display_items", str(interface.max_display_items), "Max items to display")
+                
+                console.print(table)
+                return 0
+                
+            if setting and value:
+                # Convert value to appropriate type
+                try:
+                    if setting == "interface_mode":
+                        value = InterfaceMode(value)
+                    elif setting in ["enable_keyboard_shortcuts", "auto_complete", "show_progress_bars", 
+                                     "show_status_bar", "show_menu_bar", "animate_progress", 
+                                     "high_contrast_mode", "large_text_mode", "screen_reader_mode"]:
+                        value = value.lower() in ["true", "1", "yes", "on"]
+                    elif setting in ["sidebar_width", "content_width", "max_display_items", "history_size"]:
+                        value = int(value)
+                    
+                    success = self.customization_manager.update_interface(**{setting: value})
+                    if success:
+                        console.print(f"[green]Interface setting updated: {setting} = {value}[/]")
+                    else:
+                        console.print(f"[red]Failed to update setting: {setting}[/]")
+                    return 0 if success else 1
+                    
+                except ValueError:
+                    console.print(f"[red]Invalid value for {setting}: {value}[/]")
+                    return 1
+            else:
+                console.print("[red]Both setting and value required, or use --show[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error configuring interface: {str(e)}[/]")
+            return 1
+
+    def _customize_behavior_command(self, setting: str, value: str, show_all: bool) -> int:
+        """Implementation for customize behavior command"""
+        try:
+            if show_all or (not setting and not value):
+                config = self.customization_manager.load_config()
+                console.print("[cyan]Behavior Settings:[/]")
+                
+                table = Table()
+                table.add_column("Setting", style="cyan")
+                table.add_column("Value", style="green")
+                table.add_column("Description", style="dim")
+                
+                behavior = config.behavior
+                table.add_row("confirm_file_overwrite", str(behavior.confirm_file_overwrite), "Confirm before overwriting files")
+                table.add_row("confirm_large_downloads", str(behavior.confirm_large_downloads), "Confirm large downloads")
+                table.add_row("confirm_cache_clear", str(behavior.confirm_cache_clear), "Confirm cache clearing")
+                table.add_row("auto_organize_downloads", str(behavior.auto_organize_downloads), "Auto-organize downloads")
+                table.add_row("auto_update_metadata", str(behavior.auto_update_metadata), "Auto-update metadata")
+                table.add_row("auto_generate_thumbnails", str(behavior.auto_generate_thumbnails), "Auto-generate thumbnails")
+                table.add_row("resume_incomplete_downloads", str(behavior.resume_incomplete_downloads), "Resume incomplete downloads")
+                table.add_row("continue_on_error", str(behavior.continue_on_error), "Continue on errors")
+                table.add_row("auto_save_sessions", str(behavior.auto_save_sessions), "Auto-save sessions")
+                
+                console.print(table)
+                return 0
+                
+            if setting and value:
+                # Convert value to appropriate type
+                try:
+                    if setting in ["large_download_threshold_mb", "session_auto_save_interval", "max_session_history"]:
+                        value = int(value)
+                    else:
+                        value = value.lower() in ["true", "1", "yes", "on"]
+                    
+                    success = self.customization_manager.update_behavior(**{setting: value})
+                    if success:
+                        console.print(f"[green]Behavior setting updated: {setting} = {value}[/]")
+                    else:
+                        console.print(f"[red]Failed to update setting: {setting}[/]")
+                    return 0 if success else 1
+                    
+                except ValueError:
+                    console.print(f"[red]Invalid value for {setting}: {value}[/]")
+                    return 1
+            else:
+                console.print("[red]Both setting and value required, or use --show[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error configuring behavior: {str(e)}[/]")
+            return 1
+
+    def _customize_alias_command(self, action: str, alias: str, command: str) -> int:
+        """Implementation for customize alias command"""
+        try:
+            if action == "list":
+                aliases = self.customization_manager.get_aliases()
+                if aliases:
+                    console.print("[cyan]Command Aliases:[/]")
+                    table = Table()
+                    table.add_column("Alias", style="cyan")
+                    table.add_column("Command", style="green")
+                    
+                    for alias_name, cmd in aliases.items():
+                        table.add_row(alias_name, cmd)
+                    
+                    console.print(table)
+                else:
+                    console.print("[yellow]No aliases configured[/]")
+                return 0
+                
+            elif action == "add":
+                if not alias or not command:
+                    console.print("[red]Both alias and command required for add action[/]")
+                    return 1
+                    
+                success = self.customization_manager.add_alias(alias, command)
+                if success:
+                    console.print(f"[green]Alias added: {alias} -> {command}[/]")
+                else:
+                    console.print(f"[red]Failed to add alias: {alias}[/]")
+                return 0 if success else 1
+                
+            elif action == "remove":
+                if not alias:
+                    console.print("[red]Alias name required for remove action[/]")
+                    return 1
+                    
+                success = self.customization_manager.remove_alias(alias)
+                if success:
+                    console.print(f"[green]Alias removed: {alias}[/]")
+                else:
+                    console.print(f"[red]Alias not found: {alias}[/]")
+                return 0 if success else 1
+                
+            else:
+                console.print(f"[red]Invalid action: {action}[/]")
+                console.print("[yellow]Valid actions: list, add, remove[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error managing aliases: {str(e)}[/]")
+            return 1
+
+    def _customize_profile_command(self, action: str, profile_name: str) -> int:
+        """Implementation for customize profile command"""
+        try:
+            if action == "list":
+                profiles = self.customization_manager.list_profiles()
+                if profiles:
+                    console.print("[cyan]Available Profiles:[/]")
+                    for profile in profiles:
+                        console.print(f"  - {profile}")
+                else:
+                    console.print("[yellow]No profiles found[/]")
+                return 0
+                
+            elif action == "create":
+                if not profile_name:
+                    console.print("[red]Profile name required for create action[/]")
+                    return 1
+                    
+                success = self.customization_manager.create_profile(profile_name)
+                if success:
+                    console.print(f"[green]Profile created: {profile_name}[/]")
+                else:
+                    console.print(f"[red]Failed to create profile: {profile_name}[/]")
+                return 0 if success else 1
+                
+            elif action == "load":
+                if not profile_name:
+                    console.print("[red]Profile name required for load action[/]")
+                    return 1
+                    
+                success = self.customization_manager.load_profile(profile_name)
+                if success:
+                    console.print(f"[green]Profile loaded: {profile_name}[/]")
+                else:
+                    console.print(f"[red]Failed to load profile: {profile_name}[/]")
+                return 0 if success else 1
+                
+            elif action == "delete":
+                if not profile_name:
+                    console.print("[red]Profile name required for delete action[/]")
+                    return 1
+                    
+                # This would need to be implemented in CustomizationManager
+                console.print("[yellow]Profile deletion not yet implemented[/]")
+                return 1
+                
+            else:
+                console.print(f"[red]Invalid action: {action}[/]")
+                console.print("[yellow]Valid actions: list, create, load, delete[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error managing profiles: {str(e)}[/]")
+            return 1
+
+    def _customize_export_command(self, output_file: str, format_type: str) -> int:
+        """Implementation for customize export command"""
+        try:
+            try:
+                config_format = ConfigFormat(format_type)
+            except ValueError:
+                console.print(f"[red]Invalid format: {format_type}[/]")
+                console.print("[yellow]Valid formats: yaml, json, toml[/]")
+                return 1
+                
+            success = self.customization_manager.export_config(output_file, config_format)
+            if success:
+                console.print(f"[green]Customization settings exported to: {output_file}[/]")
+            else:
+                console.print(f"[red]Failed to export settings to: {output_file}[/]")
+            return 0 if success else 1
+            
+        except Exception as e:
+            console.print(f"[red]Error exporting settings: {str(e)}[/]")
+            return 1
+
+    def _customize_import_command(self, input_file: str) -> int:
+        """Implementation for customize import command"""
+        try:
+            success = self.customization_manager.import_config(input_file)
+            if success:
+                console.print(f"[green]Customization settings imported from: {input_file}[/]")
+            else:
+                console.print(f"[red]Failed to import settings from: {input_file}[/]")
+            return 0 if success else 1
+            
+        except Exception as e:
+            console.print(f"[red]Error importing settings: {str(e)}[/]")
+            return 1
+
+    def _customize_reset_command(self, confirm: bool) -> int:
+        """Implementation for customize reset command"""
+        try:
+            if confirm:
+                if not Confirm.ask("Are you sure you want to reset ALL customization settings to defaults?"):
+                    console.print("[yellow]Reset cancelled by user[/]")
+                    return 0
+            
+            success = self.customization_manager.reset_to_defaults()
+            if success:
+                console.print("[green]Customization settings reset to defaults[/]")
+            else:
+                console.print("[red]Failed to reset customization settings[/]")
+            return 0 if success else 1
+            
+        except Exception as e:
+            console.print(f"[red]Error resetting customization: {str(e)}[/]")
+            return 1
 
 def signal_handler(sig: int, frame: Any) -> NoReturn:
     """Handle Ctrl+C gracefully"""
@@ -737,7 +1406,7 @@ async def async_main() -> None:
     if len(sys.argv) <= 1:
         try:
             # Try to use the modern textual interface first
-            from .textual_interface import start_textual_interface
+            from Theme.textual_interface import start_textual_interface
             start_textual_interface(config)
         except ImportError:
             # Fall back to classic interactive mode if textual is not available

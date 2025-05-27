@@ -65,11 +65,7 @@ from .audio_processor import EnhancedAudioProcessor
 from .advanced_config import AdvancedConfigManager, ConfigCategory
 from .p2p import P2PManager
 from .network import NetworkManager
-from .cyberpunk_ui import (
-    CyberpunkBanner, HolographicProgress, MatrixDataTable, 
-    CyberStatusPanel, NeonMenu, create_cyberpunk_layout
-)
-from .cyberpunk_interactive import CyberpunkInteractiveApp
+from Theme.cyberpunk_interactive import CyberpunkInteractiveApp
 
 # Textual imports for TUI features
 from textual.app import App, ComposeResult
@@ -2544,40 +2540,48 @@ def run_interactive_mode(config: Dict[str, Any]) -> None:
 
 # Enhanced Cyberpunk Integration
 def launch_enhanced_interactive_mode(config: Dict[str, Any]) -> None:
-    """Launch the enhanced cyberpunk interactive interface with fallbacks.
+    """Launch the enhanced modern interactive interface with fallbacks.
     
-    This function tries to launch the cyberpunk interface first, then falls back
-    to the standard textual interface if needed.
+    This function tries to launch the modern interface first, then falls back
+    to working and other interfaces if needed.
     
     Args:
         config: Application configuration dictionary
     """
     try:
-        # First try to launch the cyberpunk interface
-        logging.info("Launching enhanced cyberpunk interface...")
-        from .cyberpunk_interactive import launch_cyberpunk_interface
-        launch_cyberpunk_interface(config)
+        # First try to launch the modern interface
+        logging.info("Launching modern interactive interface...")
+        from Theme.modern_interactive import run_modern_interactive
+        run_modern_interactive(config)
         
     except Exception as e:
-        logging.warning(f"Cyberpunk interface failed: {e}")
-        logging.info("Falling back to standard textual interface...")
+        logging.warning(f"Modern interface failed: {e}")
+        logging.info("Falling back to working interface...")
         try:
-            # Fall back to standard textual interface
-            launch_textual_interface(config)
+            # Fall back to working interface
+            from Theme.working_interactive import run_working_interactive
+            run_working_interactive(config)
         except Exception as fallback_error:
-            logging.error(f"Standard interface also failed: {fallback_error}")
-            logging.info("Falling back to console interface...")
+            logging.warning(f"Working interface failed: {fallback_error}")
+            logging.info("Falling back to standard textual interface...")
             try:
-                # Final fallback to console interface
-                import asyncio
-                asyncio.run(launch_interactive_mode(config))
-            except Exception as final_error:
-                console = Console()
-                console.print("[red]All interface modes failed:[/]")
-                console.print(f"[red]Cyberpunk error: {e}[/]")
-                console.print(f"[red]Textual error: {fallback_error}[/]")
-                console.print(f"[red]Console error: {final_error}[/]")
-                raise final_error
+                # Fall back to standard textual interface
+                launch_textual_interface(config)
+            except Exception as textual_error:                
+                logging.error(f"Standard interface also failed: {textual_error}")
+                logging.info("Falling back to console interface...")
+                try:
+                    # Final fallback to console interface
+                    import asyncio
+                    asyncio.run(launch_interactive_mode(config))
+                except Exception as final_error:
+                    console = Console()
+                    console.print("[red]All interface modes failed:[/]")
+                    console.print(f"[red]Modern error: {e}[/]")
+                    console.print(f"[red]Working error: {fallback_error}[/]")
+                    console.print(f"[red]Textual error: {textual_error}[/]")
+                    console.print(f"[red]Console error: {final_error}[/]")
+                    raise final_error
 
 # Update the main initialization function to use cyberpunk by default
 def initialize_interactive_mode(config: Dict[str, Any]) -> None:

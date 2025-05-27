@@ -21,7 +21,7 @@ webn_ext = ".webm"
 part_ext = ".part"
 speedtestresult = "speedtest_result.json"
 bestaudio_ext = "bestaudio/best"
-VERSION = "1.8.0"  # Centralized version definition
+VERSION = "1.8.1"  # Centralized version definition
 LOG_FILE = "download_log.txt"
 SPINNER_CHARS = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 # Default throttling and retry constants
@@ -42,6 +42,56 @@ DEFAULT_ORGANIZATION_TEMPLATES = {
 
 # Safe filename characters regex pattern
 SAFE_FILENAME_CHARS = re.compile(r"[^\w\-. ]")
+
+# Video upscaling presets
+UPSCALE_PRESETS = {
+    "low": {
+        "quality": "low",
+        "speed": "fast",
+        "threads": 2,
+        "model": "realesrgan-x2plus"
+    },
+    "medium": {
+        "quality": "medium", 
+        "speed": "medium",
+        "threads": 4,
+        "model": "realesrgan-x4plus"
+    },
+    "high": {
+        "quality": "high",
+        "speed": "slow", 
+        "threads": 8,
+        "model": "realesrgan-x4plus-anime"
+    }
+}
+
+# Upscaling method configurations
+UPSCALE_METHODS = {
+    "realesrgan": {
+        "type": "ai",
+        "quality": "highest",
+        "speed": "slow",
+        "models": ["realesrgan-x2plus", "realesrgan-x4plus", "realesrgan-x4plus-anime"]
+    },
+    "lanczos": {
+        "type": "traditional",
+        "quality": "high", 
+        "speed": "medium",
+        "algorithm": "lanczos"
+    },
+    "bicubic": {
+        "type": "traditional",
+        "quality": "good",
+        "speed": "fast",
+        "algorithm": "bicubic"
+    },
+    "bilinear": {
+        "type": "traditional",
+        "quality": "basic",
+        "speed": "fastest",
+        "algorithm": "bilinear"
+    }
+}
 
 DEFAULT_CONFIG = {
     "ffmpeg_location": "",  # Will be auto-detected

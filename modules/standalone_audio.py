@@ -55,7 +55,6 @@ from textual.screen import Screen
 from .audio_processor import EnhancedAudioProcessor
 from .common_utils import format_size, sanitize_filename
 from .defaults import THEME
-from .cyberpunk_ui import CyberpunkBanner
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

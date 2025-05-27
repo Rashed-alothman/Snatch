@@ -18,6 +18,7 @@ Welcome to the Snatch v1.8.1 documentation! This page provides an overview of al
 |----------|-------------|----------|
 | [📖 Main README](./README.md) | Overview, installation, basic usage | Everyone |
 | [📝 Usage Guide](./USAGE_GUIDE.md) | Complete command examples and workflows | Users wanting comprehensive examples |
+| [⚙️ Configuration Management](./CONFIGURATION_MANAGEMENT.md) | Cache clearing, config editing, backups | Users managing application settings |
 | [✨ Features Update](./FEATURES_UPDATE.md) | New features in v1.8.1 | Users upgrading from previous versions |
 | [📋 Changelog](./CHANGELOG.md) | Version history and changes | Users tracking updates |
 
