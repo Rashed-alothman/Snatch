@@ -91,28 +91,35 @@ class PerformanceMonitor:
         if self.monitor_thread:
             self.monitor_thread.join(timeout=5.0)
         logger.info("Performance monitoring stopped")
-    
     def _monitoring_loop(self) -> None:
-        """Main monitoring loop"""
+        """Main monitoring loop with optimized error handling and resource management"""
         while self.is_monitoring:
             try:
                 metrics = self._collect_metrics()
-                self.metrics_history.append(metrics)
-                
-                # Trim history if needed
-                if len(self.metrics_history) > self.max_history:
-                    self.metrics_history = self.metrics_history[-self.max_history:]
-                
-                # Check for optimization opportunities
-                recommendations = self._analyze_performance(metrics)
-                if recommendations:
-                    self._apply_optimizations(recommendations)
+                self._process_metrics(metrics)
+                self._check_optimization_opportunities(metrics)
                 
                 time.sleep(self.collection_interval)
                 
             except Exception as e:
                 logger.error(f"Error in performance monitoring: {e}")
                 time.sleep(self.collection_interval)
+    
+    def _process_metrics(self, metrics: PerformanceMetrics) -> None:
+        """Process and store metrics with efficient memory management"""
+        self.metrics_history.append(metrics)
+        
+        # Efficient history trimming
+        if len(self.metrics_history) > self.max_history:
+            # Remove multiple old entries at once for efficiency
+            trim_count = len(self.metrics_history) - self.max_history + 10
+            self.metrics_history = self.metrics_history[trim_count:]
+    
+    def _check_optimization_opportunities(self, metrics: PerformanceMetrics) -> None:
+        """Check for optimization opportunities with minimal overhead"""
+        recommendations = self._analyze_performance(metrics)
+        if recommendations:
+            self._apply_optimizations(recommendations)
     
     def _collect_metrics(self) -> PerformanceMetrics:
         """Collect current system and application metrics"""
@@ -135,30 +142,55 @@ class PerformanceMonitor:
         except Exception as e:
             logger.error(f"Error collecting metrics: {e}")
             return PerformanceMetrics()
-    
     def _analyze_performance(self, metrics: PerformanceMetrics) -> List[OptimizationRecommendation]:
-        """Analyze performance and generate optimization recommendations"""
+        """Analyze performance and generate optimization recommendations with reduced complexity"""
         recommendations = []
         
         # CPU analysis
+        recommendations.extend(self._analyze_cpu_performance(metrics))
+        
+        # Memory analysis
+        recommendations.extend(self._analyze_memory_performance(metrics))
+        
+        # Performance trends analysis
+        recommendations.extend(self._analyze_performance_trends())
+        
+        return recommendations
+    
+    def _analyze_cpu_performance(self, metrics: PerformanceMetrics) -> List[OptimizationRecommendation]:
+        """Analyze CPU performance metrics"""
+        recommendations = []
+        
         if metrics.cpu_percent > self.cpu_threshold:
+            priority = "HIGH" if metrics.cpu_percent > 90 else "MEDIUM"
             recommendations.append(OptimizationRecommendation(
                 category="CPU",
-                priority="HIGH" if metrics.cpu_percent > 90 else "MEDIUM",
+                priority=priority,
                 message=f"High CPU usage detected ({metrics.cpu_percent:.1f}%). Consider reducing concurrent downloads.",
                 impact_score=metrics.cpu_percent / 100.0
             ))
         
-        # Memory analysis
+        return recommendations
+    
+    def _analyze_memory_performance(self, metrics: PerformanceMetrics) -> List[OptimizationRecommendation]:
+        """Analyze memory performance metrics"""
+        recommendations = []
+        
         if metrics.memory_percent > self.memory_threshold:
+            priority = "HIGH" if metrics.memory_percent > 95 else "MEDIUM"
             recommendations.append(OptimizationRecommendation(
                 category="MEMORY",
-                priority="HIGH" if metrics.memory_percent > 95 else "MEDIUM",
+                priority=priority,
                 message=f"High memory usage detected ({metrics.memory_percent:.1f}%). Consider clearing cache or reducing quality.",
                 impact_score=metrics.memory_percent / 100.0
             ))
         
-        # Performance trends analysis
+        return recommendations
+    
+    def _analyze_performance_trends(self) -> List[OptimizationRecommendation]:
+        """Analyze performance trends from historical data"""
+        recommendations = []
+        
         if len(self.metrics_history) >= 10:
             recent_metrics = self.metrics_history[-10:]
             avg_cpu = sum(m.cpu_percent for m in recent_metrics) / len(recent_metrics)

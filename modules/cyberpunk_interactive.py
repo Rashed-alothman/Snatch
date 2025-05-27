@@ -28,7 +28,11 @@ from rich.table import Table
 import asyncio
 import os
 import logging
+import concurrent.futures
+import yt_dlp
 from typing import Dict, Any, List, Optional
+#from . import download_manager, p2p_manager, network
+from .cyberpunk_ui import CyberStatusPanel, HolographicProgress
 
 class CyberpunkInteractiveApp(App):
     """Enhanced cyberpunk-styled interactive application"""
@@ -38,9 +42,8 @@ class CyberpunkInteractiveApp(App):
     Screen {
         background: #0a0a0a;
     }
-    
-    Header {
-        background: linear-gradient(90deg, #00ffff 0%, #ff1493 50%, #39ff14 100%);
+      Header {
+        background: #ff1493;
         color: #000000;
         text-style: bold;
     }
@@ -214,8 +217,7 @@ class CyberpunkInteractiveApp(App):
                             yield Checkbox("Audio Only", id="chk-audio-only")
                             yield Checkbox("Process Audio", id="chk-process-audio", value=True)
                             yield Checkbox("7.1 Surround", id="chk-upmix", value=True)
-                    
-                    # Audio tab content
+                      # Audio tab content
                     with Container(id="audio-content", classes="hidden"):
                         yield Static("🎵 AUDIO MATRIX PROCESSOR", classes="cyber-title")
                         yield Input(placeholder="Select audio file...", id="audio-file-input")
@@ -231,6 +233,41 @@ class CyberpunkInteractiveApp(App):
                             yield Button("🔄 Convert Format", id="btn-convert-audio", classes="-accent")
                         
                         yield Static(id="audio-progress", classes="neon-panel")
+                    
+                    # Video tab content
+                    with Container(id="video-content", classes="hidden"):
+                        yield Static("🎬 VIDEO NEXUS PROCESSOR", classes="cyber-title")
+                        yield Input(placeholder="Select video file...", id="video-file-input")
+                        yield Button("📁 Browse Videos", id="btn-browse-video")
+                        
+                        with Horizontal():
+                            yield Checkbox("HD Enhancement", id="chk-hd-enhance", value=True)
+                            yield Checkbox("Stabilize", id="chk-stabilize", value=False)
+                            yield Checkbox("Color Correct", id="chk-color-correct", value=True)
+                        
+                        with Horizontal():
+                            yield Button("🎬 Process Video", id="btn-process-video", classes="-primary")
+                            yield Button("✂️ Extract Audio", id="btn-extract-audio", classes="-accent")
+                        
+                        yield Static(id="video-progress", classes="neon-panel")
+                    
+                    # Settings tab content
+                    with Container(id="settings-content", classes="hidden"):
+                        yield Static("⚙️ CYBER CONFIGURATION", classes="cyber-title")
+                        
+                        with Horizontal():
+                            yield Static("Download Quality:")
+                            yield Button("720p", id="btn-quality-720p")
+                            yield Button("1080p", id="btn-quality-1080p", classes="-primary")
+                            yield Button("4K", id="btn-quality-4k")
+                        
+                        with Horizontal():
+                            yield Checkbox("Auto P2P", id="chk-auto-p2p", value=True)
+                            yield Checkbox("Smart Cache", id="chk-smart-cache", value=True)
+                            yield Checkbox("Neural Mode", id="chk-neural-mode", value=False)
+                        
+                        yield Button("💾 Save Config", id="btn-save-config", classes="-accent")
+                        yield Static(id="settings-status", classes="neon-panel")
                     
                     # P2P tab content  
                     with Container(id="p2p-content", classes="hidden"):
@@ -338,7 +375,7 @@ class CyberpunkInteractiveApp(App):
             logging.error(f"Error setting up P2P table: {e}")
     
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button presses with cyberpunk feedback"""
+        """Handle button presses with cyberpunk feedback"""        
         button_id = event.button.id
         
         # Visual feedback
@@ -351,6 +388,12 @@ class CyberpunkInteractiveApp(App):
             await self._switch_to_audio_tab()
         elif button_id == "btn-video":
             await self._switch_to_video_tab()
+        elif button_id == "btn-settings":
+            await self._switch_to_settings_tab()
+        elif button_id == "btn-monitor":
+            await self._show_monitor_tab()
+        elif button_id == "btn-help":
+            await self._show_help_tab()
         elif button_id == "btn-p2p":
             await self._switch_to_p2p_tab()
         elif button_id == "btn-analyze":
@@ -377,10 +420,10 @@ class CyberpunkInteractiveApp(App):
         button.add_class("-primary")
         await asyncio.sleep(0.1)
         button.classes = original_classes
-    
     async def _switch_to_download_tab(self) -> None:
         """Switch to download tab with animation"""
-        try:            # Hide all content
+        try:
+            # Hide all content
             for content_id in ["audio-content", "p2p-content"]:
                 try:
                     widget = self.query_one(f"#{content_id}")
@@ -421,11 +464,10 @@ class CyberpunkInteractiveApp(App):
             
         except Exception as e:
             logging.error(f"Error switching to audio tab: {e}")
-    
     async def _switch_to_p2p_tab(self) -> None:
         """Switch to P2P tab"""
         try:            # Hide other content  
-            for content_id in ["download-content", "audio-content"]:
+            for content_id in ["download-content", "audio-content", "video-content", "settings-content"]:
                 try:
                     widget = self.query_one(f"#{content_id}")
                     widget.add_class("hidden")
@@ -443,6 +485,70 @@ class CyberpunkInteractiveApp(App):
             
         except Exception as e:
             logging.error(f"Error switching to P2P tab: {e}")
+
+    async def _switch_to_video_tab(self) -> None:
+        """Switch to video tab"""
+        try:
+            # Hide other content
+            for content_id in ["download-content", "audio-content", "p2p-content", "settings-content"]:
+                try:
+                    widget = self.query_one(f"#{content_id}")
+                    widget.add_class("hidden")
+                except Exception as e:
+                    logging.debug(f"Could not hide widget {content_id}: {e}")
+            
+            # Show video content
+            try:
+                video_content = self.query_one("#video-content")
+                video_content.remove_class("hidden")
+            except Exception as e:
+                logging.debug(f"Could not show video content: {e}")
+                
+            self.notify("🎬 Switched to Video Nexus", severity="information")
+            
+        except Exception as e:
+            logging.error(f"Error switching to video tab: {e}")
+
+    async def _switch_to_settings_tab(self) -> None:
+        """Switch to settings tab"""
+        try:
+            # Hide other content
+            for content_id in ["download-content", "audio-content", "video-content", "p2p-content"]:
+                try:
+                    widget = self.query_one(f"#{content_id}")
+                    widget.add_class("hidden")
+                except Exception as e:
+                    logging.debug(f"Could not hide widget {content_id}: {e}")
+            
+            # Show settings content
+            try:
+                settings_content = self.query_one("#settings-content")
+                settings_content.remove_class("hidden")
+            except Exception as e:
+                logging.debug(f"Could not show settings content: {e}")
+                
+            self.notify("⚙️ Switched to Cyber Config", severity="information")
+            
+        except Exception as e:
+            logging.error(f"Error switching to settings tab: {e}")
+
+    async def _show_monitor_tab(self) -> None:
+        """Show performance monitor tab"""
+        try:
+            self.notify("📊 Data Stream Monitor - Coming online...", severity="information")
+            # TODO: Implement monitor tab functionality
+            
+        except Exception as e:
+            logging.error(f"Error showing monitor tab: {e}")
+
+    async def _show_help_tab(self) -> None:
+        """Show help tab"""
+        try:
+            self.notify("❓ Help Matrix - Accessing neural documentation...", severity="information")
+            # TODO: Implement help tab functionality
+            
+        except Exception as e:
+            logging.error(f"Error showing help tab: {e}")
     
     async def _analyze_url(self) -> None:
         """Analyze URL with cyberpunk effects"""
@@ -881,10 +987,39 @@ class CyberpunkInteractiveApp(App):
 
 
 def launch_cyberpunk_interface(config: Dict[str, Any]) -> None:
-    """Launch the cyberpunk interactive interface"""
+    """Launch the cyberpunk interactive interface with event loop handling"""
     try:
         app = CyberpunkInteractiveApp(config)
-        app.run()
+        
+        # Check if we're in an async context and handle accordingly
+        try:
+            # Try to get the running loop
+            asyncio.get_running_loop()
+            
+            # If we get here, we're in an async context
+            # Run the app in a separate thread with its own event loop
+            import threading
+            import concurrent.futures
+            
+            def run_app_in_thread():
+                """Run the Textual app in a separate thread with its own event loop"""
+                # Create a new event loop for this thread
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                try:
+                    app.run()
+                finally:
+                    new_loop.close()
+            
+            # Use ThreadPoolExecutor to run the app
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(run_app_in_thread)
+                future.result()  # Wait for completion
+            
+        except RuntimeError:
+            # No running loop, safe to run normally
+            app.run()
+            
     except Exception as e:
         console = Console()
         console.print(f"[red]Failed to launch cyberpunk interface: {e}[/]")

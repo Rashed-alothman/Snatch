@@ -51,6 +51,18 @@ DEFAULT_CONFIG = {
     # Add organization configs
     "organize": False,
     "organization_templates": DEFAULT_ORGANIZATION_TEMPLATES.copy(),
+    # Video upscaling configuration
+    "upscaling": {
+        "enabled": False,
+        "method": "realesrgan",  # Options: realesrgan, esrgan, bicubic, lanczos
+        "scale_factor": 2,  # 2x, 4x upscaling
+        "quality": "high",  # low, medium, high
+        "preserve_aspect_ratio": True,
+        "output_format": "mp4",
+        "fallback_method": "lanczos",  # Fallback if AI upscaling fails
+        "gpu_acceleration": True,
+        "max_resolution": "4K",  # Don't upscale beyond this
+    }
 }
 
 # Enhanced spinner characters for better visual appearance
@@ -393,6 +405,78 @@ FORMAT_PRESETS = {
             "preset": "superfast",
             "audio_codec": "aac",
             "audio_bitrate": "64k"
+        }
+    }
+}
+
+# Video upscaling presets for AI enhancement and quality improvement
+UPSCALING_PRESETS = {
+    "realesrgan": {
+        "2x": {
+            "model": "RealESRGAN_x2plus",
+            "scale": 2,
+            "denoise_level": 1,
+            "face_enhance": False,
+            "fp32": False,  # Use fp16 for better performance
+            "gpu_id": 0
+        },
+        "4x": {
+            "model": "RealESRGAN_x4plus",
+            "scale": 4,
+            "denoise_level": 1,
+            "face_enhance": False,
+            "fp32": False,
+            "gpu_id": 0
+        },
+        "anime_2x": {
+            "model": "RealESRGAN_x2plus_anime",
+            "scale": 2,
+            "denoise_level": 1,
+            "face_enhance": False,
+            "fp32": False,
+            "gpu_id": 0
+        },
+        "anime_4x": {
+            "model": "RealESRGAN_x4plus_anime_6B",
+            "scale": 4,
+            "denoise_level": 1,
+            "face_enhance": False,
+            "fp32": False,
+            "gpu_id": 0
+        }
+    },
+    "esrgan": {
+        "2x": {
+            "model": "ESRGAN_x2.pth",
+            "scale": 2,
+            "denoise_level": 0
+        },
+        "4x": {
+            "model": "ESRGAN_x4.pth", 
+            "scale": 4,
+            "denoise_level": 0
+        }
+    },
+    "traditional": {
+        "bicubic_2x": {
+            "method": "bicubic",
+            "scale": 2,
+            "quality": "high"
+        },
+        "bicubic_4x": {
+            "method": "bicubic", 
+            "scale": 4,
+            "quality": "high"
+        },
+        "lanczos_2x": {
+            "method": "lanczos",
+            "scale": 2,
+            "quality": "high"
+        },
+        "lanczos_4x": {
+            "method": "lanczos",
+            "scale": 4,
+            "quality": "high"
         }
     }
 }

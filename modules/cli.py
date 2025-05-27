@@ -164,8 +164,7 @@ class EnhancedCLI:
                 ErrorSeverity.ERROR,
                 context={"urls": urls, "options": options}            )
             console.print(f"[bold red]Download failed: {str(e)}[/]")
-            return 1
-
+            return 1    
     def _log_download_mode(self, options: Dict[str, Any]) -> None:
         """Log download mode information"""
         if options.get("audio_only"):
@@ -177,6 +176,12 @@ class EnhancedCLI:
         elif options.get("resolution"):
             resolution = options.get('resolution')
             console.print(f"[bold cyan]Video mode:[/] Setting resolution to {resolution}")
+            
+        # Log upscaling information
+        if options.get("upscale_video"):
+            method = options.get("upscale_method", "lanczos")
+            factor = options.get("upscale_factor", 2)
+            console.print(f"[bold cyan]Video upscaling:[/] {method} {factor}x enhancement enabled")
 
     @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.WARNING)
     def _run_download_safely(self, urls: List[str], options: Dict[str, Any]) -> int:
@@ -255,8 +260,7 @@ class EnhancedCLI:
             help=f"{APP_NAME} - A powerful media downloader",
             epilog=EXAMPLES
         )
-          
-        # Download command
+            # Download command
         @app.command("download", help="Download media from URLs")
         def download(
             urls: List[str] = typer.Argument(None, help="URLs to download"),
@@ -269,6 +273,11 @@ class EnhancedCLI:
             audio_quality: str = typer.Option("best", "--audio-quality", help="Audio quality"),
             upmix_71: bool = typer.Option(False, "--upmix-7.1", help="Upmix audio to 7.1 surround"),
             denoise: bool = typer.Option(False, "--denoise", help="Apply noise reduction to audio"),
+            upscale_video: bool = typer.Option(False, "--upscale", "-u", help="Enable video upscaling"),
+            upscale_method: str = typer.Option("lanczos", "--upscale-method", help="Upscaling method (realesrgan, lanczos, bicubic)"),
+            upscale_factor: int = typer.Option(2, "--upscale-factor", help="Upscaling factor (2x, 4x)"),
+            upscale_quality: str = typer.Option("high", "--upscale-quality", help="Upscaling quality (low, medium, high)"),
+            replace_original: bool = typer.Option(False, "--replace-original", help="Replace original file with upscaled version"),
             batch_file: str = typer.Option(None, "--batch-file", "-b", help="File containing URLs to download"),
             quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output"),
             verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
@@ -294,8 +303,7 @@ class EnhancedCLI:
             if not all_urls:
                 console.print("[bold red]No URLs provided and no batch file specified.[/]")
                 return 1
-            
-            # Configure options
+              # Configure options
             options = {
                 "audio_only": audio_only,
                 "resolution": resolution,
@@ -306,21 +314,24 @@ class EnhancedCLI:
                 "audio_quality": audio_quality,
                 "upmix_71": upmix_71,
                 "denoise": denoise,
+                "upscale_video": upscale_video,
+                "upscale_method": upscale_method,
+                "upscale_factor": upscale_factor,
+                "upscale_quality": upscale_quality,
+                "replace_original": replace_original,
                 "quiet": quiet,
                 "verbose": verbose,
             }
             
             # Use the execute_download method to handle all download logic
-            return self.execute_download(all_urls, options)
-          # Interactive mode command
+            return self.execute_download(all_urls, options)        # Interactive mode command
         @app.command("interactive", help="Run in interactive mode")
         def interactive():
-            """Run in classic interactive mode"""
-            from .interactive_mode import launch_textual_interface
-            launch_textual_interface(self.config)
+            """Run in enhanced interactive mode with cyberpunk interface"""
+            from .interactive_mode import launch_enhanced_interactive_mode
+            launch_enhanced_interactive_mode(self.config)
             return 0
-            
-        # New textual interface command
+              # New textual interface command
         @app.command("textual", help="Run with modern Textual interface")
         def textual():
             """Run with modern Textual interface"""
@@ -331,9 +342,9 @@ class EnhancedCLI:
                 start_textual_interface(self.config)
             except ImportError as e:
                 console.print(f"[bold yellow]Textual interface not available: {str(e)}[/]")
-                console.print("[yellow]Falling back to classic interactive mode.[/]")
-                from .interactive_mode import launch_textual_interface
-                launch_textual_interface(self.config)
+                console.print("[yellow]Falling back to enhanced interactive mode.[/]")
+                from .interactive_mode import launch_enhanced_interactive_mode
+                launch_enhanced_interactive_mode(self.config)
         
         # List supported sites command
         @app.command("list-sites", help="List all supported sites")
@@ -348,12 +359,11 @@ class EnhancedCLI:
             """Show version information"""
             console.print(f"[bold cyan]{APP_NAME}[/] [bold green]v{VERSION}[/]")
             return 0
-        
-        # Run speedtest command
+          # Run speedtest command
         @app.command("speedtest", help="Run download speed test")
         def speedtest():
             """Run download speed test"""
-            run_speedtest()
+            self.run_async(run_speedtest())
             return 0
         
         # Show system info command
@@ -429,15 +439,14 @@ class EnhancedCLI:
             
         # Run simple interactive mode
         await self._run_simple_interactive_mode(console_obj)
-    
     async def _try_textual_interface(self, console_obj: Console) -> bool:
-        """Try to launch textual interface, return True if successful"""
+        """Try to launch enhanced interactive interface, return True if successful"""
         try:
-            from .interactive_mode import launch_textual_interface
-            launch_textual_interface(self.config)
+            from .interactive_mode import launch_enhanced_interactive_mode
+            launch_enhanced_interactive_mode(self.config)
             return True
         except ImportError as e:
-            console_obj.print(f"[yellow]Could not load textual interface: {str(e)}[/]")
+            console_obj.print(f"[yellow]Could not load enhanced interface: {str(e)}[/]")
             console_obj.print("[yellow]Falling back to simple interactive mode...[/]")
             return False
     
@@ -536,7 +545,6 @@ class EnhancedCLI:
             await scheduler.clear_queue()
             console.print("[yellow]Queue cleared[/]")
         return 0
-
     async def _performance_command_async(self, action: str, duration: int) -> int:
         """Handle performance command asynchronously"""
         if not self.download_manager.performance_monitor:

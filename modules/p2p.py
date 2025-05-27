@@ -92,85 +92,44 @@ MSG_TYPE = {
     "NAT_INFO": 0x0B
 }
 
+# New P2P Library Sharing System
 @dataclass
-class ShareConfig:
-    """Configuration for file sharing"""
-    upnp: bool = True
-    stun_servers: Optional[List[str]] = None
-    turn_servers: Optional[List[str]] = None
-    encryption: bool = True
-    compression: bool = True
-    chunk_size: int = CHUNK_SIZE
-    dht_enabled: bool = True
-    port_range: Tuple[int, int] = DEFAULT_PORT_RANGE
-    connect_timeout: int = DEFAULT_TIMEOUT
-    transfer_timeout: int = 120
-    max_retry_count: int = 5
-    
-    def __post_init__(self):
-        if self.stun_servers is None:
-            self.stun_servers = STUN_SERVERS.copy()
-        if self.turn_servers is None:
-            self.turn_servers = TURN_SERVERS.copy()
+class SharedLibrary:
+    """Represents a shared download library"""
+    library_id: str
+    name: str
+    description: str
+    owner_peer_id: str
+    created_at: float
+    last_updated: float
+    files: Dict[str, 'LibraryFile'] = field(default_factory=dict)
+    subscribers: Set[str] = field(default_factory=set)  # peer_ids
+    auto_sync: bool = True
+    public: bool = False
+    tags: List[str] = field(default_factory=list)
 
 @dataclass
-class PeerInfo:
-    """Information about a connected peer"""
-    peer_id: str
-    ip: str
-    port: int
-    nat_type: int = NAT_TYPES["UNKNOWN"]
-    public_key: Optional[bytes] = None
-    symmetric_key: Optional[bytes] = None
-    connected: bool = False
-    last_seen: float = field(default_factory=time.time)
-    is_relay: bool = False
-    connection_quality: int = 0  # 0-100 quality rating
-    
-    @property
-    def address(self) -> str:
-        """Get formatted address string"""
-        return f"{self.ip}:{self.port}"
-
-@dataclass
-class FileInfo:
-    """Information about a shared file"""
-    path: str
-    size: int
-    hash: str
-    chunk_hashes: List[str] = field(default_factory=list)
-    created: float = field(default_factory=time.time)
-    name: Optional[str] = None
-    mime_type: Optional[str] = None
-    
-    def __post_init__(self):
-        if not self.name:
-            self.name = os.path.basename(self.path)
-
-@dataclass
-class TransferProgress:
-    """Progress information for a file transfer"""
+class LibraryFile:
+    """File entry in a shared library"""
     file_id: str
-    bytes_transferred: int = 0
-    total_bytes: int = 0
-    chunks_completed: Set[int] = field(default_factory=set)
-    start_time: float = field(default_factory=time.time)
-    last_update: float = field(default_factory=time.time)
-    speed_bps: float = 0
-    eta_seconds: float = 0
-    status: str = "pending"  # pending, active, completed, failed, paused
-    
-    @property
-    def progress_percent(self) -> float:
-        """Get progress percentage"""
-        if self.total_bytes <= 0:
-            return 0
-        return (self.bytes_transferred / self.total_bytes) * 100
-    
-    @property
-    def is_complete(self) -> bool:
-        """Check if transfer is complete"""
-        return self.bytes_transferred >= self.total_bytes
+    name: str
+    size: int
+    checksum: str
+    download_url: Optional[str]
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    added_at: float = field(default_factory=time.time)
+    category: str = "general"  # video, audio, document, etc.
+    quality: Optional[str] = None
+    format: Optional[str] = None
+
+@dataclass
+class SyncUpdate:
+    """Represents a library synchronization update"""
+    library_id: str
+    update_type: str  # "file_added", "file_removed", "library_updated"
+    data: Dict[str, Any]
+    timestamp: float
+    from_peer: str
 
 class P2PError(Exception):
     """Base class for P2P errors"""
@@ -199,6 +158,88 @@ class IntegrityError(P2PError):
 class NATTraversalError(P2PError):
     """Raised when NAT traversal fails"""
     pass
+
+@dataclass
+class PeerInfo:
+    """Information about a connected peer"""
+    peer_id: str
+    ip: str
+    port: int
+    public_key: Optional[Any] = None
+    symmetric_key: Optional[bytes] = None
+    nat_type: int = field(default=NAT_TYPES["UNKNOWN"])
+    connected: bool = False
+    last_seen: float = field(default_factory=time.time)
+    capabilities: List[str] = field(default_factory=list)
+    version: int = PROTOCOL_VERSION
+
+@dataclass
+class FileInfo:
+    """Information about a shared file"""
+    file_id: str
+    file_name: str
+    file_path: str
+    file_size: int
+    hash: str
+    chunks: int
+    chunk_hashes: List[str] = field(default_factory=list)
+    mime_type: str = "application/octet-stream"
+    created_at: float = field(default_factory=time.time)
+    shared_at: float = field(default_factory=time.time)
+
+    @property
+    def name(self) -> str:
+        """Alias for file_name for backward compatibility"""
+        return self.file_name
+    
+    @property
+    def size(self) -> int:
+        """Alias for file_size for backward compatibility"""
+        return self.file_size
+    
+    @property
+    def path(self) -> str:
+        """Alias for file_path for backward compatibility"""
+        return self.file_path
+
+@dataclass
+class TransferProgress:
+    """Progress tracking for file transfers"""
+    transfer_id: str
+    file_id: str
+    peer_id: str
+    total_bytes: int
+    bytes_transferred: int = 0
+    chunks_completed: int = 0
+    total_chunks: int = 0
+    speed_bps: float = 0.0
+    eta_seconds: float = 0.0
+    status: str = "pending"  # pending, active, paused, completed, failed
+    start_time: float = field(default_factory=time.time)
+    last_update: float = field(default_factory=time.time)
+    error_message: Optional[str] = None
+
+    @property
+    def progress_percent(self) -> float:
+        """Calculate progress percentage"""
+        if self.total_bytes <= 0:
+            return 0.0
+        return min(100.0, (self.bytes_transferred / self.total_bytes) * 100)
+
+@dataclass
+class ShareConfig:
+    """Configuration for P2P sharing"""
+    upnp: bool = True
+    encryption: bool = True
+    compression: bool = True
+    chunk_size: int = CHUNK_SIZE
+    dht_enabled: bool = True
+    max_peers: int = 10
+    timeout: int = DEFAULT_TIMEOUT
+    auto_retry: bool = True
+    retry_attempts: int = 3
+    port_range: Tuple[int, int] = DEFAULT_PORT_RANGE
+    stun_servers: List[str] = field(default_factory=lambda: STUN_SERVERS.copy())
 
 class P2PManager:
     """Main P2P management class for secure file sharing
@@ -243,6 +284,10 @@ class P2PManager:
         self.peers: Dict[str, PeerInfo] = {}  # peer_id -> PeerInfo
         self.shared_files: Dict[str, FileInfo] = {}  # file_id -> FileInfo
         self.transfers: Dict[str, TransferProgress] = {}  # transfer_id -> TransferProgress
+        self.libraries: Dict[str, SharedLibrary] = {}
+        self.subscribed_libraries: Dict[str, SharedLibrary] = {}
+        self.friends: Dict[str, PeerInfo] = {}
+        self.pending_syncs: List[SyncUpdate] = []
         
         # Keys and encryption
         self.private_key = self._load_or_generate_keys()
@@ -369,12 +414,11 @@ class P2PManager:
         """Add UPnP port mapping"""
         if not self.upnp:
             return False
-            
         try:
             # Delete any existing mapping first
             try:
                 self.upnp.deleteportmapping(port, 'TCP')
-            except:
+            except Exception:
                 pass  # Ignore errors here
                 
             # Add new mapping
@@ -477,11 +521,10 @@ class P2PManager:
                 s.sendall(message_data)
                 
                 # Receive response (don't wait for it)
-                # This is just to complete the ping round-trip
-                s.settimeout(1)
+                # This is just to complete the ping round-trip                s.settimeout(1)
                 try:
                     s.recv(1024)
-                except:
+                except socket.timeout:
                     pass
                     
         except Exception as e:
@@ -576,8 +619,7 @@ class P2PManager:
                 logger.debug(f"Removed UPnP port mapping for port {self.external_port}")
             except Exception as e:
                 logger.warning(f"Error removing UPnP port mapping: {e}")
-                
-        self.listening = False
+                self.listening = False
         logger.info("P2P server stopped")
         
     async def _handle_connection(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -586,59 +628,13 @@ class P2PManager:
         logger.debug(f"New connection from {peer_addr}")
         
         try:
-            # Read message length
-            length_bytes = await reader.read(4)
-            if not length_bytes:
-                logger.warning(f"Empty connection from {peer_addr}")
-                writer.close()
+            # Read and validate message
+            message, peer = await self._read_and_parse_message(reader, writer, peer_addr)
+            if not message:
                 return
                 
-            message_length = int.from_bytes(length_bytes, byteorder="big")
-            
-            # Read message data
-            message_data = await reader.read(message_length)
-            if not message_data:
-                logger.warning(f"Failed to read message from {peer_addr}")
-                writer.close()
-                return
-                
-            # Parse message
-            try:
-                # Try to parse as JSON first (unencrypted)
-                message = json.loads(message_data.decode())
-            except:
-                # Try to find a peer by address for decryption
-                peer_ip, peer_port = peer_addr
-                peer = None
-                for p in self.peers.values():
-                    if p.ip == peer_ip and p.symmetric_key:
-                        try:
-                            # Try to decrypt with this peer's key
-                            decrypted = self._decrypt_message(message_data, p.symmetric_key)
-                            message = json.loads(decrypted.decode())
-                            peer = p
-                            break
-                        except:
-                            continue
-                
-                if not peer:
-                    logger.warning(f"Could not decrypt message from {peer_addr}")
-                    writer.close()
-                    return
-                    
-            # Process message based on type
-            if message.get("type") == MSG_TYPE["HANDSHAKE"]:
-                await self._handle_handshake(message, reader, writer)
-            elif message.get("type") == MSG_TYPE["REQUEST"]:
-                await self._handle_request(message, reader, writer, peer)
-            elif message.get("type") == MSG_TYPE["DATA"]:
-                await self._handle_data(message, reader, writer, peer)
-            elif message.get("type") == MSG_TYPE["PING"]:
-                await self._handle_ping(message, writer, peer)
-            elif message.get("type") == MSG_TYPE["KEY_EXCHANGE"]:
-                await self._handle_key_exchange(message, reader, writer)
-            else:
-                logger.warning(f"Unknown message type: {message.get('type')}")
+            # Route message to appropriate handler
+            await self._route_message(message, reader, writer, peer)
                 
         except Exception as e:
             logger.error(f"Error handling connection: {e}")
@@ -646,7 +642,102 @@ class P2PManager:
         finally:
             writer.close()
             
-    async def _handle_handshake(self, message: Dict[str, Any], reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _read_and_parse_message(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, peer_addr) -> Tuple[Optional[Dict[str, Any]], Optional[PeerInfo]]:
+        """Read and parse incoming message, handling encryption if needed"""
+        # Read message length
+        length_bytes = await reader.read(4)
+        if not length_bytes:
+            logger.warning(f"Empty connection from {peer_addr}")
+            writer.close()
+            return None, None
+            
+        message_length = int.from_bytes(length_bytes, byteorder="big")
+        
+        # Read message data
+        message_data = await reader.read(message_length)
+        if not message_data:
+            logger.warning(f"Failed to read message from {peer_addr}")
+            writer.close()
+            return None, None
+            
+        # Parse message with encryption handling
+        return await self._parse_message_with_encryption(message_data, peer_addr, writer)
+    async def _parse_message_with_encryption(self, message_data: bytes, peer_addr: Tuple[str, int], writer: asyncio.StreamWriter) -> Tuple[Optional[Dict[str, Any]], Optional[PeerInfo]]:
+        """Parse message, handling encryption/decryption as needed"""
+        # Try unencrypted parsing first
+        unencrypted_result = self._try_parse_unencrypted(message_data)
+        if unencrypted_result:
+            return unencrypted_result, None
+            
+        # Try encrypted parsing
+        return await self._try_parse_encrypted(message_data, peer_addr, writer)
+
+    def _try_parse_unencrypted(self, message_data: bytes) -> Optional[Dict[str, Any]]:
+        """Try to parse message as unencrypted JSON"""
+        try:
+            return json.loads(message_data.decode())
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+
+    async def _try_parse_encrypted(self, message_data: bytes, peer_addr: Tuple[str, int], writer: asyncio.StreamWriter) -> Tuple[Optional[Dict[str, Any]], Optional[PeerInfo]]:
+        """Try to parse message as encrypted data"""
+        peer_ip, _ = peer_addr
+        peer = self._find_peer_for_decryption(peer_ip, message_data)
+        
+        if not peer:
+            logger.warning(f"Could not decrypt message from {peer_addr}")
+            writer.close()
+            return None, None
+            
+        return self._decrypt_and_parse_message(message_data, peer, peer_addr, writer)
+
+    def _decrypt_and_parse_message(self, message_data: bytes, peer: PeerInfo, peer_addr: Tuple[str, int], writer: asyncio.StreamWriter) -> Tuple[Optional[Dict[str, Any]], Optional[PeerInfo]]:
+        """Decrypt message data and parse as JSON"""
+        try:
+            decrypted = self._decrypt_message(message_data, peer.symmetric_key)
+            message = json.loads(decrypted.decode())
+            return message, peer
+        except Exception as e:
+            logger.warning(f"Failed to decrypt message from {peer_addr}: {e}")
+            writer.close()
+            return None, None
+                
+    def _find_peer_for_decryption(self, peer_ip: str, message_data: bytes) -> Optional[PeerInfo]:
+        """Find peer that can decrypt the message"""
+        for p in self.peers.values():
+            if p.ip == peer_ip and p.symmetric_key:
+                try:
+                    # Try to decrypt with this peer's key
+                    self._decrypt_message(message_data, p.symmetric_key)
+                    return p            
+                except Exception as e:
+                    logger.debug(f"Failed to decrypt with peer {p.peer_id} key: {e}")
+                    continue
+        return None
+    async def _route_message(self, message: Dict[str, Any], reader: asyncio.StreamReader, writer: asyncio.StreamWriter, peer: Optional[PeerInfo]) -> None:
+        """Route message to appropriate handler based on type"""
+        message_type = message.get("type")
+        
+        if message_type == MSG_TYPE["HANDSHAKE"]:
+            await self._handle_handshake(message, writer)
+        elif message_type == MSG_TYPE["REQUEST"]:
+            await self._handle_request(message, reader, writer, peer)
+        elif message_type == MSG_TYPE["DATA"]:
+            await self._handle_data(message, reader, writer, peer)
+        elif message_type == MSG_TYPE["PING"]:
+            await self._handle_ping(message, writer, peer)
+        elif message_type == MSG_TYPE["KEY_EXCHANGE"]:
+            await self._handle_key_exchange(message, reader, writer)
+        elif message_type == MSG_TYPE["LIBRARY_UPDATE"]:
+            await self._handle_library_update(message, reader, writer, peer)
+        elif message_type == MSG_TYPE["FRIEND_REQUEST"]:
+            await self._handle_friend_request(message, reader, writer, peer)
+        elif message_type == MSG_TYPE["FRIEND_RESPONSE"]:
+            await self._handle_friend_response(message, reader, writer, peer)
+        else:
+            logger.warning(f"Unknown message type: {message_type}")
+            
+    async def _handle_handshake(self, message: Dict[str, Any], writer: asyncio.StreamWriter) -> None:
         """Handle handshake message"""
         peer_addr = writer.get_extra_info('peername')
         peer_id = message.get("peer_id")
@@ -656,7 +747,18 @@ class P2PManager:
             return
             
         # Create or update peer info
+        peer = self._create_or_update_peer(peer_id, peer_addr, message)
+        
+        # Parse public key if provided
+        self._parse_peer_public_key(peer, message)
+                
+        # Send handshake response
+        await self._send_handshake_response(writer, peer_id)
+        
+    def _create_or_update_peer(self, peer_id: str, peer_addr: Tuple[str, int], message: Dict[str, Any]) -> PeerInfo:
+        """Create new peer or update existing peer info"""
         peer_ip, peer_port = peer_addr
+        
         if peer_id in self.peers:
             # Update existing peer
             peer = self.peers[peer_id]
@@ -676,7 +778,10 @@ class P2PManager:
             )
             self.peers[peer_id] = peer
             
-        # Parse public key if provided
+        return peer
+        
+    def _parse_peer_public_key(self, peer: PeerInfo, message: Dict[str, Any]) -> None:
+        """Parse and store peer's public key if provided"""
         if public_key_data := message.get("public_key"):
             from cryptography.hazmat.primitives.serialization import load_der_public_key
             try:
@@ -687,7 +792,9 @@ class P2PManager:
             except Exception as e:
                 logger.warning(f"Failed to parse public key: {e}")
                 
-        # Send handshake response
+    async def _send_handshake_response(self, writer: asyncio.StreamWriter, peer_id: str) -> None:
+        """Send handshake response to peer"""
+        # Create response
         response = {
             "type": MSG_TYPE["HANDSHAKE"],
             "peer_id": self.peer_id,
@@ -721,11 +828,10 @@ class P2PManager:
         
         # Notify peer connected callback
         if self.on_peer_connected:
+            peer = self.peers[peer_id]
             self.on_peer_connected(peer)
-            
-    async def _handle_key_exchange(self, message: Dict[str, Any], reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _handle_key_exchange(self, message: Dict[str, Any], writer: asyncio.StreamWriter) -> None:
         """Handle key exchange message"""
-        peer_addr = writer.get_extra_info('peername')
         peer_id = message.get("peer_id")
         
         if not peer_id or peer_id not in self.peers:
@@ -857,6 +963,146 @@ class P2PManager:
         await writer.drain()
         
     async def _handle_request(self, message: Dict[str, Any], reader: asyncio.StreamReader, writer: asyncio.StreamWriter, peer: PeerInfo) -> None:
+        """Handle file request message"""
+        try:
+            file_id = message.get("file_id")
+            if not file_id or file_id not in self.shared_files:
+                await self._send_error_response(writer, "File not found", peer)
+                return
+                
+            file_info = self.shared_files[file_id]
+            
+            # Check if file still exists
+            if not os.path.exists(file_info.file_path):
+                await self._send_error_response(writer, "File no longer available", peer)
+                return
+                
+            # Send file metadata
+            response = {
+                "type": MSG_TYPE["RESPONSE"],
+                "file_id": file_id,
+                "file_name": file_info.file_name,
+                "file_size": file_info.file_size,
+                "chunks": file_info.chunks,
+                "chunk_size": self.share_config.chunk_size
+            }
+            
+            # Encrypt response if possible
+            if peer.symmetric_key and self.share_config.encryption:
+                response_data = self._encrypt_message(response, peer.symmetric_key)
+            else:
+                response_data = json.dumps(response).encode()
+                
+            # Send response
+            writer.write(len(response_data).to_bytes(4, byteorder="big"))
+            writer.write(response_data)
+            await writer.drain()
+            
+            # Handle chunk requests
+            await self._handle_chunk_requests(file_info, reader, writer, peer)
+            
+        except Exception as e:
+            logger.error(f"Error handling request: {e}")
+            await self._send_error_response(writer, str(e), peer)
+    
+    async def _send_error_response(self, writer: asyncio.StreamWriter, error_msg: str, peer: Optional[PeerInfo] = None) -> None:
+        """Send error response to peer"""
+        try:
+            response = {
+                "type": MSG_TYPE["ERROR"],
+                "error": error_msg,
+                "timestamp": time.time()
+            }
+            
+            # Encrypt if possible
+            if peer and peer.symmetric_key and self.share_config.encryption:
+                response_data = self._encrypt_message(response, peer.symmetric_key)
+            else:
+                response_data = json.dumps(response).encode()
+                
+            writer.write(len(response_data).to_bytes(4, byteorder="big"))
+            writer.write(response_data)
+            await writer.drain()
+            
+        except Exception as e:
+            logger.error(f"Error sending error response: {e}")
+    async def _handle_chunk_requests(self, file_info: 'FileInfo', reader: asyncio.StreamReader, writer: asyncio.StreamWriter, peer: PeerInfo) -> None:
+        """Handle chunk data requests for file transfer"""
+        try:
+            with open(file_info.file_path, 'rb') as f:
+                while True:
+                    chunk_request = await self._read_chunk_request(reader, peer)
+                    if not chunk_request:
+                        break
+                        
+                    if not self._validate_chunk_request(chunk_request, file_info):
+                        continue
+                        
+                    chunk_index = chunk_request["chunk_index"]
+                    chunk_data = self._read_file_chunk(f, chunk_index)
+                    
+                    await self._send_chunk_response(writer, chunk_index, chunk_data, peer)
+                    
+        except Exception as e:
+            logger.error(f"Error handling chunk requests: {e}")
+            await self._send_error_response(writer, str(e), peer)
+
+    async def _read_chunk_request(self, reader: asyncio.StreamReader, peer: PeerInfo) -> Optional[Dict[str, Any]]:
+        """Read and parse a chunk request from the stream"""
+        try:
+            length_bytes = await reader.read(4)
+            if not length_bytes:
+                return None
+                
+            message_length = int.from_bytes(length_bytes, byteorder="big")
+            message_data = await reader.read(message_length)
+            
+            if peer.symmetric_key and self.share_config.encryption:
+                chunk_request = json.loads(self._decrypt_message(message_data, peer.symmetric_key).decode())
+            else:
+                chunk_request = json.loads(message_data.decode())
+                
+            return chunk_request
+        except Exception as e:
+            logger.error(f"Error reading chunk request: {e}")
+            return None
+
+    def _validate_chunk_request(self, chunk_request: Dict[str, Any], file_info: 'FileInfo') -> bool:
+        """Validate that the chunk request is valid"""
+        if chunk_request.get("type") != MSG_TYPE["CHUNK_REQUEST"]:
+            return False
+            
+        chunk_index = chunk_request.get("chunk_index")
+        if chunk_index is None or chunk_index >= file_info.chunks:
+            return False
+            
+        return True
+
+    def _read_file_chunk(self, file_handle, chunk_index: int) -> bytes:
+        """Read a specific chunk from the file"""
+        file_handle.seek(chunk_index * self.share_config.chunk_size)
+        return file_handle.read(self.share_config.chunk_size)
+
+    async def _send_chunk_response(self, writer: asyncio.StreamWriter, chunk_index: int, 
+                                   chunk_data: bytes, peer: PeerInfo) -> None:
+        """Send a chunk response to the peer"""
+        response = {
+            "type": MSG_TYPE["CHUNK_DATA"],
+            "chunk_index": chunk_index,
+            "data": chunk_data.hex(),  # Send as hex string
+            "size": len(chunk_data)
+        }
+        
+        if peer.symmetric_key and self.share_config.encryption:
+            response_data = self._encrypt_message(response, peer.symmetric_key)
+        else:
+            response_data = json.dumps(response).encode()
+            
+        writer.write(len(response_data).to_bytes(4, byteorder="big"))
+        writer.write(response_data)
+        await writer.drain()
+            
+    async def _handle_request_legacy(self, message: Dict[str, Any], writer: asyncio.StreamWriter, peer: PeerInfo) -> None:
         """Handle file request message"""
         file_id = message.get("file_id")
         
@@ -992,8 +1238,7 @@ class P2PManager:
                 response_data = self._encrypt_message(response, peer.symmetric_key)
             else:
                 response_data = json.dumps(response).encode()
-                
-            # Send response
+                  # Send response
             writer.write(len(response_data).to_bytes(4, byteorder="big"))
             writer.write(response_data)
             await writer.drain()
@@ -1001,68 +1246,13 @@ class P2PManager:
     def _detect_nat_type(self) -> None:
         """Detect NAT type using STUN"""
         try:
-            # Try STUN servers until one responds
             stun_servers = self.share_config.stun_servers
             
             for server in stun_servers:
-                try:
-                    host, port_str = server.split(":")
-                    port = int(port_str)
-                    
-                    # Create socket for STUN request
-                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                        s.settimeout(3)
-                        
-                        # Send binding request
-                        transaction_id = os.urandom(12)
-                        binding_request = bytes([0x00, 0x01]) + bytes([0x00, 0x00]) + bytes([0x21, 0x12, 0xA4, 0x42]) + transaction_id
-                        
-                        s.sendto(binding_request, (host, port))
-                        
-                        # Receive response
-                        response, addr = s.recvfrom(1024)
-                        
-                        # Check for success response
-                        if len(response) < 20 or response[0:2] != bytes([0x01, 0x01]):
-                            continue
-                            
-                        # Parse mapped address
-                        mapped_addr = None
-                        i = 20
-                        while i < len(response):
-                            attr_type = (response[i] << 8) | response[i+1]
-                            attr_len = (response[i+2] << 8) | response[i+3]
-                            
-                            if attr_type == 0x0001:  # MAPPED-ADDRESS
-                                family = response[i+5]
-                                port = (response[i+6] << 8) | response[i+7]
-                                if family == 0x01:  # IPv4
-                                    ip = ".".join(str(b) for b in response[i+8:i+12])
-                                    mapped_addr = (ip, port)
-                            
-                            i += 4 + attr_len
-                            
-                        if mapped_addr:
-                            # Store mapped address
-                            self.external_ip = mapped_addr[0]
-                            
-                            # Determine NAT type (simplified)
-                            # This is a partial implementation - a full STUN implementation
-                            # would require multiple tests to accurately determine NAT type
-                            local_ip = self._get_local_ip()
-                            if local_ip == self.external_ip:
-                                self.nat_type = NAT_TYPES["OPEN"]
-                            else:
-                                # Default to port restricted NAT
-                                # Without multiple tests, we can't accurately determine more
-                                self.nat_type = NAT_TYPES["PORT_RESTRICTED"]
-                                
-                            logger.debug(f"NAT type detected: {self.nat_type}, external IP: {self.external_ip}")
-                            return
-                            
-                except Exception as e:
-                    logger.debug(f"STUN error with server {server}: {e}")
-                    continue
+                mapped_addr = self._try_stun_server(server)
+                if mapped_addr:
+                    self._process_stun_result(mapped_addr)
+                    return
                     
             # If we reach here, all STUN servers failed
             logger.warning("Failed to detect NAT type using STUN")
@@ -1071,7 +1261,80 @@ class P2PManager:
         except Exception as e:
             logger.error(f"NAT detection error: {e}")
             self.nat_type = NAT_TYPES["UNKNOWN"]
+
+    def _try_stun_server(self, server: str) -> Optional[Tuple[str, int]]:
+        """Try to get mapped address from a single STUN server"""
+        try:
+            host, port_str = server.split(":")
+            port = int(port_str)
             
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(3)
+                
+                # Send STUN binding request
+                transaction_id = os.urandom(12)
+                binding_request = self._create_stun_request(transaction_id)
+                s.sendto(binding_request, (host, port))
+                
+                # Receive and parse response
+                response, addr = s.recvfrom(1024)
+                return self._parse_stun_response(response)
+                
+        except Exception as e:
+            logger.debug(f"STUN error with server {server}: {e}")
+            return None
+
+    def _create_stun_request(self, transaction_id: bytes) -> bytes:
+        """Create STUN binding request packet"""
+        return (bytes([0x00, 0x01]) + bytes([0x00, 0x00]) + 
+                bytes([0x21, 0x12, 0xA4, 0x42]) + transaction_id)
+
+    def _parse_stun_response(self, response: bytes) -> Optional[Tuple[str, int]]:
+        """Parse STUN response to extract mapped address"""
+        # Check for valid success response
+        if len(response) < 20 or response[0:2] != bytes([0x01, 0x01]):
+            return None
+            
+        # Parse attributes to find mapped address
+        i = 20
+        while i < len(response):
+            attr_type = (response[i] << 8) | response[i+1]
+            attr_len = (response[i+2] << 8) | response[i+3]
+            
+            if attr_type == 0x0001:  # MAPPED-ADDRESS
+                return self._extract_mapped_address(response, i)
+            
+            i += 4 + attr_len
+            
+        return None
+
+    def _extract_mapped_address(self, response: bytes, offset: int) -> Optional[Tuple[str, int]]:
+        """Extract IP and port from MAPPED-ADDRESS attribute"""
+        try:
+            family = response[offset + 5]
+            port = (response[offset + 6] << 8) | response[offset + 7]
+            
+            if family == 0x01:  # IPv4
+                ip = ".".join(str(b) for b in response[offset + 8:offset + 12])
+                return (ip, port)
+        except (IndexError, ValueError):
+            pass
+        return None
+
+    def _process_stun_result(self, mapped_addr: Tuple[str, int]) -> None:
+        """Process STUN result to determine NAT type"""
+        self.external_ip = mapped_addr[0]
+        
+        # Determine NAT type (simplified)
+        local_ip = self._get_local_ip()
+        if local_ip == self.external_ip:
+            self.nat_type = NAT_TYPES["OPEN"]
+        else:
+            # Default to port restricted NAT
+            # Without multiple tests, we can't accurately determine more
+            self.nat_type = NAT_TYPES["PORT_RESTRICTED"]
+            
+        logger.debug(f"NAT type detected: {self.nat_type}, external IP: {self.external_ip}")
     def _get_local_ip(self) -> str:
         """Get local IP address of the default interface"""
         try:
@@ -1079,7 +1342,7 @@ class P2PManager:
                 # Doesn't actually connect
                 s.connect(("8.8.8.8", 53))
                 return s.getsockname()[0]
-        except:
+        except (OSError, socket.error):
             return "127.0.0.1"
             
     async def connect_to_peer(self, address: str) -> Optional[PeerInfo]:
@@ -1259,3 +1522,461 @@ class P2PManager:
         except Exception as e:
             logger.error(f"Error establishing symmetric key: {e}")
             return False
+        
+    async def _handle_library_update(self, message: Dict[str, Any], reader: asyncio.StreamReader, writer: asyncio.StreamWriter, peer: Optional[PeerInfo]) -> None:
+        """Handle library update notification"""
+        library_id = message.get("library_id")
+        update_type = message.get("update_type")
+        data = message.get("data")
+        
+        if update_type == "file_added":
+            # New file added to library
+            file_info = data.get("file_info")
+            if file_info:
+                await self._add_file_to_library(library_id, file_info, peer)
+                
+        elif update_type == "file_removed":
+            # File removed from library
+            file_id = data.get("file_id")
+            if file_id:
+                await self._remove_file_from_library(library_id, file_id, peer)
+                
+        elif update_type == "library_updated":
+            # Library metadata updated
+            await self._update_library_metadata(library_id, data, peer)
+            
+    async def _add_file_to_library(self, library_id: str, file_info: Dict[str, Any], peer: Optional[PeerInfo]) -> None:
+        """Add a file to a shared library (on receiving notification from peer)"""
+        if library_id not in self.libraries:
+            logger.warning(f"Library not found: {library_id}")
+            return
+        
+        library = self.libraries[library_id]
+        
+        # Check if we already have this file
+        file_id = file_info.get("file_id")
+        if file_id in library.files:
+            logger.info(f"File already exists in library: {file_id}")
+            return
+        
+        # Add file to library
+        library.files[file_id] = LibraryFile(**file_info)
+        library.last_updated = time.time()
+        
+        self._save_library(library)
+        
+        logger.info(f"Added new file to library {library.name}: {file_info.get('name')}")
+        
+    async def _remove_file_from_library(self, library_id: str, file_id: str, peer: Optional[PeerInfo]) -> None:
+        """Remove a file from a shared library (on receiving notification from peer)"""
+        if library_id not in self.libraries:
+            logger.warning(f"Library not found: {library_id}")
+            return
+        
+        library = self.libraries[library_id]
+        
+        if file_id in library.files:
+            # Remove file
+            del library.files[file_id]
+            library.last_updated = time.time()
+            
+            self._save_library(library)
+            
+            logger.info(f"Removed file from library {library.name}: {file_id}")
+        else:
+            logger.info(f"File not found in library: {file_id}")
+            
+    async def _update_library_metadata(self, library_id: str, metadata: Dict[str, Any], peer: Optional[PeerInfo]) -> None:
+        """Update metadata of a shared library (on receiving notification from peer)"""
+        if library_id not in self.libraries:
+            logger.warning(f"Library not found: {library_id}")
+            return
+        
+        library = self.libraries[library_id]
+        
+        # Update library attributes
+        library.name = metadata.get("name", library.name)
+        library.description = metadata.get("description", library.description)
+        library.public = metadata.get("public", library.public)
+        library.auto_sync = metadata.get("auto_sync", library.auto_sync)
+        library.tags = metadata.get("tags", library.tags)
+        library.last_updated = time.time()
+        
+        self._save_library(library)
+        
+        logger.info(f"Updated library metadata: {library_id}")
+    
+    async def _request_library_subscription(self, library_id: str, owner_peer_id: str) -> None:
+        """Request subscription to a friend's library"""
+        if owner_peer_id not in self.friends:
+            logger.warning(f"Peer not found in friends list: {owner_peer_id}")
+            return
+        
+        friend = self.friends[owner_peer_id]
+        
+        # Send subscription request
+        request = {
+            "type": MSG_TYPE["LIBRARY_SUBSCRIBE"],
+            "library_id": library_id,
+            "peer_id": self.peer_id
+        }
+        
+        try:
+            await self._send_message_to_peer(friend, request)
+            logger.info(f"Sent library subscription request to {owner_peer_id}")
+        except Exception as e:
+            logger.error(f"Error sending subscription request: {e}")
+            
+    async def _notify_friendship(self, friend_peer_id: str) -> None:
+        """Notify a peer that they have been added as a friend"""
+        if friend_peer_id not in self.friends:
+            return
+        
+        friend = self.friends[friend_peer_id]
+        
+        # Send friend notification
+        notification = {
+            "type": MSG_TYPE["FRIEND_RESPONSE"],
+            "peer_id": self.peer_id,
+            "friend_id": friend_peer_id,
+            "status": "accepted"
+        }
+        
+        try:
+            await self._send_message_to_peer(friend, notification)
+            logger.info(f"Notified {friend_peer_id} of friendship acceptance")
+        except Exception as e:
+            logger.error(f"Error notifying friendship: {e}")
+            
+    async def _handle_friend_request(self, message: Dict[str, Any], reader: asyncio.StreamReader, writer: asyncio.StreamWriter, peer: Optional[PeerInfo]) -> None:
+        """Handle incoming friend request"""
+        requester_id = message.get("peer_id")
+        
+        if not requester_id:
+            logger.warning(f"Invalid friend request from {peer.peer_id}: missing peer_id")
+            return
+        
+        # Automatically accept friend requests from known peers
+        if requester_id in self.peers:
+            await self.add_friend(requester_id, self.peers[requester_id])
+            
+            # Send response
+            response = {
+                "type": MSG_TYPE["FRIEND_RESPONSE"],
+                "peer_id": self.peer_id,
+                "friend_id": requester_id,
+                "status": "accepted"
+            }
+            
+            # Encrypt if we have a symmetric key
+            if peer.symmetric_key and self.share_config.encryption:
+                response_data = self._encrypt_message(response, peer.symmetric_key)
+            else:
+                response_data = json.dumps(response).encode()
+                
+            writer.write(len(response_data).to_bytes(4, byteorder="big"))
+            writer.write(response_data)
+            await writer.drain()
+            
+            logger.info(f"Automatically accepted friend request from {requester_id}")
+        else:
+            logger.info(f"Received friend request from {requester_id}, awaiting acceptance")
+            
+    async def _handle_friend_response(self, message: Dict[str, Any], reader: asyncio.StreamReader, writer: asyncio.StreamWriter, peer: Optional[PeerInfo]) -> None:
+        """Handle response to friend request"""
+        friend_id = message.get("friend_id")
+        status = message.get("status")
+        
+        if status == "accepted":
+            if friend_id and friend_id not in self.friends:
+                # Add new friend
+                await self.add_friend(friend_id, peer)
+                
+                logger.info(f"Friend {friend_id} accepted")
+            else:
+                logger.info(f"Friend {friend_id} already in list")
+        else:
+            logger.info(f"Friend request from {friend_id} declined")
+            
+    async def add_friend(self, peer_id: str, peer_info: PeerInfo) -> bool:
+        """Add a peer as a friend for library sharing"""
+        self.friends[peer_id] = peer_info
+        self._save_friends()
+        
+        logger.info(f"Added friend: {peer_id}")
+        
+        # Notify friend of friendship
+        asyncio.create_task(self._notify_friendship(peer_id))
+        return True
+    
+    def share_library_with_friend(self, library_id: str, friend_peer_id: str) -> bool:
+        """Share a library with a specific friend"""
+        if library_id not in self.libraries:
+            return False
+            
+        if friend_peer_id not in self.friends:
+            return False
+            
+        library = self.libraries[library_id]
+        library.subscribers.add(friend_peer_id)
+        library.last_updated = time.time()
+        
+        self._save_library(library)
+        
+        # Send library info to friend
+        asyncio.create_task(self._share_library_with_peer(library, friend_peer_id))
+        return True
+    
+    def get_library_files(self, library_id: str) -> List[LibraryFile]:
+        """Get all files in a library"""
+        if library_id in self.libraries:
+            return list(self.libraries[library_id].files.values())
+        elif library_id in self.subscribed_libraries:
+            return list(self.subscribed_libraries[library_id].files.values())
+        return []
+    
+    def search_libraries(self, query: str, category: str = None) -> List[Tuple[str, LibraryFile]]:
+        """Search for files across all accessible libraries"""
+        results = []
+        
+        # Search own libraries
+        for lib_id, library in self.libraries.items():
+            for file_id, file_info in library.files.items():
+                if self._file_matches_query(file_info, query, category):
+                    results.append((lib_id, file_info))
+        
+        # Search subscribed libraries
+        for lib_id, library in self.subscribed_libraries.items():
+            for file_id, file_info in library.files.items():
+                if self._file_matches_query(file_info, query, category):
+                    results.append((lib_id, file_info))
+        
+        return results
+    
+    async def download_from_library(self, library_id: str, file_id: str, output_path: str) -> bool:
+        """Download a file from a library (own or subscribed)"""
+        library = None
+        
+        if library_id in self.libraries:
+            library = self.libraries[library_id]
+        elif library_id in self.subscribed_libraries:
+            library = self.subscribed_libraries[library_id]
+        else:
+            logger.error(f"Library not found: {library_id}")
+            return False
+            
+        if file_id not in library.files:
+            logger.error(f"File not found in library: {file_id}")
+            return False
+            
+        file_info = library.files[file_id]
+        
+        # If it's our own library, copy directly
+        if library.owner_peer_id == self.p2p_manager.peer_id:
+            return await self._copy_local_file(file_info, output_path)
+        
+        # If it's a subscribed library, request from owner
+        return await self._download_from_peer(library.owner_peer_id, file_info, output_path)
+    
+    # Private helper methods
+    def _calculate_checksum(self, file_path: str) -> bytes:
+        """Calculate SHA-256 checksum of a file"""
+        hash_sha256 = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_sha256.update(chunk)
+        return hash_sha256.digest()
+    
+    def _determine_category(self, file_ext: str) -> str:
+        """Determine file category based on extension"""
+        video_exts = {'.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v'}
+        audio_exts = {'.mp3', '.flac', '.wav', '.aac', '.ogg', '.m4a', '.wma'}
+        document_exts = {'.pdf', '.doc', '.docx', '.txt', '.epub', '.mobi'}
+        
+        if file_ext in video_exts:
+            return "video"
+        elif file_ext in audio_exts:
+            return "audio"
+        elif file_ext in document_exts:
+            return "document"
+        else:
+            return "general"
+    
+    def _file_matches_query(self, file_info: LibraryFile, query: str, category: str = None) -> bool:
+        """Check if a file matches search criteria"""
+        if category and file_info.category != category:
+            return False
+            
+        query_lower = query.lower()
+        return (query_lower in file_info.name.lower() or 
+                any(query_lower in tag.lower() for tag in file_info.metadata.get('tags', [])))
+    
+    def _save_library(self, library: SharedLibrary) -> None:
+        """Save library to disk"""
+        library_file = os.path.join(self.library_dir, f"{library.library_id}.json")
+        try:
+            with open(library_file, 'w') as f:
+                # Convert to dict for JSON serialization
+                library_dict = {
+                    'library_id': library.library_id,
+                    'name': library.name,
+                    'description': library.description,
+                    'owner_peer_id': library.owner_peer_id,
+                    'created_at': library.created_at,
+                    'last_updated': library.last_updated,
+                    'files': {fid: file.__dict__ for fid, file in library.files.items()},
+                    'subscribers': list(library.subscribers),
+                    'auto_sync': library.auto_sync,
+                    'public': library.public,
+                    'tags': library.tags
+                }
+                json.dump(library_dict, f, indent=2)
+        except Exception as e:
+            logger.error(f"Failed to save library {library.library_id}: {e}")
+    
+    def _load_libraries(self) -> None:
+        """Load libraries from disk"""
+        if not os.path.exists(self.library_dir):
+            return
+            
+        for filename in os.listdir(self.library_dir):
+            if filename.endswith('.json'):
+                library_file = os.path.join(self.library_dir, filename)
+                try:
+                    with open(library_file, 'r') as f:
+                        library_dict = json.load(f)
+                        
+                    # Convert back to objects
+                    library = SharedLibrary(**{k: v for k, v in library_dict.items() if k != 'files'})
+                    library.subscribers = set(library_dict.get('subscribers', []))
+                    
+                    # Convert files
+                    for fid, file_dict in library_dict.get('files', {}).items():
+                        library.files[fid] = LibraryFile(**file_dict)
+                    
+                    self.libraries[library.library_id] = library
+                    
+                    # Subscribe to library if auto-sync is enabled
+                    if library.library_id not in self.subscribed_libraries and library.auto_sync:
+                        self.subscribed_libraries[library.library_id] = library
+                        logger.info(f"Subscribed to library {library.name} ({library.library_id})")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to load library {filename}: {e}")
+    
+    def _save_friends(self) -> None:
+        """Save friends list to disk"""
+        try:
+            friends_data = {}
+            for peer_id, peer_info in self.friends.items():
+                friends_data[peer_id] = {
+                    'peer_id': peer_info.peer_id,
+                    'ip': peer_info.ip,
+                    'port': peer_info.port,
+                    'last_seen': peer_info.last_seen,
+                    'nat_type': peer_info.nat_type
+                }
+            
+            with open(self.friends_file, 'w') as f:
+                json.dump(friends_data, f, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Failed to save friends: {e}")
+    
+    def _load_friends(self) -> None:
+        """Load friends list from disk"""
+        if not os.path.exists(self.friends_file):
+            return
+            
+        try:
+            with open(self.friends_file, 'r') as f:
+                friends_data = json.load(f)
+                
+            for peer_id, peer_dict in friends_data.items():
+                peer_info = PeerInfo(**peer_dict)
+                self.friends[peer_id] = peer_info
+                
+        except Exception as e:
+            logger.error(f"Failed to load friends: {e}")
+    
+    def _start_sync_worker(self) -> None:
+        """Start background synchronization worker"""
+        threading.Thread(target=self._sync_worker_loop, daemon=True).start()
+    
+    def _sync_worker_loop(self) -> None:
+        """Background worker for library synchronization"""
+        while True:
+            try:
+                # Process pending sync updates
+                if self.pending_syncs:
+                    sync_update = self.pending_syncs.pop(0)
+                    asyncio.create_task(self._process_sync_update(sync_update))
+                
+                # Check for library updates from friends
+                for library_id, library in self.subscribed_libraries.items():
+                    if library.auto_sync:
+                        asyncio.create_task(self._check_library_updates(library_id))
+                
+                time.sleep(30)  # Check every 30 seconds
+                
+            except Exception as e:
+                logger.error(f"Error in sync worker: {e}")
+                time.sleep(60)  # Wait longer on error
+    
+    async def _notify_library_update(self, library_id: str, update_type: str, data: Dict[str, Any]) -> None:
+        """Notify subscribers of library updates"""
+        if library_id not in self.libraries:
+            return
+            
+        library = self.libraries[library_id]
+        
+        update_message = {
+            "type": MSG_TYPE["LIBRARY_UPDATE"],
+            "library_id": library_id,
+            "update_type": update_type,
+            "data": data,
+            "timestamp": time.time(),
+            "from_peer": self.p2p_manager.peer_id
+        }
+        
+        # Send to all subscribers
+        for subscriber_id in library.subscribers:
+            if subscriber_id in self.friends:
+                friend = self.friends[subscriber_id]
+                try:
+                    await self._send_message_to_peer(friend, update_message)
+                except Exception as e:
+                    logger.warning(f"Failed to notify subscriber {subscriber_id}: {e}")
+    
+    async def _send_message_to_peer(self, peer: PeerInfo, message: Dict[str, Any]) -> None:
+        """Send a message to a specific peer"""
+        try:
+            reader, writer = await asyncio.open_connection(peer.ip, peer.port)
+            
+            # Encrypt if we have a symmetric key
+            if peer.symmetric_key and self.p2p_manager.share_config.encryption:
+                message_data = self.p2p_manager._encrypt_message(message, peer.symmetric_key)
+            else:
+                message_data = json.dumps(message).encode()
+                
+            # Send with length prefix
+            writer.write(len(message_data).to_bytes(4, byteorder="big"))
+            writer.write(message_data)
+            await writer.drain()
+            
+            writer.close()
+            await writer.wait_closed()
+            
+        except Exception as e:
+            logger.error(f"Error sending message to peer {peer.peer_id}: {e}")
+            raise
+
+# Add library management message types
+MSG_TYPE.update({
+    "LIBRARY_UPDATE": 30,
+    "LIBRARY_REQUEST": 31,
+    "LIBRARY_RESPONSE": 32,
+    "LIBRARY_SUBSCRIBE": 33,
+    "FRIEND_REQUEST": 34,
+    "FRIEND_RESPONSE": 35
+})

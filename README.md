@@ -16,7 +16,7 @@
 <p>
 <img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Rashed-alothman/f2ae0a272ff1f011523e43f8c5abad65/raw/snatch-ci-status.json"/>
 <img src="https://github.com/Rashed-alothman/Snatch/actions/workflows/codeql.yml/badge.svg" alt="CodeQL Status" />
-<img src="https://img.shields.io/badge/version-1.8.0-blue" alt="Version 1.8.0" />
+<img src="https://img.shields.io/badge/version-1.8.1-blue" alt="Version 1.8.1" />
 <img src="https://img.shields.io/badge/python-3.7+-yellow" alt="Python 3.7+" />
 <img src="https://img.shields.io/badge/platforms-Windows%20|%20macOS%20|%20Linux-green" alt="Platforms" />
 <img src="https://img.shields.io/badge/license-MIT-orange" alt="License" />
@@ -24,14 +24,50 @@
 
 ## What's New in v1.8.0
 
+### 🎯 Critical Fixes & New Features
+
+#### **🔧 Fixed Resolution Selection Bug**
+
+- **RESOLVED**: Resolution flags (`--resolution`, `-r`) now work correctly
+- **IMPACT**: When requesting 2160p/4K, system now properly selects the highest available quality
+- **IMPROVEMENT**: Enhanced format string generation with proper fallback chains
+
+#### **🚀 AI-Powered Video Upscaling**
+
+- **NEW**: Real-ESRGAN integration for AI-enhanced video quality
+- **METHODS**: Support for both AI (Real-ESRGAN) and traditional (Lanczos, Bicubic) upscaling
+- **FLEXIBLE**: 2x and 4x upscaling factors with quality preservation options
+- **EFFICIENT**: Optimized processing pipeline with progress tracking
+
+#### **📚 Comprehensive Documentation**
+
+- **[🎯 Features Update Guide](Documentation/FEATURES_UPDATE.md)** - Detailed overview of new features
+- **[📖 Usage Guide](Documentation/USAGE_GUIDE.md)** - Complete command examples and workflows
+- **[🔧 Technical Documentation](Documentation/TECHNICAL_DOCUMENTATION.md)** - Architecture and implementation details
+
+#### **Quick Examples:**
+
+```bash
+# Fixed resolution selection (now works correctly)
+snatch download "URL" --resolution 2160  # Actually gets 4K!
+
+# AI video upscaling
+snatch download "URL" --upscale --upscale-method realesrgan --upscale-factor 2
+
+# Combine resolution + upscaling for optimal results
+snatch download "URL" --resolution 720 --upscale --upscale-factor 4 --replace-original
+```
+
 ### 🎯 Major Architectural Overhaul
 
 #### **Complete Package Refactoring & Modularization**
+
 - **Modular Architecture**: Split monolithic `Snatch.py` into a well-structured package under `modules/`:
   - `cli.py` - Command-line interface and argument parsing
   - `manager.py` - Core download management and orchestration
   - `config.py` - Configuration loading, validation, and management
   - `audio_processor.py` - Advanced audio enhancement and processing
+  - `ffmpeg_helper.py` - Video upscaling and FFmpeg processing
   - `p2p.py` - Peer-to-peer networking and file sharing
   - `cache.py` - Intelligent caching and metadata storage
   - `session.py` - Network session management and optimization
@@ -44,18 +80,21 @@
   - `cyberpunk_ui.py` - Cyberpunk-themed UI components
 
 #### **Enhanced Plugin System**
+
 - **Hook-Based Architecture**: Comprehensive plugin system with multiple hook points
 - **Plugin Interfaces**: Support for DownloadHooks, ProcessingPlugin, and UIPlugin
 - **Dynamic Loading**: Automatic plugin discovery and registration
 - **Event System**: Pre/post download hooks, format processing, and UI customization
 
 #### **Advanced Audio Processing**
+
 - **AI-Enhanced Audio**: Intelligent audio enhancement using machine learning algorithms
 - **Multi-Format Support**: Opus, MP3, FLAC, WAV, and M4A with quality optimization
 - **Audio Normalization**: Automatic loudness normalization and dynamic range processing
 - **Surround Sound**: Support for stereo and 7.1 surround sound configurations
 
 #### **Peer-to-Peer Networking**
+
 - **P2P File Sharing**: Share downloaded content directly with other users
 - **Share Code System**: Generate unique codes for easy file sharing
 - **Network Discovery**: Automatic peer discovery and connection management
@@ -64,18 +103,21 @@
 ### 🚀 Performance & User Experience Improvements
 
 #### **Smart Performance Optimization**
+
 - **Adaptive Resource Management**: Dynamic chunk sizes based on system resources
 - **Network Speed Testing**: Automatic optimization based on connection speed
 - **Smart Format Selection**: Intelligent format selection without testing all possibilities
 - **Concurrent Processing**: Enhanced multi-threaded download and processing
 
 #### **Enhanced User Interface**
+
 - **Cyberpunk Theme**: Futuristic, neon-styled interface with animations
 - **Interactive Progress**: Real-time progress bars with detailed statistics
 - **Spinner Animations**: Enhanced visual feedback during operations
 - **Rich Console Output**: Color-coded messages and status indicators
 
 #### **Improved Error Handling & Recovery**
+
 - **Intelligent Retry Logic**: Exponential backoff with smart failure recovery
 - **Detailed Error Messages**: Actionable error descriptions with solutions
 - **Advanced Logging**: Comprehensive logging with configurable verbosity levels
@@ -86,30 +128,35 @@
 We've created an extensive documentation ecosystem to support developers and users:
 
 #### **📖 [Technical Documentation](Documentation/TECHNICAL_DOCUMENTATION.md)**
+
 - Complete system architecture overview with visual diagrams
 - Component interaction flows and data flow analysis
 - Dependency relationships and module hierarchies
 - Comprehensive file structure documentation
 
 #### **🔧 [Module Documentation](Documentation/MODULE_DOCUMENTATION.md)**
+
 - In-depth analysis of all core modules
 - Function signatures, parameters, and return values
 - Usage examples and best practices
 - Module interaction patterns
 
 #### **🔌 [Plugin Development Guide](Documentation/PLUGIN_DEVELOPMENT_GUIDE.md)**
+
 - Complete plugin architecture documentation
 - Hook system explanation with practical examples
 - Plugin registration and lifecycle management
 - Sample plugin implementations
 
 #### **📋 [API Reference](Documentation/API_REFERENCE.md)**
+
 - Comprehensive API documentation
 - Method signatures with detailed parameters
 - Error handling and return codes
 - Usage examples for all major functions
 
 #### **🚀 [Deployment Guide](Documentation/DEPLOYMENT_GUIDE.md)**
+
 - Development environment setup
 - Production deployment strategies
 - Docker containerization
@@ -117,6 +164,7 @@ We've created an extensive documentation ecosystem to support developers and use
 - Security considerations and best practices
 
 #### **⚡ [Performance Optimization Guide](Documentation/PERFORMANCE_OPTIMIZATION_GUIDE.md)**
+
 - System resource optimization strategies
 - Network performance tuning
 - Memory and CPU optimization techniques
@@ -124,6 +172,7 @@ We've created an extensive documentation ecosystem to support developers and use
 - Platform-specific performance tips
 
 #### **🔍 [Troubleshooting Guide](Documentation/TROUBLESHOOTING_GUIDE.md)**
+
 - Quick diagnostic procedures
 - Common issues and solutions
 - Platform-specific troubleshooting
@@ -131,6 +180,7 @@ We've created an extensive documentation ecosystem to support developers and use
 - Advanced debugging techniques
 
 #### **🧪 [Integration Testing](Documentation/INTEGRATION_TESTING.md)**
+
 - Comprehensive testing strategies
 - Test suite documentation
 - Continuous integration setup
@@ -139,18 +189,21 @@ We've created an extensive documentation ecosystem to support developers and use
 ### 🛠️ Technical Improvements
 
 #### **Code Architecture Enhancements**
+
 - **Circular Dependency Resolution**: Eliminated circular dependencies for better stability
 - **Import Optimization**: Improved import hygiene and reduced startup times
 - **Memory Management**: Enhanced memory efficiency and garbage collection
 - **Type Safety**: Comprehensive type hints and validation
 
 #### **Configuration Management**
+
 - **Flexible Configuration**: JSON-based configuration with validation
 - **Environment Variables**: Support for environment-based configuration
 - **Profile System**: Multiple configuration profiles for different use cases
 - **Dynamic Reloading**: Hot-reload configuration changes without restart
 
 #### **Security & Reliability**
+
 - **Input Validation**: Comprehensive input sanitization and validation
 - **Secure Networking**: Enhanced SSL/TLS handling and certificate validation
 - **Rate Limiting**: Intelligent rate limiting to prevent API abuse
@@ -163,12 +216,15 @@ We've created an extensive documentation ecosystem to support developers and use
 <h2 id="features">✨ Features</h2>
 
 - **Beautiful Interactive Mode** - Easy-to-use interface with colorful progress bars
+- **Fixed Resolution Selection** - Properly working --resolution/-r flags for accurate quality selection
+- **AI Video Upscaling** - Enhance video quality with Real-ESRGAN or traditional upscaling methods
 - **Dynamic Resource Management** - Adaptive chunk sizes based on your system's resources
 - **Site Explorer** - Browse and search through 1000+ supported sites
 - **Advanced Audio Options** - Choose between Opus (default), MP3, FLAC formats and stereo/surround sound
 - **Smart Conversion** - High-quality audio extraction with format options
 - **Concurrent Downloads** - Download multiple files simultaneously
-- **Quality Selection** - Choose specific video resolutions
+- **Quality Selection** - Choose specific video resolutions with reliable format selection
+- **Video Enhancement** - Upscale videos with configurable factors (2x, 4x) and quality preservation
 - **Playlist Support** - Download entire playlists with options to select specific videos
 - **Cache System** - Optimized repeat downloads with smart caching
 - **Error Recovery** - Robust error handling and helpful suggestions
@@ -329,14 +385,30 @@ snatch download "URL" --audio-only --format flac --channels 8
 snatch download "URL" --audio-only --format mp3 --quality 320
 ```
 
-### Video Downloads
+### Video Downloads & Enhancement
 
 ```powershell
 # Download in best quality
 snatch download "URL"
 
-# Download in specific resolution
-snatch download "URL" --resolution 1080
+# Download in specific resolution (FIXED: now works correctly)
+snatch download "URL" --resolution 2160  # 4K/2160p
+snatch download "URL" --resolution 1440  # 1440p
+snatch download "URL" --resolution 1080  # 1080p
+snatch download "URL" --resolution 720   # 720p
+
+# Video upscaling with AI enhancement
+snatch download "URL" --upscale --upscale-method realesrgan --upscale-factor 2
+
+# Traditional upscaling methods
+snatch download "URL" --upscale --upscale-method lanczos --upscale-factor 4
+snatch download "URL" --upscale --upscale-method bicubic --upscale-factor 2
+
+# High-quality upscaling with custom settings
+snatch download "URL" --upscale --upscale-quality high --upscale-factor 2
+
+# Replace original file after upscaling
+snatch download "URL" --upscale --replace-original
 
 # Download with custom format
 snatch download "URL" --format mp4
@@ -344,6 +416,26 @@ snatch download "URL" --format mp4
 # Download with subtitles
 snatch download "URL" --subtitles
 ```
+
+### Upscaling Methods & Quality Options
+
+| Method | Description | Best For | Performance |
+|--------|-------------|----------|-------------|
+| `realesrgan` | AI-powered upscaling | Anime, cartoons, graphics | Slower, highest quality |
+| `lanczos` | High-quality traditional | Live action, photographs | Medium speed, good quality |
+| `bicubic` | Standard interpolation | General purpose | Fast, decent quality |
+| `bilinear` | Basic interpolation | Quick processing | Fastest, lower quality |
+
+**Upscaling Quality Presets:**
+
+- `low`: Fast processing, basic enhancement
+- `medium`: Balanced quality and speed (default)
+- `high`: Maximum quality, slower processing
+
+**Upscaling Factors:**
+
+- `2`: Double resolution (e.g., 1080p → 2160p)
+- `4`: Quadruple resolution (e.g., 720p → 2880p)
 
 ### Advanced Features
 
@@ -360,12 +452,29 @@ snatch download "URL" --stats
 # Save to specific directory
 snatch download "URL" --output "D:\Downloads"
 
+# Combine resolution selection with upscaling
+snatch download "URL" --resolution 720 --upscale --upscale-factor 4
+
 # Batch download from file
 snatch batch urls.txt
 
-# Download playlist
-snatch download "PLAYLIST_URL" --playlist
+# Download playlist with upscaling
+snatch download "PLAYLIST_URL" --playlist --upscale
+
+# Download with Real-ESRGAN upscaling and replace original
+snatch download "URL" --upscale --upscale-method realesrgan --replace-original
 ```
+
+### New Video Enhancement CLI Options
+
+| Option | Short | Description | Example |
+|--------|-------|-------------|---------|
+| `--upscale` | `-u` | Enable video upscaling | `--upscale` |
+| `--upscale-method` | | Upscaling method | `--upscale-method realesrgan` |
+| `--upscale-factor` | | Scale factor (2x, 4x) | `--upscale-factor 2` |
+| `--upscale-quality` | | Quality preset | `--upscale-quality high` |
+| `--replace-original` | | Replace source file | `--replace-original` |
+| `--resolution` | `-r` | Target resolution (FIXED) | `--resolution 2160` |
 
 ### Interactive Mode Commands
 
@@ -673,7 +782,8 @@ Contributions are welcome! Feel free to:
 - ✅ Audio extraction
 - ✅ Format conversion
 - ✅ Metadata handling
-- ⬜ Video upscaling
+- ✅ Video upscaling with Real-ESRGAN
+- ✅ Resolution selection fixes
 - ⬜ Audio normalization
 - ⬜ Subtitle support
 

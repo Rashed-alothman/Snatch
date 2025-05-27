@@ -1,178 +1,218 @@
-# Snatch v1.8.0 Documentation Index
+# 📚 Snatch Documentation Index
 
-Welcome to the comprehensive documentation suite for Snatch v1.8.0! This index provides easy navigation to all documentation resources.
+Welcome to the Snatch v1.8.1 documentation! This page provides an overview of all available documentation and guides.
 
-## 📋 Quick Navigation
+## 🎯 Quick Start
 
-| Document | Description | Audience |
+**New to Snatch?** Start here:
+
+1. [Installation Guide](#installation) (in main README)
+2. [Usage Guide](Documentation/USAGE_GUIDE.md) - Complete command examples
+3. [Features Update](Documentation/FEATURES_UPDATE.md) - What's new in v1.8.1
+
+## 📋 Documentation Structure
+
+### 🚀 User Documentation
+
+| Document | Description | Best For |
 |----------|-------------|----------|
-| [README](./markdownfiles/README.md) | Main project overview and quick start guide | All Users |
-| [Technical Documentation](./TECHNICAL_DOCUMENTATION.md) | System architecture and design | Developers |
-| [Module Documentation](./MODULE_DOCUMENTATION.md) | Detailed module analysis | Developers |
-| [API Reference](./API_REFERENCE.md) | Complete API documentation | Developers |
-| [Plugin Development Guide](./PLUGIN_DEVELOPMENT_GUIDE.md) | Plugin system and development | Plugin Developers |
-| [Deployment Guide](./DEPLOYMENT_GUIDE.md) | Installation and deployment | DevOps/Users |
-| [Performance Optimization](./PERFORMANCE_OPTIMIZATION_GUIDE.md) | Performance tuning | Advanced Users |
-| [Troubleshooting Guide](./TROUBLESHOOTING_GUIDE.md) | Common issues and solutions | All Users |
-| [Integration Testing](./INTEGRATION_TESTING.md) | Testing strategies | QA/Developers |
+| [📖 Main README](./README.md) | Overview, installation, basic usage | Everyone |
+| [📝 Usage Guide](./USAGE_GUIDE.md) | Complete command examples and workflows | Users wanting comprehensive examples |
+| [✨ Features Update](./FEATURES_UPDATE.md) | New features in v1.8.1 | Users upgrading from previous versions |
+| [📋 Changelog](./CHANGELOG.md) | Version history and changes | Users tracking updates |
 
-## 🎯 Documentation by Use Case
+### 🔧 Technical Documentation
 
-### For New Users
+| Document | Description | Best For |
+|----------|-------------|----------|
+| [🏗️ Technical Documentation](../Documentation/TECHNICAL_DOCUMENTATION.md) | System architecture | Developers |
+| [📦 Module Documentation](../Documentation/MODULE_DOCUMENTATION.md) | Detailed module analysis | Contributors |
+| [🔌 Plugin Development](../Documentation/PLUGIN_DEVELOPMENT_GUIDE.md) | Plugin system guide | Plugin developers |
+| [⚡ Performance Guide](../Documentation/PERFORMANCE_OPTIMIZATION_GUIDE.md) | Optimization tips | Advanced users |
 
-1. Start with [README](./markdownfiles/README.md) for project overview
-2. Follow the installation guide in [Deployment Guide](./DEPLOYMENT_GUIDE.md)
-3. Use [Troubleshooting Guide](./TROUBLESHOOTING_GUIDE.md) if you encounter issues
+### 🛠️ Setup & Troubleshooting
 
-### For Developers
+| Document | Description | Best For |
+|----------|-------------|----------|
+| [🚀 Deployment Guide](../Documentation/DEPLOYMENT_GUIDE.md) | Installation & deployment | System administrators |
+| [🔍 Troubleshooting Guide](../Documentation/TROUBLESHOOTING_GUIDE.md) | Common issues & solutions | Users with problems |
+| [🧪 Integration Testing](../Documentation/INTEGRATION_TESTING.md) | Testing procedures | Quality assurance |
 
-1. Read [Technical Documentation](./TECHNICAL_DOCUMENTATION.md) for architecture overview
-2. Explore [Module Documentation](./MODULE_DOCUMENTATION.md) for detailed code analysis
-3. Use [API Reference](./API_REFERENCE.md) for specific function documentation
-4. Check [Integration Testing](./INTEGRATION_TESTING.md) for testing practices
+## 🔥 What's New in v1.8.1
 
-### For Plugin Developers
+### Critical Fixes
 
-1. Start with [Plugin Development Guide](./PLUGIN_DEVELOPMENT_GUIDE.md)
-2. Reference [API Reference](./API_REFERENCE.md) for plugin interfaces
-3. Use [Technical Documentation](./TECHNICAL_DOCUMENTATION.md) for system understanding
+- ✅ **Fixed Resolution Selection**: `--resolution` flags now work correctly
+- ✅ **Proper Quality Selection**: Requesting 2160p actually gets 4K video
 
-### For System Administrators
+### New Features  
 
-1. Follow [Deployment Guide](./DEPLOYMENT_GUIDE.md) for installation
-2. Use [Performance Optimization](./PERFORMANCE_OPTIMIZATION_GUIDE.md) for tuning
-3. Reference [Troubleshooting Guide](./TROUBLESHOOTING_GUIDE.md) for maintenance
+- 🚀 **AI Video Upscaling**: Enhance video quality with Real-ESRGAN
+- 🎨 **Multiple Upscaling Methods**: AI and traditional upscaling options
+- ⚙️ **Configurable Settings**: Quality presets and scale factors
 
-## 📚 Documentation Features
+## 🎯 Common Use Cases
 
-### What's New in v1.8.0 Documentation
+### Basic Downloads
 
-- **Comprehensive Coverage**: Complete documentation ecosystem covering all aspects
-- **Multiple Formats**: Technical diagrams, code examples, and step-by-step guides
-- **Cross-Referenced**: All documents are interconnected with proper references
-- **Practical Examples**: Real-world usage examples and code samples
-- **Troubleshooting Focus**: Extensive problem-solving resources
+```bash
+# Download best quality video
+snatch download "URL"
 
-### Documentation Structure
-
-```
-Snatch v1.8.0 Documentation/
-├── README.md                          # Main project overview
-├── TECHNICAL_DOCUMENTATION.md         # System architecture
-├── MODULE_DOCUMENTATION.md           # Detailed module analysis
-├── API_REFERENCE.md                  # Complete API documentation
-├── PLUGIN_DEVELOPMENT_GUIDE.md       # Plugin system guide
-├── DEPLOYMENT_GUIDE.md               # Installation and deployment
-├── PERFORMANCE_OPTIMIZATION_GUIDE.md # Performance tuning
-├── TROUBLESHOOTING_GUIDE.md          # Problem solving
-├── INTEGRATION_TESTING.md            # Testing strategies
-└── DOCUMENTATION_INDEX.md            # This navigation guide
+# Download specific resolution (now works correctly!)
+snatch download "URL" --resolution 1080
 ```
 
-## 🔍 Finding Specific Information
+### Video Enhancement
 
-### Architecture and Design
+```bash
+# AI upscaling for better quality
+snatch download "URL" --upscale --upscale-method realesrgan
 
-- **System Overview**: [Technical Documentation](./TECHNICAL_DOCUMENTATION.md) → Architecture Overview
-- **Component Design**: [Technical Documentation](./TECHNICAL_DOCUMENTATION.md) → Component Architecture
-- **Data Flow**: [Technical Documentation](./TECHNICAL_DOCUMENTATION.md) → Data Flow Analysis
+# Combine resolution + upscaling
+snatch download "URL" --resolution 720 --upscale --upscale-factor 2
+```
 
-### Code Implementation
+### Audio Downloads
 
-- **Module Details**: [Module Documentation](./MODULE_DOCUMENTATION.md)
-- **Function References**: [API Reference](./API_REFERENCE.md)
-- **Code Examples**: Found throughout all documentation
+```bash
+# High-quality audio
+snatch download "URL" --audio-only --format flac
 
-### Plugin Development
+# Standard MP3
+snatch download "URL" --audio-only --format mp3
+```
 
-- **Plugin System**: [Plugin Development Guide](./PLUGIN_DEVELOPMENT_GUIDE.md) → Plugin Architecture
-- **Hook System**: [Plugin Development Guide](./PLUGIN_DEVELOPMENT_GUIDE.md) → Hook System
-- **Examples**: [Plugin Development Guide](./PLUGIN_DEVELOPMENT_GUIDE.md) → Sample Plugins
+## 🚀 Getting Help
 
-### Installation and Setup
+### Step-by-Step Process
 
-- **Quick Start**: [README](./markdownfiles/README.md) → Installation
-- **Detailed Setup**: [Deployment Guide](./DEPLOYMENT_GUIDE.md)
-- **Docker Setup**: [Deployment Guide](./DEPLOYMENT_GUIDE.md) → Docker Deployment
+1. **Check the FAQ** (in main README troubleshooting section)
+2. **Run diagnostics**: `python test_features_verification.py`
+3. **Check logs**: Look in `logs/snatch_errors.log`
+4. **Review documentation**: Use this index to find relevant guides
+5. **Test with verbose output**: Add `--verbose` to your commands
 
-### Performance and Optimization
+### Quick Diagnostics
 
-- **Performance Tuning**: [Performance Optimization](./PERFORMANCE_OPTIMIZATION_GUIDE.md)
-- **System Requirements**: [README](./markdownfiles/README.md) → System Requirements
-- **Monitoring**: [Performance Optimization](./PERFORMANCE_OPTIMIZATION_GUIDE.md) → Monitoring
+```bash
+# Verify installation
+snatch --version
 
-### Problem Solving
+# Test system capabilities  
+snatch info
 
-- **Common Issues**: [Troubleshooting Guide](./TROUBLESHOOTING_GUIDE.md) → Common Issues
-- **Error Codes**: [Troubleshooting Guide](./TROUBLESHOOTING_GUIDE.md) → Error Reference
-- **Debug Mode**: [Troubleshooting Guide](./TROUBLESHOOTING_GUIDE.md) → Advanced Troubleshooting
+# Check network speed
+snatch speedtest
 
-## 🏷️ Documentation Tags
+# Verify new features
+python test_features_verification.py
+```
 
-### By Complexity
+## 📊 Performance Tips
 
-- **Beginner**: README, Deployment Guide, Troubleshooting Guide
-- **Intermediate**: Performance Optimization, Integration Testing
-- **Advanced**: Technical Documentation, Module Documentation, API Reference, Plugin Development
+### Optimize Downloads
 
-### By Topic
+- Use `--aria2c` for faster downloads
+- Set appropriate `--resolution` to balance quality and speed
+- Use `--throttle` to limit bandwidth usage
 
-- **Installation**: README, Deployment Guide
-- **Usage**: README, API Reference, Performance Optimization
-- **Development**: Technical Documentation, Module Documentation, Plugin Development
-- **Maintenance**: Performance Optimization, Troubleshooting Guide, Integration Testing
+### Optimize Upscaling
 
-## 📖 Documentation Standards
+- Use `realesrgan` for animated content
+- Use `lanczos` for live-action videos
+- Use `--replace-original` to save disk space
+- Consider `--upscale-quality low` for faster processing
 
-### Format Conventions
+## 🔧 Configuration
 
-- **Markdown**: All documentation uses GitHub Flavored Markdown
-- **Code Blocks**: Syntax highlighting for relevant languages
-- **Diagrams**: ASCII art and text-based diagrams for architecture
-- **Tables**: Structured information in table format
-- **Cross-References**: Links between related sections
+### Environment Variables
 
-### Content Standards
+```bash
+set SNATCH_OUTPUT=D:\Downloads    # Default download directory
+set SNATCH_FFMPEG=C:\ffmpeg\bin   # FFmpeg location
+set SNATCH_LOG_LEVEL=INFO         # Logging verbosity
+```
 
-- **Comprehensive**: Covers all aspects of the topic
-- **Practical**: Includes real-world examples and use cases
-- **Accurate**: Reflects current v1.8.0 implementation
-- **Accessible**: Written for the target audience level
-- **Maintained**: Kept up-to-date with code changes
+### Config File
 
-## 🤝 Contributing to Documentation
+```bash
+# Edit configuration
+snatch config edit
 
-### How to Contribute
+# View current settings
+snatch config show
+```
 
-1. Identify documentation gaps or outdated information
-2. Create issues for documentation improvements
-3. Submit pull requests with documentation updates
-4. Follow the established documentation standards
+## 🌟 Advanced Features
 
-### Documentation Guidelines
+### Batch Processing
 
-- Use clear, concise language
-- Include practical examples
-- Maintain consistent formatting
-- Add cross-references to related sections
-- Update the documentation index when adding new files
+```bash
+# Download multiple URLs
+snatch batch urls.txt --upscale
 
-## 📧 Support and Feedback
+# Process playlists
+snatch download "PLAYLIST_URL" --playlist --upscale
+```
 
-### Getting Help
+### Automation
 
-- Check the [Troubleshooting Guide](./TROUBLESHOOTING_GUIDE.md) first
-- Search through documentation using your editor's search function
-- Create issues for documentation improvements
-- Provide feedback on documentation clarity and usefulness
+```bash
+# Download and enhance in one command
+snatch download "URL" --resolution 720 --upscale --upscale-factor 4 --replace-original --organize
+```
 
-### Feedback Welcome
+## 📈 Migration Guide
 
-- Documentation clarity and organization
-- Missing information or examples
-- Suggestions for additional topics
-- Error corrections and updates
+### From v1.8.0 to v1.8.1
+
+1. **Update installation:**
+
+   ```bash
+   git pull
+   pip install -e .
+   ```
+
+2. **Test resolution selection:**
+
+   ```bash
+   # This now works reliably
+   snatch download "test-url" --resolution 1080
+   ```
+
+3. **Try new upscaling:**
+
+   ```bash
+   snatch download "test-url" --upscale
+   ```
+
+### Update Existing Scripts
+
+- Replace hardcoded resolution workarounds
+- Add upscaling options where beneficial
+- Update error handling for new features
+
+## 📞 Support
+
+### Documentation Hierarchy
+
+1. **Quick issues**: Main README troubleshooting section
+2. **Detailed guides**: This documentation index
+3. **Technical details**: Technical documentation folder
+4. **Code examples**: Usage guide and features update
+
+### Self-Service Tools
+
+- `test_features_verification.py` - Verify installation
+- `snatch info` - System information
+- `snatch --help` - Command reference
+- Log files in `logs/` directory
 
 ---
 
-*This documentation index is part of Snatch v1.8.0's comprehensive documentation suite. For the latest updates and version information, see the main [README](./markdownfiles/README.md).*
+**📝 Note**: This documentation is for Snatch v1.8.1. For older versions, check the changelog for compatibility information.
+
+**🔗 Quick Links:**
+
+- [Main README](./README.md) | [Usage Guide](Documentation/USAGE_GUIDE.md) | [Features Update](Documentation/FEATURES_UPDATE.md) | [Changelog](Documentation/CHANGELOG.md)

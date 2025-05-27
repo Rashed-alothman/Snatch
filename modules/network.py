@@ -790,15 +790,267 @@ async def check_internet_connection() -> Tuple[bool, str]:
         return False, "Unknown connection error"
 
 # Simplified speed test for quick checks
-async def run_speedtest(detailed: bool = False) -> SpeedTestResult:
-    """Run a simplified speed test
+async def run_speedtest(detailed: bool = False, use_cache: bool = True, console: Optional[Console] = None) -> SpeedTestResult:
+    """Run an enhanced speed test with improved features
     
     Args:
-        detailed: Whether to run a detailed test
+        detailed: Whether to run a detailed test with packet loss and jitter
+        use_cache: Whether to use cached results if available and recent
+        console: Rich console for output (optional)
         
     Returns:
-        SpeedTestResult object
+        SpeedTestResult object with comprehensive metrics
     """
-    # Create a temporary network manager with default config
-    manager = NetworkManager({"cache_directory": CACHE_DIR})
-    return await manager.run_speed_test(console=None, detailed=detailed) or SpeedTestResult(0, 0, 0)
+    try:
+        # Create a network manager with enhanced configuration
+        config = {
+            "cache_directory": CACHE_DIR,
+            "connection_timeout": 10,
+            "speed_test_timeout": 30
+        }
+        manager = NetworkManager(config)
+        
+        # Check if we should use cached results
+        if use_cache and manager.last_speed_test:
+            cache_age = time.time() - manager.last_speed_test.timestamp
+            # Use cache if less than 5 minutes old
+            if cache_age < 300:
+                if console:
+                    console.print(f"[yellow]Using cached speed test results ({cache_age:.0f}s old)[/]")
+                return manager.last_speed_test
+        
+        # Run the speed test with progress reporting
+        if console:
+            console.print("[bold cyan]🚀 Running enhanced network speed test...[/]")
+        
+        result = await manager.run_speed_test(console=console, detailed=detailed)
+        
+        if result:
+            # Add enhanced analysis
+            if console:
+                _display_enhanced_results(result, console)
+            return result
+        else:
+            # Return fallback result with basic connectivity check
+            if console:
+                console.print("[yellow]⚠️ Speed test failed, running basic connectivity test...[/]")
+            
+            basic_result = await _run_basic_connectivity_test()
+            if console:
+                console.print(f"[green]✅ Basic connectivity: {'Online' if basic_result.download_mbps > 0 else 'Offline'}[/]")
+            
+            return basic_result
+            
+    except Exception as e:
+        logger.error(f"Enhanced speed test failed: {e}")
+        if console:
+            console.print(f"[red]❌ Speed test error: {e}[/]")
+        
+        # Return minimal fallback result
+        return SpeedTestResult(0, 0, 999, timestamp=time.time())
+
+
+async def _run_basic_connectivity_test() -> SpeedTestResult:
+    """Run a basic connectivity test as fallback"""
+    try:
+        # Simple HTTP request to test basic connectivity
+        timeout = aiohttp.ClientTimeout(total=5)
+        start_time = time.time()
+        
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get("https://www.google.com") as response:
+                if response.status == 200:
+                    end_time = time.time()
+                    ping_ms = (end_time - start_time) * 1000
+                    # Estimate basic speed (very rough)
+                    return SpeedTestResult(
+                        download_mbps=1.0,  # Basic estimate
+                        upload_mbps=0.5,    # Basic estimate
+                        ping_ms=ping_ms,
+                        timestamp=time.time()
+                    )
+    except Exception:
+        pass
+    
+    # Return offline result
+    return SpeedTestResult(0, 0, 999, timestamp=time.time())
+
+
+def _display_enhanced_results(result: SpeedTestResult, console: Console) -> None:
+    """Display enhanced speed test results with recommendations"""
+    from rich.panel import Panel
+    from rich.columns import Columns
+    
+    # Create main results table
+    table = Table(title="🌐 Enhanced Network Speed Test Results", box=box.ROUNDED)
+    table.add_column("Metric", style="cyan", width=20)
+    table.add_column("Value", style="green", width=15)
+    table.add_column("Rating", style="yellow", width=10)
+    table.add_column("Status", style="magenta", width=15)
+    
+    # Download speed analysis
+    download_rating = "⭐" * result.get_quality_rating()
+    download_status = _get_speed_status(result.download_mbps, "download")
+    table.add_row("Download Speed", f"{result.download_mbps:.2f} Mbps", download_rating, download_status)
+    
+    # Upload speed analysis  
+    upload_rating = "⭐" * min(5, max(1, int(result.upload_mbps / 2) + 1))
+    upload_status = _get_speed_status(result.upload_mbps, "upload")
+    table.add_row("Upload Speed", f"{result.upload_mbps:.2f} Mbps", upload_rating, upload_status)
+    
+    # Ping analysis
+    ping_rating = "⭐" * (5 - min(4, max(0, int(result.ping_ms / 50))))
+    ping_status = _get_ping_status(result.ping_ms)
+    table.add_row("Ping Latency", f"{result.ping_ms:.1f} ms", ping_rating, ping_status)
+    
+    # Additional metrics if available
+    if result.jitter_ms is not None:
+        jitter_rating = "⭐" * (5 - min(4, max(0, int(result.jitter_ms / 10))))
+        jitter_status = "Excellent" if result.jitter_ms < 5 else "Good" if result.jitter_ms < 20 else "Poor"
+        table.add_row("Jitter", f"{result.jitter_ms:.1f} ms", jitter_rating, jitter_status)
+        
+    if result.packet_loss is not None:
+        loss_rating = "⭐" * (5 - min(4, max(0, int(result.packet_loss * 2))))
+        loss_status = "Excellent" if result.packet_loss < 1 else "Good" if result.packet_loss < 3 else "Poor"
+        table.add_row("Packet Loss", f"{result.packet_loss:.2f}%", loss_rating, loss_status)
+    
+    console.print(table)
+    
+    # Activity recommendations
+    recommendations = _get_activity_recommendations(result)
+    if recommendations:
+        rec_panel = Panel(
+            recommendations,
+            title="🎯 Activity Recommendations",
+            border_style="blue"
+        )
+        console.print(rec_panel)
+    
+    # Performance tips
+    tips = _get_performance_tips(result)
+    if tips:
+        tips_panel = Panel(
+            tips,
+            title="💡 Performance Tips",
+            border_style="yellow"
+        )
+        console.print(tips_panel)
+
+
+def _get_speed_status(speed_mbps: float, type_str: str) -> str:
+    """Get speed status description"""
+    if type_str == "download":
+        if speed_mbps >= 100:
+            return "🚀 Excellent"
+        elif speed_mbps >= 25:
+            return "✅ Very Good"
+        elif speed_mbps >= 5:
+            return "👍 Good"
+        elif speed_mbps >= 1:
+            return "⚠️ Fair"
+        else:
+            return "❌ Poor"
+    else:  # upload
+        if speed_mbps >= 20:
+            return "🚀 Excellent"
+        elif speed_mbps >= 5:
+            return "✅ Very Good"
+        elif speed_mbps >= 1:
+            return "👍 Good"
+        elif speed_mbps >= 0.5:
+            return "⚠️ Fair"
+        else:
+            return "❌ Poor"
+
+
+def _get_ping_status(ping_ms: float) -> str:
+    """Get ping status description"""
+    if ping_ms < 20:
+        return "🚀 Excellent"
+    elif ping_ms < 50:
+        return "✅ Very Good"
+    elif ping_ms < 100:
+        return "👍 Good"
+    elif ping_ms < 200:
+        return "⚠️ Fair"
+    else:
+        return "❌ Poor"
+
+
+def _get_activity_recommendations(result: SpeedTestResult) -> str:
+    """Get activity recommendations based on speed test results"""
+    recommendations = []
+    
+    # Streaming recommendations
+    if result.download_mbps >= 25:
+        recommendations.append("✅ 4K Ultra HD streaming")
+    elif result.download_mbps >= 15:
+        recommendations.append("✅ 1080p HD streaming")
+    elif result.download_mbps >= 5:
+        recommendations.append("✅ 720p HD streaming")
+    elif result.download_mbps >= 1.5:
+        recommendations.append("⚠️ 480p SD streaming")
+    else:
+        recommendations.append("❌ Streaming may be problematic")
+    
+    # Gaming recommendations
+    if result.ping_ms < 50 and result.download_mbps >= 3:
+        recommendations.append("✅ Online gaming (excellent)")
+    elif result.ping_ms < 100 and result.download_mbps >= 1:
+        recommendations.append("👍 Online gaming (good)")
+    else:
+        recommendations.append("❌ Online gaming may lag")
+    
+    # Video calling
+    if result.download_mbps >= 1.5 and result.upload_mbps >= 1.5 and result.ping_ms < 150:
+        recommendations.append("✅ HD video calling")
+    elif result.download_mbps >= 0.5 and result.upload_mbps >= 0.5:
+        recommendations.append("👍 Standard video calling")
+    else:
+        recommendations.append("❌ Video calling may be poor")
+    
+    # File downloads
+    if result.download_mbps >= 50:
+        recommendations.append("✅ Large file downloads (fast)")
+    elif result.download_mbps >= 10:
+        recommendations.append("👍 Medium file downloads")
+    else:
+        recommendations.append("⚠️ File downloads will be slow")
+    
+    return "\n".join(recommendations)
+
+
+def _get_performance_tips(result: SpeedTestResult) -> str:
+    """Get performance improvement tips"""
+    tips = []
+    
+    # Speed-based tips
+    if result.download_mbps < 10:
+        tips.append("• Consider upgrading your internet plan")
+        tips.append("• Check for background applications using bandwidth")
+        tips.append("• Try connecting via Ethernet instead of WiFi")
+    
+    # Ping-based tips
+    if result.ping_ms > 100:
+        tips.append("• Use a wired connection for gaming")
+        tips.append("• Choose servers closer to your location")
+        tips.append("• Close unnecessary network applications")
+    
+    # General tips
+    if result.jitter_ms and result.jitter_ms > 20:
+        tips.append("• Check for network congestion")
+        tips.append("• Consider QoS settings on your router")
+    
+    if result.packet_loss and result.packet_loss > 2:
+        tips.append("• Check network cables and connections")
+        tips.append("• Contact your ISP about line quality")
+    
+    # Always include some general tips
+    if not tips:
+        tips.extend([
+            "• Restart your router periodically",
+            "• Keep your router firmware updated",
+            "• Position router in a central location"
+        ])
+    
+    return "\n".join(tips)

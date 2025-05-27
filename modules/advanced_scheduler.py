@@ -294,31 +294,39 @@ class AdvancedScheduler:
             except Exception as e:
                 logger.error(f"Error in scheduler loop: {e}")
                 await asyncio.sleep(5.0)  # Wait longer on error
-    
     async def _process_queue(self) -> None:
-        """Process the download queue"""
+        """Process the download queue with optimized flow control"""
         current_time = datetime.now()
         
         # Start new downloads if we have capacity
         while (len(self.active_downloads) < self.max_concurrent and 
                self.download_queue):
             
-            # Find next eligible download
-            eligible_download = None
-            for i, download in enumerate(self.download_queue):
-                if (download.status == DownloadStatus.PENDING and
-                    (download.scheduled_time is None or download.scheduled_time <= current_time)):
-                    eligible_download = download
-                    break
-            
+            eligible_download = self._find_next_eligible_download(current_time)
             if not eligible_download:
                 break  # No eligible downloads
             
-            # Remove from queue and start
-            self.download_queue.remove(eligible_download)
-            heapq.heapify(self.download_queue)  # Re-heapify after removal
-            
-            await self._start_download(eligible_download)
+            await self._prepare_and_start_download(eligible_download)
+    
+    def _find_next_eligible_download(self, current_time: datetime) -> Optional[ScheduledDownload]:
+        """Find the next eligible download from the queue"""
+        for i, download in enumerate(self.download_queue):
+            if self._is_download_eligible(download, current_time):
+                return download
+        return None
+    
+    def _is_download_eligible(self, download: ScheduledDownload, current_time: datetime) -> bool:
+        """Check if a download is eligible to start"""
+        return (download.status == DownloadStatus.PENDING and
+                (download.scheduled_time is None or download.scheduled_time <= current_time))
+    
+    async def _prepare_and_start_download(self, download: ScheduledDownload) -> None:
+        """Prepare and start a download with proper queue management"""
+        # Remove from queue and start
+        self.download_queue.remove(download)
+        heapq.heapify(self.download_queue)  # Re-heapify after removal
+        
+        await self._start_download(download)
     
     async def _start_download(self, download: ScheduledDownload) -> None:
         """Start a download"""

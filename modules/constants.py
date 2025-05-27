@@ -46,12 +46,12 @@ DEFAULT_MAX_RETRIES = 5
 # Sample command examples for help
 EXAMPLES = """
 Examples:
-  python snatch_cli.py https://www.youtube.com/watch?v=dQw4w9WgXcQ
-  python snatch_cli.py --audio-only https://soundcloud.com/artist/track
-  python snatch_cli.py --audio-only --upmix-7.1 --denoise https://example.com/audio
-  python snatch_cli.py --resolution 1080 https://vimeo.com/video_id
-  python snatch_cli.py --textual  # Launch modern textual interface
-  python snatch_cli.py --interactive  # Launch classic interactive mode
+snatch https://www.youtube.com/watch?v=dQw4w9WgXcQ
+snatch --audio-only https://soundcloud.com/artist/track
+snatch --audio-only --upmix-7.1 --denoise https://example.com/audio
+snatch --resolution 1080 https://vimeo.com/video_id
+snatch --textual  # Launch modern textual interface
+snatch --interactive  # Launch classic interactive mode
 """
 
 # Audio processing settings

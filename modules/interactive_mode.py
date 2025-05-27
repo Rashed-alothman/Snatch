@@ -69,6 +69,7 @@ from .cyberpunk_ui import (
     CyberpunkBanner, HolographicProgress, MatrixDataTable, 
     CyberStatusPanel, NeonMenu, create_cyberpunk_layout
 )
+from .cyberpunk_interactive import CyberpunkInteractiveApp
 
 # Textual imports for TUI features
 from textual.app import App, ComposeResult
@@ -1496,14 +1497,7 @@ class InteractiveApp(App):
             
             if not os.path.exists(file_path):
                 self.notify(f"File not found: {file_path}", severity="error")
-                return
-              # Basic video conversion using FFmpeg
-            ffmpeg_location = self.config.get("ffmpeg_location", "")
-            if ffmpeg_location:
-                ffmpeg_path = os.path.join(ffmpeg_location, CONSTANTS["FFMPEG_EXE"] if os.name == "nt" else CONSTANTS["FFMPEG_BINARY"])
-            else:
-                ffmpeg_path = CONSTANTS["FFMPEG_EXE"] if os.name == "nt" else CONSTANTS["FFMPEG_BINARY"]
-            
+                return            # Basic video conversion using FFmpeg
             # Default conversion settings
             target_format = "mp4"  # Popular format
             target_codec = "libx264"  # Hardware compatible
@@ -1907,12 +1901,11 @@ class InteractiveApp(App):
             logging.error(f"Speed test error: {e}")
             self.notify(f"Speed test failed: {str(e)}", severity="error")
     
-    # Initialization Methods
-    def initialize_download_manager(self) -> None:
+    # Initialization Methods    def initialize_download_manager(self) -> None:
         """Initialize the download manager"""
         try:
             self.download_manager = DownloadManager(self.config)
-            logging.info("Download manager initialized successfully")        
+            logging.info("Download manager initialized successfully")
         except Exception as e:
             logging.error(f"Error initializing download manager: {e}")
             self.notify(f"Error initializing download manager: {e}", severity="error")
@@ -1947,49 +1940,63 @@ class InteractiveApp(App):
         except Exception as e:
             logging.error(f"Error showing notification: {e}")
 
+    def _initialize_format_table(self, format_table: DataTable) -> None:
+        """Initialize format table with columns if not already present."""
+        format_table.clear()
+        if not format_table.columns:
+            format_table.add_columns(
+                "ID", "Extension", "Resolution", "Codec", "Size", "Audio", "FPS"
+            )
+
+    def _get_format_resolution(self, fmt: dict) -> str:
+        """Extract resolution information from format."""
+        if fmt.get('width') and fmt.get('height'):
+            return f"{fmt['width']}x{fmt['height']}"
+        return 'N/A'
+
+    def _get_format_codec(self, fmt: dict) -> str:
+        """Extract codec information from format."""
+        codec = fmt.get('vcodec', 'N/A')
+        if codec == 'none':
+            codec = fmt.get('acodec', 'N/A')
+        return codec
+
+    def _get_format_size(self, fmt: dict) -> str:
+        """Extract and format file size information."""
+        filesize = fmt.get('filesize') or fmt.get('filesize_approx')
+        return format_size(filesize) if filesize else 'N/A'
+
+    def _get_format_audio(self, fmt: dict) -> str:
+        """Extract audio bitrate information."""
+        abr = fmt.get('abr')
+        return f"{abr} kbps" if abr else 'N/A'
+
+    def _add_format_row(self, format_table: DataTable, fmt: dict) -> None:
+        """Add a single format row to the table."""
+        format_id = str(fmt.get('format_id', 'N/A'))
+        ext = fmt.get('ext', 'N/A')
+        resolution = self._get_format_resolution(fmt)
+        codec = self._get_format_codec(fmt)
+        size = self._get_format_size(fmt)
+        audio = self._get_format_audio(fmt)
+        fps = str(fmt.get('fps', 'N/A')) if fmt.get('fps') else 'N/A'
+        
+        format_table.add_row(format_id, ext, resolution, codec, size, audio, fps)
+
     def _populate_format_table(self, info: Dict[str, Any]) -> None:
         """Populate the format table with available formats from yt-dlp info"""        
         try:
             format_table = self.query_one(UI_ELEMENTS["FORMAT_TABLE"], DataTable)
             
-            # Clear existing rows
-            format_table.clear()
-            
-            # Add columns if not already present
-            if not format_table.columns:
-                format_table.add_columns(
-                    "ID", "Extension", "Resolution", "Codec", "Size", "Audio", "FPS"
-                )
+            # Initialize table
+            self._initialize_format_table(format_table)
             
             # Add format data from yt-dlp info
             formats = info.get('formats', [])
-            
             for fmt in formats:
-                format_id = str(fmt.get('format_id', 'N/A'))
-                ext = fmt.get('ext', 'N/A')
-                
-                # Resolution
-                if fmt.get('width') and fmt.get('height'):
-                    resolution = f"{fmt['width']}x{fmt['height']}"
-                else:
-                    resolution = 'N/A'
-                
-                # Codec
-                codec = fmt.get('vcodec', 'N/A')
-                if codec == 'none':
-                    codec = fmt.get('acodec', 'N/A')                # Size
-                filesize = fmt.get('filesize') or fmt.get('filesize_approx')
-                size = format_size(filesize) if filesize else 'N/A'
-                
-                # Audio info
-                abr = fmt.get('abr')
-                audio = f"{abr} kbps" if abr else 'N/A'
-                
-                # FPS
-                fps = str(fmt.get('fps', 'N/A')) if fmt.get('fps') else 'N/A'
-                
-                format_table.add_row(format_id, ext, resolution, codec, size, audio, fps)
-                self.format_info = info
+                self._add_format_row(format_table, fmt)
+            
+            self.format_info = info
             
         except Exception as e:
             logging.error(f"Error populating format table: {e}")
@@ -2325,6 +2332,54 @@ async def _show_system_status(console: Console, download_manager: AsyncDownloadM
         logging.error(f"System status error: {e}")
 
 
+def _get_status_indicator(value: float, high_threshold: float, medium_threshold: float) -> str:
+    """Get status indicator based on value and thresholds."""
+    if value > high_threshold:
+        return "🔴 High"
+    elif value > medium_threshold:
+        return "🟡 Medium"
+    else:
+        return "🟢 Normal"
+
+def _create_performance_metrics_table(metrics: dict) -> Table:
+    """Create a table displaying performance metrics."""
+    table = Table(title="Performance Metrics", border_style="bright_green")
+    table.add_column("Metric", style="cyan", min_width=15)
+    table.add_column("Current", style="green")
+    table.add_column("Status", style="yellow")
+    
+    # CPU metrics
+    cpu_percent = metrics.get("cpu_percent", 0)
+    cpu_status = _get_status_indicator(cpu_percent, 80, 50)
+    table.add_row("CPU Usage", f"{cpu_percent:.1f}%", cpu_status)
+    
+    # Memory metrics
+    memory_percent = metrics.get("memory_percent", 0)
+    memory_status = _get_status_indicator(memory_percent, 85, 70)
+    table.add_row("Memory Usage", f"{memory_percent:.1f}%", memory_status)
+    
+    # Network metrics
+    network_mbps = metrics.get("network_mbps", 0)
+    network_status = "🟢 Active" if network_mbps > 1 else "🟡 Idle"
+    table.add_row("Network", f"{network_mbps:.1f} Mbps", network_status)
+    
+    return table
+
+async def _handle_performance_optimization(console: Console, download_manager: AsyncDownloadManager) -> None:
+    """Handle performance optimization if requested by user."""
+    if not Confirm.ask("\n[yellow]Run performance optimization?[/]", default=False):
+        return
+        
+    console.print("[cyan]Running optimization...[/]")
+    result = await download_manager.optimize_performance()
+    
+    if result.get("optimizations_applied"):
+        console.print("[green]✅ Optimizations applied:[/]")
+        for opt in result["optimizations_applied"]:
+            console.print(f"  • {opt}")
+    else:
+        console.print("[green]✅ System is already optimized[/]")
+
 async def _show_performance_monitor(console: Console, download_manager: AsyncDownloadManager) -> None:
     """Show performance monitoring information."""
     try:
@@ -2334,52 +2389,13 @@ async def _show_performance_monitor(console: Console, download_manager: AsyncDow
             console.print("[yellow]Performance monitor not available[/]")
             return
             
-        # Get current metrics
+        # Get current metrics and display table
         metrics = download_manager.performance_monitor.get_current_metrics()
-        
-        # Create metrics table
-        table = Table(title="Performance Metrics", border_style="bright_green")
-        table.add_column("Metric", style="cyan", min_width=15)
-        table.add_column("Current", style="green")
-        table.add_column("Status", style="yellow")
-          # CPU
-        cpu_percent = metrics.get("cpu_percent", 0)
-        if cpu_percent > 80:
-            cpu_status = "🔴 High"
-        elif cpu_percent > 50:
-            cpu_status = "🟡 Medium"
-        else:
-            cpu_status = "🟢 Normal"
-        table.add_row("CPU Usage", f"{cpu_percent:.1f}%", cpu_status)
-        
-        # Memory
-        memory_percent = metrics.get("memory_percent", 0)
-        if memory_percent > 85:
-            memory_status = "🔴 High"
-        elif memory_percent > 70:
-            memory_status = "🟡 Medium"
-        else:
-            memory_status = "🟢 Normal"
-        table.add_row("Memory Usage", f"{memory_percent:.1f}%", memory_status)
-        
-        # Network
-        network_mbps = metrics.get("network_mbps", 0)
-        network_status = "🟢 Active" if network_mbps > 1 else "🟡 Idle"
-        table.add_row("Network", f"{network_mbps:.1f} Mbps", network_status)
-        
+        table = _create_performance_metrics_table(metrics)
         console.print(table)
         
-        # Optimization option
-        if Confirm.ask("\n[yellow]Run performance optimization?[/]", default=False):
-            console.print("[cyan]Running optimization...[/]")
-            result = await download_manager.optimize_performance()
-            
-            if result.get("optimizations_applied"):
-                console.print("[green]✅ Optimizations applied:[/]")
-                for opt in result["optimizations_applied"]:
-                    console.print(f"  • {opt}")            
-            else:
-                console.print("[green]✅ System is already optimized[/]")
+        # Handle optimization if requested
+        await _handle_performance_optimization(console, download_manager)
         
         Prompt.ask(CONSTANTS["PRESS_ENTER"], default="")
         
@@ -2526,12 +2542,49 @@ def run_interactive_mode(config: Dict[str, Any]) -> None:
     launch_textual_interface(config)
 
 
-# Enhanced initialization function
+# Enhanced Cyberpunk Integration
+def launch_enhanced_interactive_mode(config: Dict[str, Any]) -> None:
+    """Launch the enhanced cyberpunk interactive interface with fallbacks.
+    
+    This function tries to launch the cyberpunk interface first, then falls back
+    to the standard textual interface if needed.
+    
+    Args:
+        config: Application configuration dictionary
+    """
+    try:
+        # First try to launch the cyberpunk interface
+        logging.info("Launching enhanced cyberpunk interface...")
+        from .cyberpunk_interactive import launch_cyberpunk_interface
+        launch_cyberpunk_interface(config)
+        
+    except Exception as e:
+        logging.warning(f"Cyberpunk interface failed: {e}")
+        logging.info("Falling back to standard textual interface...")
+        try:
+            # Fall back to standard textual interface
+            launch_textual_interface(config)
+        except Exception as fallback_error:
+            logging.error(f"Standard interface also failed: {fallback_error}")
+            logging.info("Falling back to console interface...")
+            try:
+                # Final fallback to console interface
+                import asyncio
+                asyncio.run(launch_interactive_mode(config))
+            except Exception as final_error:
+                console = Console()
+                console.print("[red]All interface modes failed:[/]")
+                console.print(f"[red]Cyberpunk error: {e}[/]")
+                console.print(f"[red]Textual error: {fallback_error}[/]")
+                console.print(f"[red]Console error: {final_error}[/]")
+                raise final_error
+
+# Update the main initialization function to use cyberpunk by default
 def initialize_interactive_mode(config: Dict[str, Any]) -> None:
     """Initialize interactive mode with proper error handling and fallbacks."""
     try:
         # Try to launch the modern Textual interface first
-        launch_textual_interface(config)
+        launch_enhanced_interactive_mode(config)
     except ImportError as e:
         # If Textual is not available, fall back to Rich console interface
         logging.warning(f"Textual interface not available: {e}")
@@ -2543,9 +2596,9 @@ def initialize_interactive_mode(config: Dict[str, Any]) -> None:
         logging.info("Attempting fallback to Rich console interface")
         try:
             launch_interactive_mode(config)
-        except Exception as fallback_error:
+        except Exception as final_error:
             console = Console()
-            console.print("[red]Both interface modes failed:[/]")
-            console.print(f"[red]Textual error: {e}[/]")
-            console.print(f"[red]Fallback error: {fallback_error}[/]")
-            raise
+            console.print("[red]All interface modes failed:[/]")
+            console.print(f"[red]Cyberpunk error: {e}[/]")
+            console.print(f"[red]Textual error: {final_error}[/]")
+            raise final_error

@@ -34,6 +34,18 @@ from urllib.parse import urlparse
 if TYPE_CHECKING:
     from .performance_monitor import PerformanceMonitor
     from .advanced_scheduler import AdvancedScheduler
+    from .ffmpeg_helper import VideoUpscaler
+
+# Format string constants
+DEFAULT_VIDEO_FORMAT = "bestvideo+bestaudio/best"
+BESTAUDIO_FORMAT = "bestaudio/best"
+
+# Resolution-based format strings
+FORMAT_4K = "bestvideo[height<=2160]+bestaudio/best[height<=2160]"
+FORMAT_1440P = "bestvideo[height<=1440]+bestaudio/best[height<=1440]"
+FORMAT_1080P = "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+FORMAT_720P = "bestvideo[height<=720]+bestaudio/best[height<=720]"
+FORMAT_480P = "bestvideo[height<=480]+bestaudio/best[height<=480]"
 
 # Define custom exception classes
 class DownloadError(Exception):
@@ -106,8 +118,8 @@ from .constants import DEFAULT_TIMEOUT, DEFAULT_USER_AGENT, DEFAULT_CHUNK_SIZE
 PART_EXT = '.part'
 WEBM_EXT = '.webm'
 
-# Format selection strings
-BESTAUDIO_FORMAT = (
+# Format selection strings - use the more comprehensive version
+COMPREHENSIVE_BESTAUDIO_FORMAT = (
     "bestaudio[ext=m4a]/bestaudio[ext=mp3]/"
     "bestaudio[ext=opus]/bestaudio[ext=aac]/"
     "bestaudio[ext=wav]/bestaudio[ext=flac]/"
@@ -752,9 +764,9 @@ class DownloadManager:
     def _get_audio_format_options(
         self, audio_format: str, audio_channels: int
     ) -> Dict[str, Any]:
-        """Configure audio format options."""
+        """Configure audio format options."""        
         options = {
-            "format": BESTAUDIO_FORMAT,
+            "format": BESTAUDIO_FORMAT,  # Use the simple version for consistency
             "extract_audio": True,
             "postprocessors": [{
                 "key": "FFmpegExtractAudio",
@@ -864,9 +876,20 @@ class AsyncDownloadManager:
         # Initialize advanced systems if not provided
         if not self.performance_monitor or not self.advanced_scheduler:
             self._initialize_advanced_systems()
-        
-        # Create audio processor instance
+          # Create audio processor instance
         self.audio_processor = AudioProcessor(config) if 'AudioProcessor' in globals() else None
+        
+        # Initialize video upscaler
+        self.video_upscaler = None
+        if config.get("upscaling", {}).get("enabled", False):
+            try:
+                from .ffmpeg_helper import create_video_upscaler
+                self.video_upscaler = create_video_upscaler(config)
+                logging.info("Video upscaler initialized successfully")
+            except ImportError as e:
+                logging.warning(f"Video upscaling not available: {e}")
+            except Exception as e:
+                logging.error(f"Failed to initialize video upscaler: {e}")
         
         # Initialize P2P manager if enabled
         self.p2p_manager = None
@@ -1192,11 +1215,10 @@ class AsyncDownloadManager:
         """Download a single file with all processing options"""
         # Try P2P download first if enabled
         file_path = await self._try_p2p_download(url, options, console)
-        
-        # Fall back to traditional download if P2P failed
+          # Fall back to traditional download if P2P failed
         if not file_path:
             console.print("[blue]Using traditional download method[/]")
-            file_path = await self._download_single_url(url, ydl_opts, console)
+            file_path = await self._download_single_url(url, ydl_opts, console, options)
             
             # Apply audio processing for traditional downloads
             if file_path and self._needs_audio_processing(options):
@@ -1314,9 +1336,7 @@ class AsyncDownloadManager:
                 'preferredcodec': options.get("audio_format", "mp3"),
                 'preferredquality': options.get("audio_quality", "192"),
             }]
-            logging.info(f"Audio download configured: format={options.get('audio_format', 'mp3')}, quality={options.get('audio_quality', '192')}")
-        
-        # Handle resolution-specific downloads
+            logging.info(f"Audio download configured: format={options.get('audio_format', 'mp3')}, quality={options.get('audio_quality', '192')}")        # Handle resolution-specific downloads
         elif options.get("resolution"):
             res = options.get("resolution")
             # Convert resolution to height value
@@ -1324,21 +1344,59 @@ class AsyncDownloadManager:
                 res = res[:-1]
             try:
                 height = int(res)
-                ydl_opts["format"] = f"best[height<={height}]"
-                logging.info(f"Video download configured: max resolution={height}p")
+                # Use a more compatible format string approach
+                # This format string works better with yt-dlp's actual format selection
+                format_parts = []
+                
+                if height >= 2160:  # 4K
+                    format_parts.extend([
+                        FORMAT_4K,
+                        FORMAT_1440P, 
+                        FORMAT_1080P,
+                        DEFAULT_VIDEO_FORMAT
+                    ])
+                elif height >= 1440:  # 1440p
+                    format_parts.extend([
+                        FORMAT_1440P,
+                        FORMAT_1080P,
+                        DEFAULT_VIDEO_FORMAT
+                    ])
+                elif height >= 1080:  # 1080p
+                    format_parts.extend([
+                        FORMAT_1080P,
+                        FORMAT_720P,
+                        DEFAULT_VIDEO_FORMAT
+                    ])
+                elif height >= 720:  # 720p
+                    format_parts.extend([
+                        FORMAT_720P,
+                        FORMAT_480P,
+                        DEFAULT_VIDEO_FORMAT
+                    ])
+                else:  # 480p and below
+                    format_parts.extend([
+                        f"bestvideo[height<={height}]+bestaudio/best[height<={height}]",
+                        DEFAULT_VIDEO_FORMAT
+                    ])
+                
+                # Combine format options
+                format_string = "/".join(format_parts)
+                ydl_opts["format"] = format_string
+                logging.info(f"Video download configured: target resolution={height}p with fallbacks")
+                logging.debug(f"Generated format string: {format_string}")
+                
             except ValueError:
                 logging.warning(f"Invalid resolution format: {res}, using default")
-                ydl_opts["format"] = "best"
+                ydl_opts["format"] = DEFAULT_VIDEO_FORMAT
         
         # Handle specific format ID
         elif options.get("format_id"):
             ydl_opts["format"] = options.get("format_id")
-            logging.info(f"Using specific format: {options.get('format_id')}")
-          # Default to best quality
+            logging.info(f"Using specific format: {options.get('format_id')}")        # Default to best quality
         else:
-            ydl_opts["format"] = "best"
+            ydl_opts["format"] = DEFAULT_VIDEO_FORMAT
     
-    async def _download_single_url(self, url: str, ydl_opts: Dict[str, Any], console: Console) -> Optional[str]:
+    async def _download_single_url(self, url: str, ydl_opts: Dict[str, Any], console: Console, options: Dict[str, Any]) -> Optional[str]:
         """Download a single URL with the given options."""
         try:
             import yt_dlp
@@ -1369,12 +1427,19 @@ class AsyncDownloadManager:
                     info = ydl.extract_info(url, download=False)
                     if not info:
                         raise DownloadError("Failed to extract video information")
-                    
-                    # Download the video
+                      # Download the video
                     ydl.download([url])
                     
-                    # Return the downloaded filename
-                    return ydl.prepare_filename(info)
+                    # Get the downloaded filename
+                    downloaded_file = ydl.prepare_filename(info)
+                    
+                    # Check if upscaling is requested and applicable
+                    if self._should_upscale_video(options, downloaded_file):
+                        upscaled_file = await self._apply_video_upscaling(downloaded_file, options, console)
+                        if upscaled_file:
+                            return upscaled_file
+                    
+                    return downloaded_file
                     
                 except Exception as e:
                     error_hook(str(e))
@@ -1667,10 +1732,96 @@ class AsyncDownloadManager:
             # Enable compression for temporary files
             self.config["compress_temp"] = True
             optimizations_applied.append("Enabled temporary file compression")
-            
-        return {
+            return {
             "status": "optimized",
             "metrics": metrics,
             "recommendations": recommendations,
             "optimizations_applied": optimizations_applied
         }
+    
+    # Alias method for API compatibility
+    async def download_async(self, urls: List[str], options: Dict[str, Any]) -> List[str]:
+        """Alias for download_with_options for backward compatibility"""
+        return await self.download_with_options(urls, options)
+    def _should_upscale_video(self, options: Dict[str, Any], file_path: str) -> bool:
+        """Check if video should be upscaled based on options and file type"""
+        if not self.video_upscaler:
+            return False
+            
+        # Check if upscaling is enabled in options
+        if not options.get("upscale_video", False):
+            return False
+            
+        # Check if file is a video file
+        video_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv'}
+        file_ext = Path(file_path).suffix.lower()
+        if file_ext not in video_extensions:
+            return False
+            
+        # Don't upscale audio-only downloads
+        if options.get("audio_only", False):
+            return False
+            
+        return True
+    async def _apply_video_upscaling(self, file_path: str, options: Dict[str, Any], console: Console) -> Optional[str]:
+        """Apply video upscaling to the downloaded file"""
+        try:
+            console.print(f"[yellow]Starting video upscaling for:[/] {Path(file_path).name}")
+            
+            # Prepare upscaling configuration
+            upscale_config = self._prepare_upscale_config(options)
+            
+            # Generate output path for upscaled video
+            input_path = Path(file_path)
+            output_path = input_path.parent / f"{input_path.stem}_upscaled{input_path.suffix}"
+            
+            console.print(f"[cyan]Upscaling method:[/] {upscale_config.get('method', 'lanczos')} "
+                         f"{upscale_config.get('scale_factor', 2)}x")
+            
+            # Perform upscaling
+            success = await self.video_upscaler.upscale_video(
+                str(input_path),
+                str(output_path),
+                upscale_config
+            )
+            
+            if success and output_path.exists():
+                console.print(f"[green]Video upscaling completed:[/] {output_path.name}")
+                
+                # Optionally remove original file if requested
+                if options.get("replace_original", False):
+                    try:
+                        input_path.unlink()
+                        output_path.rename(input_path)
+                        console.print("[blue]Replaced original file with upscaled version[/]")
+                        return str(input_path)
+                    except Exception as e:
+                        logging.warning(f"Failed to replace original file: {e}")
+                        return str(output_path)
+                else:
+                    return str(output_path)
+            else:
+                console.print(f"[red]Video upscaling failed for:[/] {input_path.name}")
+                return file_path  # Return original file
+                
+        except Exception as e:
+            console.print(f"[red]Error during video upscaling:[/] {str(e)}")
+            logging.error(f"Video upscaling error: {str(e)}")
+            return file_path  # Return original file on error
+    
+    def _prepare_upscale_config(self, options: Dict[str, Any]) -> Dict[str, Any]:
+        """Prepare upscaling configuration from options and defaults"""
+        # Get default upscaling config
+        default_config = self.config.get("upscaling", {})
+        
+        # Merge with user options
+        upscale_config = {
+            "method": options.get("upscale_method", default_config.get("method", "lanczos")),
+            "scale_factor": options.get("upscale_factor", default_config.get("scale_factor", 2)),
+            "quality": options.get("upscale_quality", default_config.get("quality", "high")),
+            "preserve_aspect_ratio": default_config.get("preserve_aspect_ratio", True),
+            "max_resolution": default_config.get("max_resolution", "4K"),
+            "gpu_acceleration": default_config.get("gpu_acceleration", True)
+        }
+        
+        return upscale_config
