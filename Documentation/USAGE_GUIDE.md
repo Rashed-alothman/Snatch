@@ -1,4 +1,4 @@
-# 📖 Snatch Usage Guide - Video Enhancement & Resolution Selection
+# 📖 Snatch Usage Guide - Complete Feature Reference
 
 ## 🎯 Quick Reference
 
@@ -8,6 +8,12 @@
 # Interactive mode (recommended for beginners)
 snatch
 
+# Modern interactive interface
+snatch modern
+
+# Advanced Textual TUI
+snatch textual
+
 # Direct download with best quality
 snatch download "https://example.com/video"
 
@@ -16,6 +22,114 @@ snatch download "https://example.com/video" --resolution 1080
 
 # Download with video upscaling
 snatch download "https://example.com/video" --upscale
+```
+
+## 🎨 Customization System
+
+### Theme Management
+
+```bash
+# View current theme
+snatch customize theme show
+
+# List all available themes
+snatch customize theme list
+
+# Switch to cyberpunk theme
+snatch customize theme set --theme cyberpunk
+
+# Switch to dark theme
+snatch customize theme set --theme dark
+
+# Available themes: default, dark, light, high_contrast, cyberpunk, minimal, ocean, forest
+```
+
+### Interface Customization
+
+```bash
+# Show all interface settings
+snatch customize interface --show
+
+# Enable detailed interface mode
+snatch customize interface --setting interface_mode --value detailed
+
+# Enable progress animations
+snatch customize interface --setting animate_progress --value true
+
+# Set maximum items to display
+snatch customize interface --setting max_display_items --value 50
+
+# Enable keyboard shortcuts
+snatch customize interface --setting enable_keyboard_shortcuts --value true
+```
+
+### Performance Tuning
+
+```bash
+# Show performance settings
+snatch customize performance --show
+
+# Set concurrent downloads
+snatch customize performance --setting max_concurrent_downloads --value 5
+
+# Configure bandwidth limit (0 = unlimited)
+snatch customize performance --setting global_bandwidth_limit --value 0
+
+# Set memory limit (MB)
+snatch customize performance --setting max_memory_usage_mb --value 512
+
+# Configure chunk size
+snatch customize performance --setting chunk_size --value 1048576
+```
+
+### Behavior Configuration
+
+```bash
+# Show behavior settings
+snatch customize behavior --show
+
+# Enable auto-organization
+snatch customize behavior --setting auto_organize_downloads --value true
+
+# Configure file overwrite confirmation
+snatch customize behavior --setting confirm_file_overwrite --value true
+
+# Set large download threshold
+snatch customize behavior --setting large_download_threshold_mb --value 100
+```
+
+### Command Aliases
+
+```bash
+# List current aliases
+snatch customize alias list
+
+# Add useful aliases
+snatch customize alias add --alias "dl" --command "download"
+snatch customize alias add --alias "4k" --command "download --resolution 2160"
+snatch customize alias add --alias "audio" --command "download --audio-only"
+
+# Use aliases
+snatch dl "URL"  # Same as: snatch download "URL"
+snatch 4k "URL"  # Same as: snatch download "URL" --resolution 2160
+```
+
+### Configuration Profiles
+
+```bash
+# List profiles
+snatch customize profile list
+
+# Create profile for different use cases
+snatch customize profile create --name "work"
+snatch customize profile create --name "personal"
+
+# Load specific profile
+snatch customize profile load --name "work"
+
+# Export/Import settings
+snatch customize export work-settings.yaml
+snatch customize import work-settings.yaml
 ```
 
 ## 🎬 Video Resolution Selection
