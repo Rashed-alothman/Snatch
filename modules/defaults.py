@@ -89,8 +89,45 @@ UPSCALE_METHODS = {
         "type": "traditional",
         "quality": "basic",
         "speed": "fastest",
-        "algorithm": "bilinear"
-    }
+        "algorithm": "bilinear"    }
+}
+
+# Audio enhancement default settings
+AUDIO_ENHANCEMENT_DEFAULTS = {
+    "enabled": False,
+    "level": "medium",  # light, medium, aggressive
+    "preset": None,     # Use preset name or None for custom settings
+    
+    # AI-powered enhancement
+    "noise_reduction": True,
+    "noise_reduction_strength": 0.6,  # 0.0 to 1.0
+    
+    # Audio upscaling
+    "upscale_sample_rate": False,
+    "target_sample_rate": 48000,  # 22050, 44100, 48000, 96000, 192000
+    
+    # Frequency enhancement
+    "frequency_extension": False,
+    "high_freq_boost": 3.0,  # dB boost for high frequencies
+    
+    # Spatial enhancement
+    "stereo_widening": False,
+    "stereo_width": 1.2,  # 1.0 = normal, 2.0 = maximum width
+    
+    # Dynamic processing
+    "normalization": True,
+    "target_lufs": -16.0,  # EBU R128 standard
+    "dynamic_compression": False,
+    "compression_ratio": 3.0,
+    
+    # Restoration
+    "declipping": False,
+    "artifact_removal": True,
+    
+    # Processing options
+    "preserve_peaks": True,
+    "high_quality_resampling": True,
+    "multiband_processing": False
 }
 
 DEFAULT_CONFIG = {
@@ -101,6 +138,7 @@ DEFAULT_CONFIG = {
     # Add organization configs
     "organize": False,
     "organization_templates": DEFAULT_ORGANIZATION_TEMPLATES.copy(),
+    
     # Video upscaling configuration
     "upscaling": {
         "enabled": False,
@@ -112,7 +150,9 @@ DEFAULT_CONFIG = {
         "fallback_method": "lanczos",  # Fallback if AI upscaling fails
         "gpu_acceleration": True,
         "max_resolution": "4K",  # Don't upscale beyond this
-    }
+    },
+      # Audio enhancement configuration
+    "audio_enhancement": AUDIO_ENHANCEMENT_DEFAULTS.copy()
 }
 
 # Enhanced spinner characters for better visual appearance
@@ -529,4 +569,44 @@ UPSCALING_PRESETS = {
             "quality": "high"
         }
     }
+}
+
+# Audio enhancement default settings
+AUDIO_ENHANCEMENT_DEFAULTS = {
+    "enabled": False,
+    "level": "medium",  # light, medium, aggressive
+    "preset": None,     # Use preset name or None for custom settings
+    
+    # AI-powered enhancement
+    "noise_reduction": True,
+    "noise_reduction_strength": 0.6,  # 0.0 to 1.0
+    
+    # Audio upscaling
+    "upscale_sample_rate": False,
+    "target_sample_rate": 48000,  # 22050, 44100, 48000, 96000, 192000
+    
+    # Frequency enhancement
+    "frequency_extension": False,
+    "high_freq_boost": 3.0,  # dB boost for high frequencies
+    
+    # Spatial enhancement
+    "stereo_widening": False,
+    "stereo_width": 1.2,  # 1.0 = normal, 2.0 = maximum width
+    
+    # Dynamic processing
+    "normalization": True,
+    "target_lufs": -16.0,  # EBU R128 standard
+    "dynamic_compression": False,
+    "compression_ratio": 3.0,
+    
+    # Restoration
+    "declipping": False,
+    "artifact_removal": True,
+    
+    # Processing options
+    "preserve_peaks": True,
+    "high_quality_resampling": True,
+    "multiband_processing": False,
+    "chunked_processing": True,
+    "chunk_size_seconds": 30,  # Process in 30-second chunks for large files
 }

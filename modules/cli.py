@@ -8,6 +8,7 @@ import signal
 import sys
 import time
 import os
+import glob
 from pathlib import Path
 from typing import List, Optional, Dict, Any, NoReturn
 import typer
@@ -31,6 +32,7 @@ from .cache import DownloadCache
 from .error_handler import EnhancedErrorHandler, handle_errors, ErrorCategory, ErrorSeverity
 from .config_manager import ConfigurationManager, CacheType
 from .customization_manager import CustomizationManager, ThemePreset, ConfigFormat, InterfaceMode, ProgressStyle, NotificationLevel
+from .audio_processor import EnhancedAudioProcessor, AudioEnhancementSettings, AUDIO_ENHANCEMENT_PRESETS
 
 # Enable Rich traceback formatting
 install(show_locals=True)
@@ -164,10 +166,16 @@ class EnhancedCLI:
         # Log useful information
         console.print(f"[bold cyan]Processing {len(urls)} URLs for download[/]")
         self._log_download_mode(options)
-        
-        # Handle download with proper event loop management
+          # Handle download with proper event loop management
         try:
-            return self._run_download_safely(urls, options)
+            result = self._run_download_safely(urls, options)
+            
+            # Launch interactive mode if requested and download succeeded
+            if result == 0 and options.get("interactive", False):
+                console.print("\n[bold cyan]🎮 Launching interactive mode...[/]")
+                self._launch_interactive_mode()
+            
+            return result
         except Exception as e:
             self.error_handler.log_error(
                 f"Download execution failed: {str(e)}",
@@ -175,7 +183,7 @@ class EnhancedCLI:
                 ErrorSeverity.ERROR,
                 context={"urls": urls, "options": options}            )
             console.print(f"[bold red]Download failed: {str(e)}[/]")
-            return 1    
+            return 1
     def _log_download_mode(self, options: Dict[str, Any]) -> None:
         """Log download mode information"""
         if options.get("audio_only"):
@@ -271,8 +279,7 @@ class EnhancedCLI:
             help=f"{APP_NAME} - A powerful media downloader",
             epilog=EXAMPLES
         )
-            # Download command
-        @app.command("download", help="Download media from URLs")
+            # Download command          @app.command("download", help="Download media from URLs")
         def download(
             urls: List[str] = typer.Argument(None, help="URLs to download"),
             audio_only: bool = typer.Option(False, "--audio-only", "-a", help="Download audio only"),
@@ -282,16 +289,38 @@ class EnhancedCLI:
             filename: str = typer.Option(None, "--filename", help="Custom filename"),
             audio_format: str = typer.Option("mp3", "--audio-format", help="Audio format for --audio-only"),
             audio_quality: str = typer.Option("best", "--audio-quality", help="Audio quality"),
+            
+            # Existing audio enhancement options
             upmix_71: bool = typer.Option(False, "--upmix-7.1", help="Upmix audio to 7.1 surround"),
             denoise: bool = typer.Option(False, "--denoise", help="Apply noise reduction to audio"),
+            
+            # New comprehensive audio enhancement options
+            enhance_audio: bool = typer.Option(False, "--enhance-audio", help="Enable comprehensive audio enhancement"),
+            audio_enhancement_level: str = typer.Option("medium", "--enhancement-level", help="Enhancement level: light, medium, aggressive"),
+            audio_enhancement_preset: str = typer.Option(None, "--enhancement-preset", help="Use preset: podcast, music, speech, broadcast, restoration"),
+            noise_reduction: bool = typer.Option(False, "--noise-reduction", help="Apply AI-powered noise reduction"),
+            noise_reduction_strength: float = typer.Option(0.6, "--noise-strength", help="Noise reduction strength (0.0-1.0)"),
+            upscale_sample_rate: bool = typer.Option(False, "--upscale-sample-rate", help="Upscale audio sample rate"),
+            target_sample_rate: int = typer.Option(48000, "--target-sample-rate", help="Target sample rate (22050, 44100, 48000, 96000)"),
+            frequency_extension: bool = typer.Option(False, "--frequency-extension", help="Extend frequency range for older audio"),
+            stereo_widening: bool = typer.Option(False, "--stereo-widening", help="Apply stereo widening enhancement"),
+            dynamic_compression: bool = typer.Option(False, "--dynamic-compression", help="Apply intelligent dynamic compression"),
+            audio_normalization: bool = typer.Option(True, "--audio-normalization/--no-normalization", help="Apply loudness normalization"),
+            target_lufs: float = typer.Option(-16.0, "--target-lufs", help="Target loudness in LUFS (-23.0 for broadcast)"),
+            declipping: bool = typer.Option(False, "--declipping", help="Remove audio clipping artifacts"),
+            
+            # Video upscaling options
             upscale_video: bool = typer.Option(False, "--upscale", "-u", help="Enable video upscaling"),
             upscale_method: str = typer.Option("lanczos", "--upscale-method", help="Upscaling method (realesrgan, lanczos, bicubic)"),
             upscale_factor: int = typer.Option(2, "--upscale-factor", help="Upscaling factor (2x, 4x)"),
             upscale_quality: str = typer.Option("high", "--upscale-quality", help="Upscaling quality (low, medium, high)"),
             replace_original: bool = typer.Option(False, "--replace-original", help="Replace original file with upscaled version"),
+            
+            # General options
             batch_file: str = typer.Option(None, "--batch-file", "-b", help="File containing URLs to download"),
             quiet: bool = typer.Option(False, "--quiet", "-q", help="Suppress output"),
             verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+            interactive: bool = typer.Option(False, "--interactive", "-i", help="Launch interactive mode after processing"),
         ):
             """Download media from URLs"""
             all_urls = []
@@ -313,8 +342,7 @@ class EnhancedCLI:
             # Ensure we have URLs to process
             if not all_urls:
                 console.print("[bold red]No URLs provided and no batch file specified.[/]")
-                return 1
-              # Configure options
+                return 1            # Configure options
             options = {
                 "audio_only": audio_only,
                 "resolution": resolution,
@@ -323,19 +351,41 @@ class EnhancedCLI:
                 "filename": filename,
                 "audio_format": audio_format,
                 "audio_quality": audio_quality,
+                
+                # Existing audio enhancement
                 "upmix_71": upmix_71,
                 "denoise": denoise,
+                
+                # New comprehensive audio enhancement options
+                "enhance_audio": enhance_audio,
+                "audio_enhancement_level": audio_enhancement_level,
+                "audio_enhancement_preset": audio_enhancement_preset,
+                "noise_reduction": noise_reduction,
+                "noise_reduction_strength": noise_reduction_strength,
+                "upscale_sample_rate": upscale_sample_rate,
+                "target_sample_rate": target_sample_rate,
+                "frequency_extension": frequency_extension,
+                "stereo_widening": stereo_widening,
+                "dynamic_compression": dynamic_compression,
+                "audio_normalization": audio_normalization,
+                "target_lufs": target_lufs,
+                "declipping": declipping,
+                
+                # Video upscaling
                 "upscale_video": upscale_video,
                 "upscale_method": upscale_method,
                 "upscale_factor": upscale_factor,
                 "upscale_quality": upscale_quality,
                 "replace_original": replace_original,
+                
+                # General options
                 "quiet": quiet,
                 "verbose": verbose,
+                "interactive": interactive,
             }
             
             # Use the execute_download method to handle all download logic
-            return self.execute_download(all_urls, options)        # Interactive mode command
+            return self.execute_download(all_urls, options)        # Interactive mode command        
         @app.command("interactive", help="Run in interactive mode")
         def interactive():
             """Run in enhanced interactive mode with cyberpunk interface"""
@@ -403,22 +453,85 @@ class EnhancedCLI:
             """Show system information"""
             display_system_stats()
             return 0
-        
-        # Show active downloads command
+          # Show active downloads command
         @app.command("active", help="Show active downloads")
         def active():
             """Show active downloads"""
             self.run_async(self._show_active_downloads_async())
             return 0
         
-        # Advanced system management commands
+        # Audio Enhancement Commands Sub-application
+        audio_app = typer.Typer(help="Audio enhancement and processing commands")
+        app.add_typer(audio_app, name="audio")
+        
+        @audio_app.command("enhance", help="Enhance local audio files")
+        def audio_enhance(
+            input_file: str = typer.Argument(..., help="Input audio file path"),
+            output_file: str = typer.Option(None, "--output", "-o", help="Output file path"),
+            preset: str = typer.Option(None, "--preset", "-p", help="Enhancement preset: podcast, music, speech, broadcast, restoration"),
+            level: str = typer.Option("medium", "--level", "-l", help="Enhancement level: light, medium, aggressive"),
+            noise_reduction: bool = typer.Option(True, "--noise-reduction/--no-noise-reduction", help="Apply noise reduction"),
+            noise_strength: float = typer.Option(0.6, "--noise-strength", help="Noise reduction strength (0.0-1.0)"),
+            upscale_sample_rate: bool = typer.Option(False, "--upscale-sample-rate", help="Upscale sample rate"),
+            target_sample_rate: int = typer.Option(48000, "--target-sample-rate", help="Target sample rate"),
+            stereo_widening: bool = typer.Option(False, "--stereo-widening", help="Apply stereo widening"),
+            normalization: bool = typer.Option(True, "--normalization/--no-normalization", help="Apply normalization"),
+            target_lufs: float = typer.Option(-16.0, "--target-lufs", help="Target loudness in LUFS"),
+        ):
+            """Enhance local audio files with comprehensive processing"""
+            return self._audio_enhance_command(
+                input_file, output_file, preset, level, noise_reduction, noise_strength,
+                upscale_sample_rate, target_sample_rate, stereo_widening, normalization, target_lufs
+            )
+        
+        @audio_app.command("presets", help="List available enhancement presets")
+        def audio_presets(
+            detailed: bool = typer.Option(False, "--detailed", "-d", help="Show detailed preset information"),
+        ):
+            """List available audio enhancement presets"""
+            return self._audio_presets_command(detailed)
+        
+        @audio_app.command("analyze", help="Analyze audio file quality")
+        def audio_analyze(
+            input_file: str = typer.Argument(..., help="Input audio file path"),
+            recommend: bool = typer.Option(False, "--recommend", "-r", help="Recommend best preset"),
+        ):
+            """Analyze audio file and get quality metrics"""
+            return self._audio_analyze_command(input_file, recommend)
+        
+        @audio_app.command("batch", help="Batch process multiple audio files")
+        def audio_batch(
+            input_dir: str = typer.Argument(..., help="Input directory containing audio files"),
+            output_dir: str = typer.Option(None, "--output-dir", "-o", help="Output directory"),
+            preset: str = typer.Option("music", "--preset", "-p", help="Enhancement preset to apply"),
+            pattern: str = typer.Option("*.{mp3,wav,flac,m4a}", "--pattern", help="File pattern to match"),
+            recursive: bool = typer.Option(False, "--recursive", "-r", help="Search recursively"),
+        ):
+            """Batch process multiple audio files"""
+            return self._audio_batch_command(input_dir, output_dir, preset, pattern, recursive)
+        
+        @audio_app.command("create-preset", help="Create custom enhancement preset")
+        def audio_create_preset(
+            name: str = typer.Argument(..., help="Preset name"),
+            description: str = typer.Option("Custom preset", "--description", "-d", help="Preset description"),
+            level: str = typer.Option("medium", "--level", help="Enhancement level"),
+            noise_reduction: bool = typer.Option(True, "--noise-reduction/--no-noise-reduction", help="Apply noise reduction"),
+            noise_strength: float = typer.Option(0.6, "--noise-strength", help="Noise reduction strength"),
+            normalization: bool = typer.Option(True, "--normalization/--no-normalization", help="Apply normalization"),
+            target_lufs: float = typer.Option(-16.0, "--target-lufs", help="Target loudness in LUFS"),
+        ):
+            """Create a custom enhancement preset"""
+            return self._audio_create_preset_command(name, description, level, noise_reduction, noise_strength, normalization, target_lufs)
+        
+        # Advanced system management commands        
         @app.command("scheduler", help="Manage download scheduler")
         def scheduler_command(
             action: str = typer.Argument(..., help="Action: status, pause, resume, clear"),
             priority: int = typer.Option(5, "--priority", help="Set priority for queue operations"),
+            interactive: bool = typer.Option(False, "--interactive", "-i", help="Launch interactive mode after processing"),
         ):
             """Manage the advanced download scheduler"""
-            return self.run_async(self._scheduler_command_async(action, priority))
+            return self.run_async(self._scheduler_command_async(action, priority, interactive))
             
         @app.command("performance", help="Show performance metrics and optimization")
         def performance_command(
@@ -658,11 +771,12 @@ class EnhancedCLI:
         console_obj.print(f"[cyan]Starting download of:[/] {url}")
         try:
             options = {}  # Default options
-            await self.download_manager.download(url, **options)
+            await self.download_manager.download(url, **options)            
             console_obj.print(f"[bold green]Download complete:[/] {url}")
         except Exception as e:
-            console_obj.print(f"[bold red]Download error:[/] {str(e)}")    
-    async def _scheduler_command_async(self, action: str, _priority: int) -> int:
+            console_obj.print(f"[bold red]Download error:[/] {str(e)}")
+    
+    async def _scheduler_command_async(self, action: str, _priority: int, interactive: bool = False) -> int:
         """Handle scheduler command asynchronously"""
         if not self.download_manager.advanced_scheduler:
             console.print("[bold red]Advanced scheduler not available[/]")
@@ -670,14 +784,22 @@ class EnhancedCLI:
             
         scheduler = self.download_manager.advanced_scheduler
         
+        result = 0
         if action == "status":
-            return self._show_scheduler_status(scheduler)
+            result = self._show_scheduler_status(scheduler)
         elif action in ["pause", "resume", "clear"]:
-            return await self._handle_scheduler_action(scheduler, action)
+            result = await self._handle_scheduler_action(scheduler, action)
         else:
             console.print(f"[bold red]Unknown action: {action}[/]")
             console.print("Available actions: status, pause, resume, clear")
-            return 1
+            result = 1
+            
+        # Launch interactive mode if requested and command succeeded
+        if result == 0 and interactive:
+            console.print("\n[bold cyan]🎮 Launching interactive mode...[/]")
+            self._launch_interactive_mode()
+            
+        return result
 
     def _show_scheduler_status(self, scheduler) -> int:
         """Show scheduler status"""
@@ -1379,11 +1501,304 @@ class EnhancedCLI:
                 console.print("[green]Customization settings reset to defaults[/]")
             else:
                 console.print("[red]Failed to reset customization settings[/]")
-            return 0 if success else 1
-            
+            return 0 if success else 1        
         except Exception as e:
             console.print(f"[red]Error resetting customization: {str(e)}[/]")
             return 1
+            
+    # Audio Enhancement Command Implementations
+    
+    def _audio_enhance_command(self, input_file: str, output_file: str, preset: str, 
+                              level: str, noise_reduction: bool, noise_strength: float,
+                              upscale_sample_rate: bool, target_sample_rate: int,
+                              stereo_widening: bool, normalization: bool, target_lufs: float) -> int:
+        """Implementation for audio enhance command"""
+        try:
+            # Validate input file
+            if not os.path.exists(input_file):
+                console.print(f"[red]Input file not found: {input_file}[/]")
+                return 1
+            
+            # Generate output filename if not provided
+            if not output_file:
+                input_path = Path(input_file)
+                output_file = str(input_path.parent / f"{input_path.stem}_enhanced{input_path.suffix}")
+            
+            # Initialize audio processor
+            processor = EnhancedAudioProcessor(self.config)
+            
+            # Create enhancement settings
+            if preset:
+                if preset.lower() not in AUDIO_ENHANCEMENT_PRESETS:
+                    console.print(f"[red]Unknown preset: {preset}[/]")
+                    console.print(f"[yellow]Available presets: {', '.join(AUDIO_ENHANCEMENT_PRESETS.keys())}[/]")
+                    return 1
+                
+                settings = AUDIO_ENHANCEMENT_PRESETS[preset.lower()].settings
+                console.print(f"[cyan]Using preset: {preset} - {AUDIO_ENHANCEMENT_PRESETS[preset.lower()].description}[/]")
+            else:
+                # Create custom settings
+                settings = AudioEnhancementSettings(
+                    level=level,
+                    noise_reduction=noise_reduction,
+                    noise_reduction_strength=noise_strength,
+                    upscale_sample_rate=upscale_sample_rate,
+                    target_sample_rate=target_sample_rate,
+                    stereo_widening=stereo_widening,
+                    normalization=normalization,
+                    target_lufs=target_lufs
+                )
+            
+            # Progress callback for status updates
+            def progress_callback(stage: str, progress: int):
+                console.print(f"[cyan]{stage}... ({progress}%)[/]")
+            
+            # Run enhancement
+            console.print(f"[bold cyan]Enhancing audio file: {input_file}[/]")
+            result = self.run_async(processor.enhance_audio_comprehensive(
+                input_file, output_file, settings, progress_callback
+            ))
+            
+            if result:
+                console.print(f"[green]✅ Audio enhancement completed: {output_file}[/]")
+                return 0
+            else:
+                console.print("[red]❌ Audio enhancement failed[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error enhancing audio: {str(e)}[/]")
+            return 1
+    
+    def _audio_presets_command(self, detailed: bool) -> int:
+        """Implementation for audio presets command"""
+        try:
+            console.print("[bold cyan]Available Audio Enhancement Presets:[/]")
+            
+            if detailed:
+                for preset_name, preset in AUDIO_ENHANCEMENT_PRESETS.items():
+                    console.print(f"\n[bold yellow]{preset.name}[/]")
+                    console.print(f"  [dim]{preset.description}[/]")
+                    settings = preset.settings
+                    console.print(f"  Level: {settings.level}")
+                    console.print(f"  Noise Reduction: {settings.noise_reduction} (strength: {settings.noise_reduction_strength})")
+                    console.print(f"  Sample Rate Upscaling: {settings.upscale_sample_rate} (target: {settings.target_sample_rate})")
+                    console.print(f"  Stereo Widening: {settings.stereo_widening}")
+                    console.print(f"  Normalization: {settings.normalization} (target: {settings.target_lufs} LUFS)")
+                    console.print(f"  Dynamic Compression: {settings.dynamic_compression}")
+                    console.print(f"  Frequency Extension: {settings.frequency_extension}")
+            else:
+                table = Table()
+                table.add_column("Preset", style="yellow")
+                table.add_column("Description", style="dim")
+                
+                for preset_name, preset in AUDIO_ENHANCEMENT_PRESETS.items():
+                    table.add_row(preset.name, preset.description)
+                
+                console.print(table)
+            
+            return 0
+            
+        except Exception as e:
+            console.print(f"[red]Error listing presets: {str(e)}[/]")
+            return 1
+    
+    def _audio_analyze_command(self, input_file: str, recommend: bool) -> int:
+        """Implementation for audio analyze command"""
+        try:
+            # Validate input file
+            if not os.path.exists(input_file):
+                console.print(f"[red]Input file not found: {input_file}[/]")
+                return 1
+            
+            # Initialize audio processor
+            processor = EnhancedAudioProcessor(self.config)
+            
+            console.print(f"[cyan]Analyzing audio file: {input_file}[/]")
+            
+            # Get audio statistics
+            stats = self.run_async(processor.get_audio_stats(input_file))
+            if stats:
+                console.print("\n[bold cyan]Audio File Statistics:[/]")
+                console.print(f"  Duration: {stats.duration:.2f} seconds")
+                console.print(f"  Sample Rate: {stats.sample_rate} Hz")
+                console.print(f"  Channels: {stats.channels}")
+                console.print(f"  Bit Rate: {stats.bitrate} kbps")
+                console.print(f"  Format: {stats.format}")
+            
+            # Analyze quality
+            quality = self.run_async(processor.analyze_audio_quality(input_file))
+            if quality:
+                console.print("\n[bold cyan]Quality Analysis:[/]")
+                console.print(f"  Noise Level: {quality.noise_level:.2%}")
+                console.print(f"  Dynamic Range: {quality.dynamics:.2f}")
+                console.print(f"  Clipping: {quality.clipping:.2%}")
+                console.print(f"  Peak Level: {quality.peak_level:.2f} dB")
+                console.print(f"  RMS Level: {quality.rms_level:.2f} dB")
+                console.print(f"  Frequency Range: {quality.frequency_range:.0f} Hz")
+            
+            # Recommend preset if requested
+            if recommend:
+                recommended = self.run_async(processor.recommend_preset(input_file))
+                if recommended:
+                    preset_info = AUDIO_ENHANCEMENT_PRESETS.get(recommended)
+                    if preset_info:
+                        console.print(f"\n[bold green]Recommended Preset: {preset_info.name}[/]")
+                        console.print(f"  {preset_info.description}")
+                        console.print(f"  [dim]Use: snatch audio enhance \"{input_file}\" --preset {recommended}[/]")
+            
+            return 0
+            
+        except Exception as e:
+            console.print(f"[red]Error analyzing audio: {str(e)}[/]")
+            return 1
+    def _audio_batch_command(self, input_dir: str, output_dir: str, preset: str, 
+                            pattern: str, recursive: bool) -> int:
+        """Implementation for audio batch command"""
+        try:
+            # Validate input directory
+            if not os.path.exists(input_dir):
+                console.print(f"[red]Input directory not found: {input_dir}[/]")
+                return 1
+            
+            # Set output directory
+            if not output_dir:
+                output_dir = os.path.join(input_dir, "enhanced")
+            
+            # Create output directory if needed
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Find audio files
+            search_pattern = os.path.join(input_dir, "**" if recursive else "", pattern)
+            files = glob.glob(search_pattern, recursive=recursive)
+            
+            if not files:
+                console.print(f"[yellow]No audio files found matching pattern: {pattern}[/]")
+                return 0
+            
+            # Validate preset
+            if preset.lower() not in AUDIO_ENHANCEMENT_PRESETS:
+                console.print(f"[red]Unknown preset: {preset}[/]")
+                console.print(f"[yellow]Available presets: {', '.join(AUDIO_ENHANCEMENT_PRESETS.keys())}[/]")
+                return 1
+            
+            # Initialize processor
+            processor = EnhancedAudioProcessor(self.config)
+            settings = AUDIO_ENHANCEMENT_PRESETS[preset.lower()].settings
+            
+            console.print(f"[cyan]Found {len(files)} audio files to process[/]")
+            console.print(f"[cyan]Using preset: {preset}[/]")
+            
+            processed = 0
+            failed = 0
+            
+            for i, input_file in enumerate(files, 1):
+                try:
+                    # Generate output filename
+                    input_path = Path(input_file)
+                    output_file = os.path.join(output_dir, f"{input_path.stem}_enhanced{input_path.suffix}")
+                    
+                    console.print(f"[cyan]Processing {i}/{len(files)}: {input_path.name}[/]")
+                    
+                    # Progress callback
+                    def progress_callback(stage: str, progress: int):
+                        console.print(f"  [dim]{stage}... ({progress}%)[/]")
+                    
+                    # Process file
+                    result = self.run_async(processor.enhance_audio_comprehensive(
+                        input_file, output_file, settings, progress_callback
+                    ))
+                    if result:
+                        processed += 1
+                        console.print(f"  [green]✅ Completed: {output_file}[/]")
+                    else:
+                        failed += 1
+                        console.print("  [red]❌ Failed to process[/]")
+                        
+                except Exception as e:
+                    failed += 1
+                    console.print(f"  [red]❌ Error: {str(e)}[/]")
+            
+            console.print("\n[bold cyan]Batch Processing Complete:[/]")
+            console.print(f"  Processed: {processed}")
+            console.print(f"  Failed: {failed}")
+            console.print(f"  Total: {len(files)}")
+            
+            return 0 if failed == 0 else 1
+            
+        except Exception as e:
+            console.print(f"[red]Error in batch processing: {str(e)}[/]")
+            return 1
+    
+    def _audio_create_preset_command(self, name: str, description: str, level: str,
+                                   noise_reduction: bool, noise_strength: float,
+                                   normalization: bool, target_lufs: float) -> int:
+        """Implementation for audio create-preset command"""
+        try:
+            # Validate preset name
+            if name.lower() in AUDIO_ENHANCEMENT_PRESETS:
+                console.print(f"[red]Preset '{name}' already exists[/]")
+                return 1
+            
+            # Create custom settings
+            settings = AudioEnhancementSettings(
+                level=level,
+                noise_reduction=noise_reduction,
+                noise_reduction_strength=noise_strength,
+                normalization=normalization,
+                target_lufs=target_lufs
+            )
+            
+            # Initialize processor and create preset
+            processor = EnhancedAudioProcessor(self.config)
+            result = self.run_async(processor.create_custom_preset(name, description, settings))
+            
+            if result:
+                console.print(f"[green]✅ Custom preset created: {name}[/]")
+                console.print(f"  Description: {description}")
+                console.print(f"  [dim]Use: snatch audio enhance <file> --preset {name.lower()}[/]")
+                return 0
+            else:
+                console.print(f"[red]❌ Failed to create preset: {name}[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error creating preset: {str(e)}[/]")
+            return 1
+            
+    def _launch_interactive_mode(self) -> None:
+        """Launch interactive mode with fallback to available interfaces"""
+        try:
+            # Try modern interface first
+            import sys
+            import os
+            
+            # Add parent directory to path for Theme import
+            parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            if parent_dir not in sys.path:
+                sys.path.insert(0, parent_dir)
+            
+            from Theme.modern_interactive import run_modern_interactive
+            console.print("[bold green]🚀 Starting modern interactive interface...[/]")
+            run_modern_interactive(self.config)
+        except ImportError as import_err:
+            console.print(f"[yellow]Modern interface not available ({import_err}), trying enhanced mode...[/]")
+            try:
+                from .interactive_mode import launch_enhanced_interactive_mode
+                console.print("[bold green]🚀 Starting enhanced interactive mode...[/]")
+                launch_enhanced_interactive_mode(self.config)
+            except ImportError:
+                console.print("[red]Interactive mode not available. Please check your installation.[/]")
+        except Exception as e:
+            console.print(f"[red]Error launching interactive mode: {str(e)}[/]")
+            console.print("[yellow]Falling back to enhanced interactive mode...[/]")
+            try:
+                from .interactive_mode import launch_enhanced_interactive_mode
+                launch_enhanced_interactive_mode(self.config)
+            except Exception as fallback_error:
+                console.print(f"[red]Fallback also failed: {str(fallback_error)}[/]")
+                console.print("[yellow]Please run 'snatch interactive' command directly.[/]")
+
 
 def signal_handler(sig: int, frame: Any) -> NoReturn:
     """Handle Ctrl+C gracefully"""

@@ -97,6 +97,19 @@ from textual.app import App
 from textual.widgets import Button, Header, Footer, Static
 
 from .progress import DownloadStats, Spinner, SpinnerAnimation
+
+# Import advanced components
+try:
+    from .performance_monitor import PerformanceMonitor, create_performance_system
+except ImportError:
+    PerformanceMonitor = None
+    create_performance_system = None
+
+try:
+    from .advanced_scheduler import AdvancedScheduler, create_smart_scheduler
+except ImportError:
+    AdvancedScheduler = None
+    create_smart_scheduler = None
 from .defaults import (
     CACHE_DIR,
     DOWNLOAD_SESSIONS_FILE,
@@ -110,7 +123,7 @@ from .session import SessionManager
 from .cache import DownloadCache
 from .file_organizer import FileOrganizer
 from .ffmpeg_helper import locate_ffmpeg, validate_ffmpeg_installation
-from .audio_processor import AudioProcessor
+from .audio_processor import EnhancedAudioProcessor, AudioEnhancementSettings, AUDIO_ENHANCEMENT_PRESETS
 from .network import check_internet_connection, run_speedtest
 from .constants import DEFAULT_TIMEOUT, DEFAULT_USER_AGENT, DEFAULT_CHUNK_SIZE
 
@@ -344,7 +357,7 @@ class DownloadManager:
     - Improved session handling
     - Advanced audio/video format options
     - Resource-aware downloads
-    """
+    """      
     def __init__(
         self,
         config: Dict[str, Any],
@@ -352,34 +365,8 @@ class DownloadManager:
         download_cache: Optional[DownloadCache] = None,
         file_organizer: Optional[FileOrganizer] = None,
         download_stats: Optional[DownloadStats] = None,
-        performance_monitor: Optional['PerformanceMonitor'] = None,
-        advanced_scheduler: Optional['AdvancedScheduler'] = None
-    ):
-        """Initialize download manager with injected dependencies."""
-        if not config:
-            raise ValueError(ERROR_MSGS["CONFIG_NONE"])
-            
-        self.config = config.copy()
-        
-        # Validate required paths
-        for dir_key in ["video_output", "audio_output"]:
-            if path := config.get(dir_key):
-                os.makedirs(path, exist_ok=True)
-            else:
-                raise ValueError(f"Missing required configuration field: {dir_key}")
-        
-        # Initialize dependencies (with defaults if not injected)
-        self.session_manager = session_manager or SessionManager(DOWNLOAD_SESSIONS_FILE)
-        self.download_cache = download_cache or DownloadCache() 
-        self.file_organizer = file_organizer or FileOrganizer(config)
-        self.download_stats = download_stats or DownloadStats(keep_history=True)
-    def __init__(
-        self,
-        config: Dict[str, Any],
-        session_manager: Optional[SessionManager] = None,
-        download_cache: Optional[DownloadCache] = None,
-        file_organizer: Optional[FileOrganizer] = None,
-        download_stats: Optional[DownloadStats] = None
+        performance_monitor: Optional[Any] = None,
+        advanced_scheduler: Optional[Any] = None
     ):
         """Initialize download manager with injected dependencies."""
         if not config:
@@ -401,7 +388,8 @@ class DownloadManager:
         self.download_stats = download_stats or DownloadStats(keep_history=True)
         
         # Initialize advanced systems
-        self._initialize_advanced_systems()
+        self.performance_monitor = performance_monitor
+        self.advanced_scheduler = advanced_scheduler
         
         # Track state
         self.current_download_url = None
@@ -418,8 +406,7 @@ class DownloadManager:
         
         # Set resource limits
         self.memory_limit = psutil.virtual_memory().total * (MAX_MEMORY_PERCENT / 100)
-        
-        # Validate FFmpeg
+          # Validate FFmpeg
         self.ffmpeg_path = locate_ffmpeg()
         if not self.ffmpeg_path or not validate_ffmpeg_installation():
             logging.warning(ERROR_MSGS["FFMPEG_MISSING"])
@@ -427,6 +414,34 @@ class DownloadManager:
         # Plugin system
         self.download_hooks = []
         self.post_processors = []
+
+    def _initialize_advanced_systems(self) -> None:
+        """Initialize advanced systems with graceful fallbacks."""
+        # Initialize performance monitor if not already provided
+        if not self.performance_monitor:
+            try:
+                from .performance_monitor import PerformanceMonitor
+                self.performance_monitor = PerformanceMonitor(self.config)
+                logging.info("Performance monitoring system initialized")
+            except ImportError:
+                logging.warning("Performance monitor not available")
+                self.performance_monitor = None
+            except Exception as e:
+                logging.error(f"Failed to initialize performance monitor: {e}")
+                self.performance_monitor = None
+            
+        # Initialize advanced scheduler if not already provided        
+        if not self.advanced_scheduler:
+            try:
+                from .advanced_scheduler import AdvancedScheduler
+                self.advanced_scheduler = AdvancedScheduler(self.config)
+                logging.info("Advanced scheduler system initialized")
+            except ImportError:
+                logging.warning("Advanced scheduler not available")
+                self.advanced_scheduler = None
+            except Exception as e:
+                logging.error(f"Failed to initialize advanced scheduler: {e}")
+                self.advanced_scheduler = None
 
     def register_download_hook(self, hook: Callable[[str, Dict[str, Any]], None]) -> None:
         """Register a hook to be called during download stages."""
@@ -848,13 +863,12 @@ class DownloadHooks(ABC):
 
 class AsyncDownloadManager:
     """Async download manager with resumable downloads and chunk validation"""
-    
     def __init__(self, config: Dict[str, Any],
                  session_manager: SessionManager,
                  download_cache: DownloadCache,
                  http_client: Optional[HTTPClientProtocol] = None,
-                 performance_monitor: Optional['PerformanceMonitor'] = None,
-                 advanced_scheduler: Optional['AdvancedScheduler'] = None):
+                 performance_monitor: Optional[Any] = None,
+                 advanced_scheduler: Optional[Any] = None):
         self.config = config
         self.session_manager = session_manager 
         self.download_cache = download_cache
@@ -875,9 +889,8 @@ class AsyncDownloadManager:
         
         # Initialize advanced systems if not provided
         if not self.performance_monitor or not self.advanced_scheduler:
-            self._initialize_advanced_systems()
-          # Create audio processor instance
-        self.audio_processor = AudioProcessor(config) if 'AudioProcessor' in globals() else None
+            self._initialize_advanced_systems()        # Create audio processor instance
+        self.audio_processor = EnhancedAudioProcessor(config) if 'EnhancedAudioProcessor' in globals() else None
         
         # Initialize video upscaler
         self.video_upscaler = None

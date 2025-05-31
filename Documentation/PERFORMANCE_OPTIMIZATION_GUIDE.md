@@ -2,20 +2,22 @@
 
 ## Overview
 
-This guide provides comprehensive strategies and techniques for optimizing the performance of the Snatch media downloader across different system configurations and use cases.
+This guide provides comprehensive strategies and techniques for optimizing the performance of the Snatch media downloader across different system configurations and use cases, with special focus on the new audio enhancement features introduced in v1.8.0.
 
 ## Table of Contents
 
 1. [Performance Analysis](#performance-analysis)
-2. [System Resource Optimization](#system-resource-optimization)
-3. [Network Performance](#network-performance)
-4. [Download Optimization](#download-optimization)
-5. [Memory Management](#memory-management)
-6. [CPU Optimization](#cpu-optimization)
-7. [Storage Optimization](#storage-optimization)
-8. [Caching Strategies](#caching-strategies)
-9. [Monitoring and Profiling](#monitoring-and-profiling)
-10. [Platform-Specific Optimizations](#platform-specific-optimizations)
+2. [Audio Enhancement Optimization](#audio-enhancement-optimization)
+3. [System Resource Optimization](#system-resource-optimization)
+4. [Network Performance](#network-performance)
+5. [Download Optimization](#download-optimization)
+6. [Memory Management](#memory-management)
+7. [CPU Optimization](#cpu-optimization)
+8. [Storage Optimization](#storage-optimization)
+9. [Caching Strategies](#caching-strategies)
+10. [Monitoring and Profiling](#monitoring-and-profiling)
+11. [Platform-Specific Optimizations](#platform-specific-optimizations)
+12. [Troubleshooting Performance Issues](#troubleshooting-performance-issues)
 
 ## Performance Analysis
 
@@ -132,8 +134,114 @@ class PerformanceBenchmark:
         return {
             'current_memory_mb': current / 1024 / 1024,
             'peak_memory_mb': peak / 1024 / 1024,
-            'memory_efficiency': current / peak if peak > 0 else 0
+            'memory_efficiency': current / peak if peak > 0 else 0        }
+```
+
+## Audio Enhancement Optimization
+
+### Audio Enhancement Performance Metrics
+
+#### Processing Time by File Size and Preset
+
+| File Size | Format | Podcast | Music | Speech | Broadcast | Restoration |
+|-----------|--------|---------|-------|--------|-----------|-------------|
+| 1-5 MB    | MP3    | 2-4s    | 3-6s  | 2-5s   | 4-7s      | 5-10s       |
+| 5-25 MB   | FLAC   | 8-15s   | 12-25s| 10-20s | 15-30s    | 20-45s      |
+| 25-100 MB | WAV    | 30-60s  | 45-90s| 40-80s | 60-120s   | 80-180s     |
+| 100+ MB   | WAV    | 2-5min  | 3-8min| 3-6min | 5-10min   | 8-15min     |
+
+#### Memory Usage for Audio Processing
+
+```
+Base Application:     ~50 MB
+Audio Processing:     ~5-10 MB per file
+Batch Processing:     ~20-40 MB (4 workers)
+Peak Usage:          ~100-150 MB
+Cache Storage:       ~50-100 MB
+```
+
+### Preset Selection for Performance
+
+Choose presets based on your performance vs. quality requirements:
+
+```bash
+# Fastest processing (basic enhancement)
+snatch audio enhance file.mp3 --preset speech
+
+# Balanced performance and quality
+snatch audio enhance file.mp3 --preset podcast
+
+# Maximum quality (slower processing)
+snatch audio enhance file.mp3 --preset restoration
+```
+
+### Custom Settings for Optimization
+
+#### Performance-Optimized Configuration
+
+```python
+# Fast processing with minimal quality loss
+fast_settings = AudioEnhancementSettings(
+    noise_reduction=0.3,           # Reduced noise reduction
+    normalize_loudness=True,       # Keep normalization (fast)
+    target_lufs=-16.0,            # Standard loudness
+    apply_compression=False,       # Skip compression
+    extend_frequency=False,        # Skip frequency extension
+    stereo_width=1.0,             # No stereo widening
+    preserve_dynamics=True,        # Preserve original dynamics
+    output_sample_rate=None        # Keep original sample rate
+)
+```
+
+#### Quality-Optimized Configuration
+
+```python
+# Maximum quality with longer processing time
+quality_settings = AudioEnhancementSettings(
+    noise_reduction=0.8,           # Maximum noise reduction
+    normalize_loudness=True,       # EBU R128 normalization
+    target_lufs=-14.0,            # Music loudness standard
+    apply_compression=True,        # Dynamic compression
+    compression_ratio=2.0,         # Gentle compression
+    extend_frequency=True,         # Frequency extension
+    target_frequency=20000,        # Extend to 20kHz
+    stereo_width=1.2,             # Moderate stereo widening
+    enhance_stereo=True,           # Stereo enhancement
+    output_sample_rate=48000       # High-quality output rate
+)
+```
+
+### Batch Processing Optimization
+
+#### Worker Thread Configuration
+
+```bash
+# Optimize worker count based on system resources
+# For CPU-bound tasks: workers = CPU cores
+snatch audio batch "*.mp3" --preset music --workers 8
+
+# For memory-limited systems: reduce workers
+snatch audio batch "*.wav" --preset restoration --workers 2
+
+# For I/O-limited systems: increase workers
+snatch audio batch "network_files/*.mp3" --workers 12
+```
+
+#### Batch Processing Configuration
+
+```json
+{
+    "audio_enhancement": {
+        "batch_processing": {
+            "max_workers": 4,              // Auto-detected CPU cores
+            "chunk_size": 8,               // Files per batch
+            "memory_limit_mb": 512,        // Per-worker memory limit
+            "temp_dir": "D:\\temp",        // Fast SSD for temp files
+            "cleanup_temp": true,          // Auto-cleanup
+            "progress_update_interval": 1   // Progress update frequency
         }
+    }
+}
 ```
 
 ## System Resource Optimization

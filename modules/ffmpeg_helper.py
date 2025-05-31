@@ -9,8 +9,8 @@ from typing import Optional, Dict, Any, List, Tuple
 import tempfile
 import json
 
-# Re-export AudioProcessor from the main implementation
-from .audio_processor import AudioProcessor, AudioStats
+# Re-export audio classes from the main implementation
+from .audio_processor import EnhancedAudioProcessor, StandaloneAudioProcessor, AudioStats
 
 def locate_ffmpeg() -> Optional[str]:
     """Locate FFmpeg executable with fallback to auto-install"""

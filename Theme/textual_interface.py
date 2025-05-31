@@ -51,7 +51,7 @@ from textual.reactive import reactive
 
 from .constants import APP_VERSION
 from .defaults import BANNER_ART, HELP_CONTENT
-from .audio_processor import AudioProcessor
+from .audio_processor import EnhancedAudioProcessor
 from .common_utils import sanitize_filename, format_size, ensure_dir
 from .network import NetworkManager, SpeedTestResult
 
@@ -668,7 +668,7 @@ class SnatchTextualApp(App):
         self.selected_format = None
         self.download_manager = None  # Will be initialized later
         self.network_manager = NetworkManager(config)
-        self.audio_processor = AudioProcessor(config)
+        self.audio_processor = EnhancedAudioProcessor(config)
         self.download_path = config.get("download_directory", os.path.expanduser("~/Downloads"))
         
         # Ensure download directory exists

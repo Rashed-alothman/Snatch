@@ -16,7 +16,7 @@
 <p>
 <img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Rashed-alothman/f2ae0a272ff1f011523e43f8c5abad65/raw/snatch-ci-status.json"/>
 <img src="https://github.com/Rashed-alothman/Snatch/actions/workflows/codeql.yml/badge.svg" alt="CodeQL Status" />
-<img src="https://img.shields.io/badge/version-1.8.1-blue" alt="Version 1.8.1" />
+<img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Version 2.0.0" />
 <img src="https://img.shields.io/badge/python-3.7+-yellow" alt="Python 3.7+" />
 <img src="https://img.shields.io/badge/platforms-Windows%20|%20macOS%20|%20Linux-green" alt="Platforms" />
 <img src="https://img.shields.io/badge/license-MIT-orange" alt="License" />
@@ -24,7 +24,16 @@
 
 ## What's New in v1.8.0
 
-### 🎯 Critical Fixes & New Features
+### 🎯 Major New Features & Enhancements
+
+#### **🎵 Comprehensive Audio Enhancement System**
+
+- **AI-Powered Audio Enhancement**: Advanced noise reduction, frequency extension, and stereo widening
+- **Professional Audio Presets**: 5 curated presets (podcast, music, speech, broadcast, restoration)
+- **Sample Rate Upscaling**: Intelligent upsampling to higher quality audio
+- **Dynamic Range Processing**: Professional loudness normalization and compression
+- **Audio Quality Analysis**: Automatic preset recommendations based on content analysis
+- **CLI Integration**: Complete command-line interface for audio enhancement
 
 #### **🔧 Fixed Resolution Selection Bug**
 
@@ -38,6 +47,13 @@
 - **METHODS**: Support for both AI (Real-ESRGAN) and traditional (Lanczos, Bicubic) upscaling
 - **FLEXIBLE**: 2x and 4x upscaling factors with quality preservation options
 - **EFFICIENT**: Optimized processing pipeline with progress tracking
+
+#### **🎮 Interactive Mode Enhancements**
+
+- **Enhanced UI**: Modern Textual-based interface with rich components
+- **Audio Processing**: Built-in audio conversion and enhancement tools
+- **File Management**: Advanced file organization and management features
+- **Real-time Processing**: Background audio/video processing with progress tracking
 
 #### **📚 Comprehensive Documentation**
 
@@ -53,6 +69,17 @@ snatch download "URL" --resolution 2160  # Actually gets 4K!
 
 # AI video upscaling
 snatch download "URL" --upscale --upscale-method realesrgan --upscale-factor 2
+
+# Audio enhancement with presets
+snatch audio enhance myfile.mp3 --preset music
+snatch audio enhance podcast.wav --preset podcast --output enhanced_podcast.wav
+
+# Audio quality analysis and recommendations
+snatch audio analyze myfile.wav
+snatch audio presets --detailed
+
+# Batch audio processing
+snatch audio batch "*.mp3" --preset restoration
 
 # Combine resolution + upscaling for optimal results
 snatch download "URL" --resolution 720 --upscale --upscale-factor 4 --replace-original
@@ -549,7 +576,7 @@ pip install -e .
 
 <h2 id="Usage">💻 Advanced Usage</h2>
 
-### Audio Downloads
+### Audio Downloads & Enhancement
 
 ```powershell
 # Download in Opus format (default, best quality-to-size)
@@ -563,7 +590,34 @@ snatch download "URL" --audio-only --format flac --channels 8
 
 # Download with custom quality
 snatch download "URL" --audio-only --format mp3 --quality 320
+
+# Audio Enhancement Commands (NEW in v1.8.0)
+# Enhance downloaded audio with AI-powered processing
+snatch audio enhance "myfile.mp3" --preset music
+snatch audio enhance "podcast.wav" --preset podcast --output "enhanced_podcast.wav"
+
+# Analyze audio quality and get recommendations
+snatch audio analyze "myfile.wav"
+
+# List available enhancement presets
+snatch audio presets --detailed
+
+# Batch process multiple files
+snatch audio batch "*.mp3" --preset restoration
+
+# Create custom enhancement preset
+snatch audio create-preset "my-preset" "Custom settings for my content"
 ```
+
+#### Audio Enhancement Presets
+
+| Preset | Description | Best For |
+|--------|-------------|----------|
+| `podcast` | Speech optimization with noise reduction | Podcasts, interviews, voice recordings |
+| `music` | Stereo enhancement and dynamic preservation | Music tracks, albums |
+| `speech` | Strong noise reduction and clarity | Lectures, audiobooks, presentations |
+| `broadcast` | Professional broadcast standards | Radio shows, professional content |
+| `restoration` | Maximum enhancement for damaged audio | Old recordings, low-quality sources |
 
 ### Video Downloads & Enhancement
 

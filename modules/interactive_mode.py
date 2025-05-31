@@ -1332,12 +1332,11 @@ class InteractiveApp(App):
                 
         except Exception as e:
             logging.error(f"Error detecting FFmpeg: {e}")
-            self.notify(f"Error detecting FFmpeg: {e}", severity="error")    # Media Processing Methods
-    def convert_audio(self) -> None:
+            self.notify(f"Error detecting FFmpeg: {e}", severity="error")    # Media Processing Methods    def convert_audio(self) -> None:
         """Convert audio files to different formats"""        
         try:
             # Import audio processor
-            from .audio_processor import AudioProcessor
+            from .audio_processor import EnhancedAudioProcessor
             
             # Get input file path from user
             files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
@@ -1359,9 +1358,8 @@ class InteractiveApp(App):
             if not os.path.exists(file_path):
                 self.notify(CONSTANTS["FILE_NOT_FOUND"].format(file_path=file_path), severity="error")
                 return
-            
-            # Initialize audio processor
-            audio_processor = AudioProcessor(self.config)
+              # Initialize audio processor
+            audio_processor = EnhancedAudioProcessor(self.config)
             
             # Get target format from user input (you could add a form field for this)
             target_format = "flac"  # Default to high quality
@@ -1394,13 +1392,12 @@ class InteractiveApp(App):
                 
         except Exception as e:
             logging.error(f"Background audio conversion error: {e}")
-            self.notify(f"Audio conversion failed: {str(e)}", severity="error")
-
+            self.notify(f"Audio conversion failed: {str(e)}", severity="error")    
     def process_audio(self) -> None:
         """Process audio with advanced effects and enhancements"""
         try:
             # Import audio processor
-            from .audio_processor import AudioProcessor
+            from .audio_processor import EnhancedAudioProcessor
               # Get input file path from user
             files_widget = self.query_one(UI_ELEMENTS["FILES_LIST"], DataTable)
             if files_widget.row_count == 0:
@@ -1421,9 +1418,8 @@ class InteractiveApp(App):
             if not os.path.exists(file_path):
                 self.notify(f"File not found: {file_path}", severity="error")
                 return
-            
-            # Initialize audio processor
-            audio_processor = AudioProcessor(self.config)
+              # Initialize audio processor
+            audio_processor = EnhancedAudioProcessor(self.config)
               # Get processing options from form fields
             try:
                 process_audio = self.query_one(UI_ELEMENTS["PROCESS_AUDIO"], Checkbox).value

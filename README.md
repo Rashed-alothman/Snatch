@@ -16,7 +16,7 @@
 <p>
 <img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Rashed-alothman/f2ae0a272ff1f011523e43f8c5abad65/raw/snatch-ci-status.json"/>
 <img src="https://github.com/Rashed-alothman/Snatch/actions/workflows/codeql.yml/badge.svg" alt="CodeQL Status" />
-<img src="https://img.shields.io/badge/version-1.8.1-blue" alt="Version 1.8.1" />
+<img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Version 2.0.0" />
 <img src="https://img.shields.io/badge/python-3.7+-yellow" alt="Python 3.7+" />
 <img src="https://img.shields.io/badge/platforms-Windows%20|%20macOS%20|%20Linux-green" alt="Platforms" />
 <img src="https://img.shields.io/badge/license-MIT-orange" alt="License" />
@@ -24,7 +24,16 @@
 
 ## What's New in v1.8.0
 
-### 🎯 Critical Fixes & New Features
+### 🎯 Major New Features & Enhancements
+
+#### **🎵 Comprehensive Audio Enhancement System**
+
+- **AI-Powered Audio Enhancement**: Advanced noise reduction, frequency extension, and stereo widening
+- **Professional Audio Presets**: 5 curated presets (podcast, music, speech, broadcast, restoration)
+- **Sample Rate Upscaling**: Intelligent upsampling to higher quality audio
+- **Dynamic Range Processing**: Professional loudness normalization and compression
+- **Audio Quality Analysis**: Automatic preset recommendations based on content analysis
+- **CLI Integration**: Complete command-line interface for audio enhancement
 
 #### **🔧 Fixed Resolution Selection Bug**
 
@@ -39,11 +48,18 @@
 - **FLEXIBLE**: 2x and 4x upscaling factors with quality preservation options
 - **EFFICIENT**: Optimized processing pipeline with progress tracking
 
+#### **🎮 Interactive Mode Enhancements**
+
+- **Enhanced UI**: Modern Textual-based interface with rich components
+- **Audio Processing**: Built-in audio conversion and enhancement tools
+- **File Management**: Advanced file organization and management features
+- **Real-time Processing**: Background audio/video processing with progress tracking
+
 #### **📚 Comprehensive Documentation**
 
-- **[🎯 Features Update Guide](Documentation/FEATURES_UPDATE.md)** - Detailed overview of new features
-- **[📖 Usage Guide](Documentation/USAGE_GUIDE.md)** - Complete command examples and workflows
-- **[🔧 Technical Documentation](Documentation/TECHNICAL_DOCUMENTATION.md)** - Architecture and implementation details
+- **[🎯 Features Update Guide](./FEATURES_UPDATE.md)** - Detailed overview of new features
+- **[📖 Usage Guide](./USAGE_GUIDE.md)** - Complete command examples and workflows
+- **[🔧 Technical Documentation](../Documentation/README.md)** - Architecture and implementation details
 
 #### **Quick Examples:**
 
@@ -53,6 +69,17 @@ snatch download "URL" --resolution 2160  # Actually gets 4K!
 
 # AI video upscaling
 snatch download "URL" --upscale --upscale-method realesrgan --upscale-factor 2
+
+# Audio enhancement with presets
+snatch audio enhance myfile.mp3 --preset music
+snatch audio enhance podcast.wav --preset podcast --output enhanced_podcast.wav
+
+# Audio quality analysis and recommendations
+snatch audio analyze myfile.wav
+snatch audio presets --detailed
+
+# Batch audio processing
+snatch audio batch "*.mp3" --preset restoration
 
 # Combine resolution + upscaling for optimal results
 snatch download "URL" --resolution 720 --upscale --upscale-factor 4 --replace-original
@@ -127,35 +154,35 @@ snatch download "URL" --resolution 720 --upscale --upscale-factor 4 --replace-or
 
 We've created an extensive documentation ecosystem to support developers and users:
 
-#### **📖 [Technical Documentation](Documentation/TECHNICAL_DOCUMENTATION.md)**
+#### **📖 [Technical Documentation](./TECHNICAL_DOCUMENTATION.md)**
 
 - Complete system architecture overview with visual diagrams
 - Component interaction flows and data flow analysis
 - Dependency relationships and module hierarchies
 - Comprehensive file structure documentation
 
-#### **🔧 [Module Documentation](Documentation/MODULE_DOCUMENTATION.md)**
+#### **🔧 [Module Documentation](./MODULE_DOCUMENTATION.md)**
 
 - In-depth analysis of all core modules
 - Function signatures, parameters, and return values
 - Usage examples and best practices
 - Module interaction patterns
 
-#### **🔌 [Plugin Development Guide](Documentation/PLUGIN_DEVELOPMENT_GUIDE.md)**
+#### **🔌 [Plugin Development Guide](./PLUGIN_DEVELOPMENT_GUIDE.md)**
 
 - Complete plugin architecture documentation
 - Hook system explanation with practical examples
 - Plugin registration and lifecycle management
 - Sample plugin implementations
 
-#### **📋 [API Reference](Documentation/API_REFERENCE.md)**
+#### **📋 [API Reference](./API_REFERENCE.md)**
 
 - Comprehensive API documentation
 - Method signatures with detailed parameters
 - Error handling and return codes
 - Usage examples for all major functions
 
-#### **🚀 [Deployment Guide](Documentation/DEPLOYMENT_GUIDE.md)**
+#### **🚀 [Deployment Guide](./DEPLOYMENT_GUIDE.md)**
 
 - Development environment setup
 - Production deployment strategies
@@ -163,7 +190,7 @@ We've created an extensive documentation ecosystem to support developers and use
 - Platform-specific installation guides
 - Security considerations and best practices
 
-#### **⚡ [Performance Optimization Guide](Documentation/PERFORMANCE_OPTIMIZATION_GUIDE.md)**
+#### **⚡ [Performance Optimization Guide](./PERFORMANCE_OPTIMIZATION_GUIDE.md)**
 
 - System resource optimization strategies
 - Network performance tuning
@@ -171,7 +198,7 @@ We've created an extensive documentation ecosystem to support developers and use
 - Caching strategies and storage optimization
 - Platform-specific performance tips
 
-#### **🔍 [Troubleshooting Guide](Documentation/TROUBLESHOOTING_GUIDE.md)**
+#### **🔍 [Troubleshooting Guide](./TROUBLESHOOTING_GUIDE.md)**
 
 - Quick diagnostic procedures
 - Common issues and solutions
@@ -179,7 +206,7 @@ We've created an extensive documentation ecosystem to support developers and use
 - Error codes reference
 - Advanced debugging techniques
 
-#### **🧪 [Integration Testing](Documentation/INTEGRATION_TESTING.md)**
+#### **🧪 [Integration Testing](./INTEGRATION_TESTING.md)**
 
 - Comprehensive testing strategies
 - Test suite documentation
@@ -211,13 +238,32 @@ We've created an extensive documentation ecosystem to support developers and use
 
 ## 🚀 Overview
 
-**Snatch** is a powerful and user-friendly media downloader that lets you grab videos, audio, and more from hundreds of websites in various formats and qualities. With its sleek interface and powerful features, downloading media has never been easier or more satisfying!
+**Snatch** is a powerful and user-friendly media downloader that lets you grab videos, audio, and more from hundreds of websites in various formats and qualities. With its sleek interface, comprehensive customization system, and powerful features, downloading media has never been easier or more satisfying!
 
 <h2 id="features">✨ Features</h2>
 
-- **Beautiful Interactive Mode** - Easy-to-use interface with colorful progress bars
+### 🎨 **Comprehensive Customization System**
+
+- **8 Built-in Themes** - Default, Dark, Light, High Contrast, Cyberpunk, Minimal, Ocean, and Forest themes
+- **3 Interactive Interfaces** - Enhanced, Modern, and Textual TUI modes with rich interface options
+- **Performance Tuning** - Fine-tune download speeds, connection limits, memory usage, and resource management
+- **Behavior Customization** - Configure confirmations, auto-organization, session management, and error handling
+- **Interface Personalization** - Customize progress styles, keyboard shortcuts, display options, and accessibility features
+- **Command Aliases** - Create custom shortcuts for frequently used commands
+- **Profile System** - Save and switch between different configuration profiles
+- **Import/Export Settings** - Share configurations in YAML, JSON, or TOML formats
+
+### 🖥️ **Enhanced Interactive Modes**
+
+- **Cyberpunk Interface** - Futuristic themed interface with neon aesthetics and advanced features
+- **Modern Interface** - Clean, contemporary design with intuitive controls and beautiful animations
+- **Textual TUI** - Advanced terminal user interface with rich components and responsive design
+- **Enhanced CLI** - Rich-powered command line with syntax highlighting and interactive prompts
+
+### 🎯 **Core Download Features**
+
 - **Fixed Resolution Selection** - Properly working --resolution/-r flags for accurate quality selection
-- **AI Video Upscaling** - Enhance video quality with Real-ESRGAN or traditional upscaling methods
+- **AI Video Upscaling** - Enhance video quality with Real-ESRGAN or traditional upscaling methods (2x/4x)
 - **Dynamic Resource Management** - Adaptive chunk sizes based on your system's resources
 - **Site Explorer** - Browse and search through 1000+ supported sites
 - **Advanced Audio Options** - Choose between Opus (default), MP3, FLAC formats and stereo/surround sound
@@ -237,6 +283,167 @@ We've created an extensive documentation ecosystem to support developers and use
 - **Network Speed Testing** - Automatically optimize settings based on your connection speed
 - **Smart Format Selection** - Intelligently selects best format without testing all possibilities
 - **Temporary File Management** - Advanced handling of temporary files to prevent disk space waste
+
+## 🎨 Customization System
+
+Snatch features a comprehensive customization system that allows you to personalize every aspect of the application to match your preferences and workflow.
+
+### 🎭 Theme Management
+
+**Available Themes:**
+
+- `default` - Standard Snatch appearance
+- `dark` - Dark mode with comfortable contrast
+- `light` - Clean light theme
+- `high_contrast` - Enhanced visibility for accessibility
+- `cyberpunk` - Futuristic neon aesthetics
+- `minimal` - Clean, distraction-free interface
+- `ocean` - Calming blue tones
+- `forest` - Nature-inspired green palette
+
+**Quick Theme Commands:**
+
+```bash
+# View current theme
+snatch customize theme show
+
+# List all available themes
+snatch customize theme list
+
+# Switch themes
+snatch customize theme set --theme cyberpunk
+snatch customize theme set --theme dark
+
+# Create custom theme with JSON colors
+snatch customize theme create --colors '{"primary": "#ff0000", "secondary": "#00ff00"}'
+```
+
+### 🖥️ Interactive Interface Modes
+
+Launch Snatch with different interface experiences:
+
+```bash
+# Enhanced interactive mode (default)
+snatch interactive
+
+# Modern beautiful interface
+snatch modern
+
+# Advanced Textual TUI
+snatch textual
+
+# Direct cyberpunk-themed interface
+snatch  # Uses current theme setting
+```
+
+### ⚙️ Performance Customization
+
+Fine-tune performance settings for optimal downloads:
+
+```bash
+# View all performance settings
+snatch customize performance --show
+
+# Adjust concurrent downloads
+snatch customize performance --setting max_concurrent_downloads --value 8
+
+# Set bandwidth limits (0 = unlimited)
+snatch customize performance --setting global_bandwidth_limit --value 1000
+
+# Configure memory usage
+snatch customize performance --setting max_memory_usage_mb --value 1024
+
+# Optimize chunk sizes for your connection
+snatch customize performance --setting chunk_size --value 2097152
+```
+
+### 🎛️ Interface Personalization
+
+Customize the interface to your preferences:
+
+```bash
+# Show interface settings
+snatch customize interface --show
+
+# Enable detailed interface mode
+snatch customize interface --setting interface_mode --value detailed
+
+# Customize progress animations
+snatch customize interface --setting animate_progress --value true
+
+# Set display limits
+snatch customize interface --setting max_display_items --value 100
+```
+
+### 🎯 Behavior Configuration
+
+Control how Snatch behaves during operations:
+
+```bash
+# View behavior settings
+snatch customize behavior --show
+
+# Configure file overwrite confirmations
+snatch customize behavior --setting confirm_file_overwrite --value true
+
+# Auto-organize downloads by type
+snatch customize behavior --setting auto_organize_downloads --value true
+
+# Set large download threshold (MB)
+snatch customize behavior --setting large_download_threshold_mb --value 500
+```
+
+### 🔗 Command Aliases
+
+Create shortcuts for frequently used commands:
+
+```bash
+# List current aliases
+snatch customize alias list
+
+# Add custom aliases
+snatch customize alias add --alias "dl" --command "download"
+snatch customize alias add --alias "4k" --command "download --resolution 2160"
+
+# Remove aliases
+snatch customize alias remove --alias "dl"
+```
+
+### 📁 Profile Management
+
+Save and switch between different configuration profiles:
+
+```bash
+# List available profiles
+snatch customize profile list
+
+# Create new profile
+snatch customize profile create --name "work"
+
+# Load a profile
+snatch customize profile load --name "work"
+
+# Delete profile
+snatch customize profile delete --name "old-profile"
+```
+
+### 📤 Import/Export Settings
+
+Share configurations across devices or backup your settings:
+
+```bash
+# Export settings to YAML
+snatch customize export my-settings.yaml
+
+# Export to JSON format
+snatch customize export my-settings.json --format json
+
+# Import settings from file
+snatch customize import my-settings.yaml
+
+# Reset to defaults
+snatch customize reset
+```
 
 <h2 id="Installation">🔧 Installation</h2>
 
@@ -369,7 +576,7 @@ pip install -e .
 
 <h2 id="Usage">💻 Advanced Usage</h2>
 
-### Audio Downloads
+### Audio Downloads & Enhancement
 
 ```powershell
 # Download in Opus format (default, best quality-to-size)
@@ -383,7 +590,34 @@ snatch download "URL" --audio-only --format flac --channels 8
 
 # Download with custom quality
 snatch download "URL" --audio-only --format mp3 --quality 320
+
+# Audio Enhancement Commands (NEW in v1.8.0)
+# Enhance downloaded audio with AI-powered processing
+snatch audio enhance "myfile.mp3" --preset music
+snatch audio enhance "podcast.wav" --preset podcast --output "enhanced_podcast.wav"
+
+# Analyze audio quality and get recommendations
+snatch audio analyze "myfile.wav"
+
+# List available enhancement presets
+snatch audio presets --detailed
+
+# Batch process multiple files
+snatch audio batch "*.mp3" --preset restoration
+
+# Create custom enhancement preset
+snatch audio create-preset "my-preset" "Custom settings for my content"
 ```
+
+#### Audio Enhancement Presets
+
+| Preset | Description | Best For |
+|--------|-------------|----------|
+| `podcast` | Speech optimization with noise reduction | Podcasts, interviews, voice recordings |
+| `music` | Stereo enhancement and dynamic preservation | Music tracks, albums |
+| `speech` | Strong noise reduction and clarity | Lectures, audiobooks, presentations |
+| `broadcast` | Professional broadcast standards | Radio shows, professional content |
+| `restoration` | Maximum enhancement for damaged audio | Old recordings, low-quality sources |
 
 ### Video Downloads & Enhancement
 

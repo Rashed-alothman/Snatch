@@ -56,7 +56,7 @@ class StandaloneAudioProcessor:
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
-        self.supported_formats = ['.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg', '.opus']
+        self.supported_formats = ['.mp3', FLAC_EXT, '.wav', '.m4a', '.aac', '.ogg', '.opus']
         
     def process_local_file(self, input_path: str, output_path: str = None, 
                           normalize: bool = True, denoise: bool = True, 
@@ -226,7 +226,7 @@ class StandaloneAudioProcessor:
         try:
             _, ext = os.path.splitext(output_path)
             
-            if ext.lower() == '.flac':
+            if ext.lower() == FLAC_EXT:
                 cmd = [
                     'ffmpeg', '-i', input_path,
                     '-c:a', 'flac',
@@ -312,6 +312,136 @@ class AudioQuality:
     peak_level: float = -60.0     # dB peak level
     clipping: float = 0.0         # 0.0 (no clipping) to 1.0 (severe)
     distortion: float = 0.0       # 0.0 (clean) to 1.0 (distorted)
+
+@dataclass
+class AudioEnhancementSettings:
+    """Settings for audio enhancement processing"""
+    # Enhancement levels
+    level: str = "medium"  # light, medium, aggressive
+    
+    # AI-powered enhancement
+    noise_reduction: bool = True
+    noise_reduction_strength: float = 0.6  # 0.0 to 1.0
+    
+    # Audio upscaling
+    upscale_sample_rate: bool = False
+    target_sample_rate: int = 48000  # 22050, 44100, 48000, 96000, 192000
+    
+    # Frequency enhancement
+    frequency_extension: bool = False
+    high_freq_boost: float = 3.0  # dB boost for high frequencies
+    
+    # Spatial enhancement
+    stereo_widening: bool = False
+    stereo_width: float = 1.2  # 1.0 = normal, 2.0 = maximum width
+    
+    # Dynamic processing
+    normalization: bool = True
+    target_lufs: float = -16.0  # EBU R128 standard
+    dynamic_compression: bool = False
+    compression_ratio: float = 3.0
+    
+    # Restoration
+    declipping: bool = False
+    artifact_removal: bool = True
+    
+    # Processing options
+    preserve_peaks: bool = True
+    high_quality_resampling: bool = True
+    multiband_processing: bool = False
+
+@dataclass
+class AudioPreset:
+    """Predefined audio enhancement presets"""
+    name: str
+    description: str
+    settings: AudioEnhancementSettings
+    
+# Audio enhancement presets
+AUDIO_ENHANCEMENT_PRESETS = {
+    "podcast": AudioPreset(
+        name="Podcast",
+        description="Optimized for speech content with noise reduction and clarity enhancement",
+        settings=AudioEnhancementSettings(
+            level="medium",
+            noise_reduction=True,
+            noise_reduction_strength=0.8,
+            frequency_extension=True,
+            high_freq_boost=2.0,
+            normalization=True,
+            target_lufs=-18.0,
+            dynamic_compression=True,
+            compression_ratio=2.5,
+            artifact_removal=True
+        )
+    ),
+    "music": AudioPreset(
+        name="Music",
+        description="Optimized for music with stereo enhancement and dynamic preservation",
+        settings=AudioEnhancementSettings(
+            level="light",
+            noise_reduction=True,
+            noise_reduction_strength=0.3,
+            upscale_sample_rate=True,
+            target_sample_rate=48000,
+            stereo_widening=True,
+            stereo_width=1.3,
+            normalization=True,
+            target_lufs=-16.0,
+            preserve_peaks=True,
+            high_quality_resampling=True
+        )
+    ),
+    "speech": AudioPreset(
+        name="Speech",
+        description="Optimized for speech with strong noise reduction and clarity",
+        settings=AudioEnhancementSettings(
+            level="aggressive",
+            noise_reduction=True,
+            noise_reduction_strength=0.9,
+            frequency_extension=True,
+            high_freq_boost=4.0,
+            normalization=True,
+            target_lufs=-20.0,
+            dynamic_compression=True,
+            compression_ratio=4.0,
+            artifact_removal=True,
+            declipping=True
+        )
+    ),
+    "broadcast": AudioPreset(
+        name="Broadcast",
+        description="Professional broadcast standards with consistent levels",
+        settings=AudioEnhancementSettings(
+            level="medium",
+            noise_reduction=True,
+            noise_reduction_strength=0.6,
+            normalization=True,
+            target_lufs=-23.0,  # Broadcast standard
+            dynamic_compression=True,
+            compression_ratio=3.5,
+            preserve_peaks=False,
+            multiband_processing=True
+        )
+    ),
+    "restoration": AudioPreset(
+        name="Restoration",
+        description="Maximum enhancement for damaged or low-quality audio",
+        settings=AudioEnhancementSettings(
+            level="aggressive",
+            noise_reduction=True,
+            noise_reduction_strength=0.95,
+            upscale_sample_rate=True,
+            target_sample_rate=48000,
+            frequency_extension=True,
+            high_freq_boost=5.0,
+            declipping=True,
+            artifact_removal=True,
+            multiband_processing=True,
+            high_quality_resampling=True
+        )
+    )
+}
 
 class EnhancedAudioProcessor:
     """Enhanced audio processor with advanced algorithms"""
@@ -968,5 +1098,535 @@ class EnhancedAudioProcessor:
             logger.error(f"Error in enhanced processing chain: {e}")
             return False
 
-# For backward compatibility, create alias
-AudioProcessor = EnhancedAudioProcessor
+    async def enhance_audio_comprehensive(self, input_file: str, output_file: str, 
+                                        settings: AudioEnhancementSettings,
+                                        progress_callback: Optional[Callable] = None) -> bool:
+        """
+        Apply comprehensive audio enhancement with all available algorithms
+        
+        Args:
+            input_file: Path to input audio file
+            output_file: Path to output enhanced file
+            settings: Enhancement settings configuration
+            progress_callback: Optional progress callback function
+            
+        Returns:
+            True if enhancement was successful
+        """
+        try:
+            if progress_callback:
+                progress_callback("Starting audio enhancement", 0)
+                
+            # Create temporary directory for processing
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_files = {}
+                current_file = input_file
+                
+                # Step 1: Load and analyze audio
+                if progress_callback:
+                    progress_callback("Analyzing audio quality", 10)
+                
+                quality = await self.analyze_audio_quality(input_file)
+                if not quality:
+                    logger.warning("Could not analyze audio quality, proceeding with defaults")
+                
+                # Step 2: AI-powered noise reduction
+                if settings.noise_reduction:
+                    if progress_callback:
+                        progress_callback("Applying noise reduction", 20)
+                    
+                    denoised_file = os.path.join(temp_dir, "denoised.wav")
+                    if await self._apply_ai_noise_reduction(current_file, denoised_file, settings):
+                        temp_files['denoised'] = denoised_file
+                        current_file = denoised_file
+                
+                # Step 3: Sample rate upscaling
+                if settings.upscale_sample_rate:
+                    if progress_callback:
+                        progress_callback("Upscaling sample rate", 30)
+                    
+                    upscaled_file = os.path.join(temp_dir, "upscaled.wav")
+                    if await self._apply_sample_rate_upscaling(current_file, upscaled_file, settings):
+                        temp_files['upscaled'] = upscaled_file
+                        current_file = upscaled_file
+                
+                # Step 4: Frequency extension
+                if settings.frequency_extension:
+                    if progress_callback:
+                        progress_callback("Extending frequency range", 40)
+                    
+                    extended_file = os.path.join(temp_dir, "extended.wav")
+                    if await self._apply_frequency_extension(current_file, extended_file, settings):
+                        temp_files['extended'] = extended_file
+                        current_file = extended_file
+                
+                # Step 5: Stereo widening
+                if settings.stereo_widening:
+                    if progress_callback:
+                        progress_callback("Applying stereo enhancement", 50)
+                    
+                    widened_file = os.path.join(temp_dir, "widened.wav")
+                    if await self._apply_stereo_widening(current_file, widened_file, settings):
+                        temp_files['widened'] = widened_file
+                        current_file = widened_file
+                
+                # Step 6: Dynamic range compression
+                if settings.dynamic_compression:
+                    if progress_callback:
+                        progress_callback("Applying dynamic compression", 60)
+                    
+                    compressed_file = os.path.join(temp_dir, "compressed.wav")
+                    if await self._apply_dynamic_compression(current_file, compressed_file, settings):
+                        temp_files['compressed'] = compressed_file
+                        current_file = compressed_file
+                
+                # Step 7: Declipping and artifact removal
+                if settings.declipping or settings.artifact_removal:
+                    if progress_callback:
+                        progress_callback("Removing artifacts and clipping", 70)
+                    
+                    restored_file = os.path.join(temp_dir, "restored.wav")
+                    if await self._apply_restoration(current_file, restored_file, settings):
+                        temp_files['restored'] = restored_file
+                        current_file = restored_file
+                
+                # Step 8: Loudness normalization (final step)
+                if settings.normalization:
+                    if progress_callback:
+                        progress_callback("Applying loudness normalization", 80)
+                    
+                    normalized_file = os.path.join(temp_dir, "normalized.wav")
+                    if await self._apply_advanced_normalization(current_file, normalized_file, settings):
+                        temp_files['normalized'] = normalized_file
+                        current_file = normalized_file
+                
+                # Step 9: Convert to final format
+                if progress_callback:
+                    progress_callback("Converting to final format", 90)
+                
+                success = await self._convert_to_final_format(current_file, output_file, settings)
+                
+                if progress_callback:
+                    progress_callback("Enhancement complete", 100)
+                
+                return success
+                
+        except Exception as e:
+            logger.error(f"Audio enhancement failed: {e}")
+            return False
+    
+    async def _apply_ai_noise_reduction(self, input_file: str, output_file: str, 
+                                      settings: AudioEnhancementSettings) -> bool:
+        """Apply AI-powered noise reduction using multiple algorithms"""
+        try:
+            if not ENHANCED_PROCESSING_AVAILABLE:
+                # Fallback to FFmpeg-based noise reduction
+                return await self._apply_ffmpeg_noise_reduction(input_file, output_file, settings)
+            
+            # Load audio data
+            data, sr = librosa.load(input_file, sr=None)
+            
+            # Ensure we have reasonable data
+            if len(data) == 0:
+                logger.error("No audio data loaded")
+                return False
+            
+            # Apply noise reduction based on enhancement level
+            if settings.level == "light":
+                # Gentle noise reduction
+                reduced_noise = nr.reduce_noise(
+                    y=data, sr=sr, 
+                    stationary=False,
+                    prop_decrease=min(settings.noise_reduction_strength * 0.6, 0.6)
+                )
+            elif settings.level == "medium":
+                # Standard noise reduction with spectral gating
+                reduced_noise = nr.reduce_noise(
+                    y=data, sr=sr,
+                    stationary=False,
+                    prop_decrease=settings.noise_reduction_strength,
+                    n_std_thresh_stationary=1.5,
+                    n_thresh_nonstationary=0.5
+                )
+            else:  # aggressive
+                # Multi-pass noise reduction
+                # First pass: stationary noise
+                temp_reduced = nr.reduce_noise(
+                    y=data, sr=sr,
+                    stationary=True,
+                    prop_decrease=settings.noise_reduction_strength * 0.7
+                )
+                # Second pass: non-stationary noise
+                reduced_noise = nr.reduce_noise(
+                    y=temp_reduced, sr=sr,
+                    stationary=False,
+                    prop_decrease=settings.noise_reduction_strength * 0.8,
+                    n_std_thresh_stationary=2.0
+                )
+            
+            # Save processed audio
+            sf.write(output_file, reduced_noise, sr, subtype='PCM_24')
+            return True
+            
+        except Exception as e:
+            logger.error(f"AI noise reduction failed: {e}")
+            return False
+    
+    async def _apply_ffmpeg_noise_reduction(self, input_file: str, output_file: str,
+                                          settings: AudioEnhancementSettings) -> bool:
+        """Apply FFmpeg-based noise reduction as fallback when advanced libraries unavailable"""
+        try:
+            # Create a simple noise reduction filter chain based on enhancement level
+            if settings.level == "light":
+                # Gentle high-pass filter and slight noise gate
+                filter_complex = [
+                    "highpass=f=80",
+                    "lowpass=f=18000",
+                    "agate=threshold=0.01:ratio=2:attack=1:release=10"
+                ]
+            elif settings.level == "medium":
+                # Standard noise reduction with adaptive filters
+                filter_complex = [
+                    "highpass=f=100",
+                    "lowpass=f=16000", 
+                    "agate=threshold=0.02:ratio=3:attack=2:release=20",
+                    "adeclick=t=0.002:w=2"
+                ]
+            else:  # aggressive
+                # Strong noise reduction with multiple stages
+                filter_complex = [
+                    "highpass=f=120",
+                    "lowpass=f=15000",
+                    "agate=threshold=0.03:ratio=4:attack=3:release=30",
+                    "adeclick=t=0.003:w=4",
+                    "afftdn=nr=20:nf=-40"  # FFT denoiser if available
+                ]
+            
+            # Apply noise reduction strength adjustment
+            if settings.noise_reduction_strength < 0.5:
+                # Reduce filter intensity for lower strength settings
+                filter_string = ",".join(filter_complex[:2])  # Only basic filters
+            else:
+                filter_string = ",".join(filter_complex)
+            
+            args = [
+                "-i", input_file,
+                "-af", filter_string,
+                "-acodec", "pcm_s24le",
+                output_file
+            ]
+            
+            return await self._run_ffmpeg(args, "FFmpeg noise reduction")
+            
+        except Exception as e:
+            logger.error(f"FFmpeg noise reduction failed: {e}")
+            return False
+    
+    def get_available_presets(self) -> List[str]:
+        """Get list of available audio enhancement presets"""
+        return list(AUDIO_ENHANCEMENT_PRESETS.keys())
+    
+    def get_preset_info(self, preset_name: str) -> Optional[Dict[str, Any]]:
+        """Get detailed information about a specific preset"""
+        if preset_name not in AUDIO_ENHANCEMENT_PRESETS:
+            return None
+            
+        preset = AUDIO_ENHANCEMENT_PRESETS[preset_name]
+        return {
+            "name": preset.name,
+            "description": preset.description,
+            "settings": {
+                "level": preset.settings.level,
+                "noise_reduction": preset.settings.noise_reduction,
+                "noise_reduction_strength": preset.settings.noise_reduction_strength,
+                "upscale_sample_rate": preset.settings.upscale_sample_rate,
+                "target_sample_rate": preset.settings.target_sample_rate,
+                "frequency_extension": preset.settings.frequency_extension,
+                "high_freq_boost": preset.settings.high_freq_boost,
+                "stereo_widening": preset.settings.stereo_widening,
+                "stereo_width": preset.settings.stereo_width,
+                "normalization": preset.settings.normalization,
+                "target_lufs": preset.settings.target_lufs,
+                "dynamic_compression": preset.settings.dynamic_compression,
+                "compression_ratio": preset.settings.compression_ratio,
+                "declipping": preset.settings.declipping,
+                "artifact_removal": preset.settings.artifact_removal,
+                "preserve_peaks": preset.settings.preserve_peaks,
+                "high_quality_resampling": preset.settings.high_quality_resampling,
+                "multiband_processing": preset.settings.multiband_processing
+            }
+        }
+    async def recommend_preset(self, input_file: str) -> Optional[str]:
+        """Analyze audio file and recommend the best enhancement preset"""
+        try:
+            quality = await self.analyze_audio_quality(input_file)
+            if not quality:
+                logger.warning("Could not analyze audio quality for preset recommendation")
+                return "music"  # Default fallback
+            
+            stats = await self.get_audio_stats(input_file)
+            if not stats:
+                return "music"  # Default fallback
+            
+            return self._determine_preset_by_characteristics(quality, stats)
+                    
+        except Exception as e:
+            logger.error(f"Preset recommendation failed: {e}")
+            return "music"  # Safe default
+    
+    def _determine_preset_by_characteristics(self, quality: AudioQuality, stats: AudioStats) -> str:
+        """Determine the best preset based on audio characteristics"""
+        if stats.channels == 1:
+            return self._recommend_for_mono(quality)
+        elif stats.channels == 2:
+            return self._recommend_for_stereo(quality, stats)
+        else:
+            return self._recommend_for_multichannel(quality)
+    
+    def _recommend_for_mono(self, quality: AudioQuality) -> str:
+        """Recommend preset for mono audio"""
+        if quality.noise_level > 0.4:
+            return "restoration"
+        elif quality.dynamics < 0.3:
+            return "speech"
+        else:
+            return "podcast"
+    
+    def _recommend_for_stereo(self, quality: AudioQuality, stats: AudioStats) -> str:
+        """Recommend preset for stereo audio"""
+        if quality.noise_level > 0.6 or quality.clipping > 0.1 or stats.sample_rate <= 22050:
+            return "restoration"
+        elif quality.dynamics > 0.7:
+            return "music"
+        else:
+            return "music"
+    
+    def _recommend_for_multichannel(self, quality: AudioQuality) -> str:
+        """Recommend preset for multi-channel audio"""
+        if quality.noise_level > 0.3:
+            return "broadcast"
+        else:
+            return "music"
+    
+    async def validate_enhancement_settings(self, settings: AudioEnhancementSettings) -> List[str]:
+        """Validate enhancement settings and return list of warnings/issues"""
+        warnings = []
+        
+        # Validate noise reduction strength
+        if settings.noise_reduction_strength < 0.0 or settings.noise_reduction_strength > 1.0:
+            warnings.append("Noise reduction strength should be between 0.0 and 1.0")
+        
+        # Validate target sample rate
+        valid_rates = [22050, 44100, 48000, 96000, 192000]
+        if settings.target_sample_rate not in valid_rates:
+            warnings.append(f"Target sample rate should be one of: {valid_rates}")
+        
+        # Validate stereo width
+        if settings.stereo_width < 0.5 or settings.stereo_width > 3.0:
+            warnings.append("Stereo width should be between 0.5 and 3.0")
+        
+        # Validate compression ratio
+        if settings.compression_ratio < 1.0 or settings.compression_ratio > 20.0:
+            warnings.append("Compression ratio should be between 1.0 and 20.0")
+        
+        # Validate target LUFS
+        if settings.target_lufs < -40.0 or settings.target_lufs > 0.0:
+            warnings.append("Target LUFS should be between -40.0 and 0.0")
+        
+        # Validate high frequency boost
+        if settings.high_freq_boost < 0.0 or settings.high_freq_boost > 12.0:
+            warnings.append("High frequency boost should be between 0.0 and 12.0 dB")
+        
+        # Check for conflicting settings
+        if settings.preserve_peaks and settings.dynamic_compression:
+            warnings.append("Peak preservation and dynamic compression may conflict")
+        
+        if settings.upscale_sample_rate and settings.target_sample_rate < 44100:
+            warnings.append("Upscaling to sample rates below 44.1kHz is not recommended")
+        
+        return warnings
+
+    async def create_custom_preset(self, name: str, description: str, 
+                                 settings: AudioEnhancementSettings) -> bool:
+        """Create a custom enhancement preset and add it to available presets"""
+        try:
+            # Validate settings first
+            warnings = await self.validate_enhancement_settings(settings)
+            if warnings:
+                logger.warning(f"Preset validation warnings: {warnings}")
+            
+            # Create new preset
+            custom_preset = AudioPreset(
+                name=name,
+                description=description,
+                settings=settings
+            )
+            
+            # Add to available presets
+            AUDIO_ENHANCEMENT_PRESETS[name.lower()] = custom_preset
+            
+            logger.info(f"Created custom preset '{name}': {description}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to create custom preset: {e}")
+            return False
+
+    async def get_audio_stats(self, input_file: str) -> Optional[AudioStats]:
+        """Get detailed audio file statistics using FFprobe"""
+        try:
+            cmd = [
+                self.ffprobe_path, "-v", "quiet", "-print_format", "json",
+                "-show_format", "-show_streams", input_file
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode != 0:
+                logger.error(f"FFprobe failed: {stderr.decode()}")
+                return None
+            
+            import json
+            data = json.loads(stdout.decode())
+            
+            # Find audio stream
+            audio_stream = None
+            for stream in data.get('streams', []):
+                if stream.get('codec_type') == 'audio':
+                    audio_stream = stream
+                    break
+            
+            if not audio_stream:
+                logger.error("No audio stream found")
+                return None
+            
+            # Extract statistics
+            channels = int(audio_stream.get('channels', 2))
+            sample_rate = int(audio_stream.get('sample_rate', 44100))
+            
+            # Try to get bit depth from sample_fmt
+            sample_fmt = audio_stream.get('sample_fmt', 's16')
+            if 's16' in sample_fmt:
+                bit_depth = 16
+            elif 's24' in sample_fmt or 's32' in sample_fmt:
+                bit_depth = 24
+            elif 'flt' in sample_fmt or 'dbl' in sample_fmt:
+                bit_depth = 32
+            else:
+                bit_depth = 16  # Default
+            
+            duration = float(audio_stream.get('duration', 0.0))
+            bitrate = audio_stream.get('bit_rate')
+            if bitrate:
+                bitrate = int(bitrate)
+            
+            codec = audio_stream.get('codec_name', 'unknown')
+            container = data.get('format', {}).get('format_name', 'unknown')
+            
+            return AudioStats(
+                channels=channels,
+                sample_rate=sample_rate,
+                bit_depth=bit_depth,
+                duration=duration,
+                bitrate=bitrate,
+                codec=codec,
+                container=container
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to get audio stats: {e}")
+            return None
+
+    async def process_with_real_time_preview(self, input_file: str, output_file: str,
+                                           settings: AudioEnhancementSettings,
+                                           preview_duration: float = 10.0) -> bool:
+        """Process audio with real-time preview of first few seconds"""
+        try:
+            # Create preview of first N seconds
+            preview_file = f"{output_file}_preview.wav"
+            
+            # Extract preview segment
+            args = [
+                "-i", input_file,
+                "-t", str(preview_duration),
+                "-acodec", "pcm_s24le",
+                preview_file
+            ]
+            
+            if not await self._run_ffmpeg(args, "preview extraction"):
+                logger.error("Failed to create preview segment")
+                return False
+            
+            # Process preview with same settings
+            preview_output = f"{output_file}_preview_processed.wav"
+            preview_success = await self.enhance_audio_comprehensive(
+                preview_file, preview_output, settings
+            )
+            
+            if preview_success:
+                logger.info(f"Preview processed successfully: {preview_output}")
+                logger.info("You can listen to the preview before processing the full file")
+                
+                # Ask user if they want to continue with full processing
+                # Note: This would need to be integrated with the CLI for user interaction
+                  # Clean up preview files
+                try:
+                    os.remove(preview_file)
+                except (OSError, IOError):
+                    pass
+                
+                # Process full file
+                return await self.enhance_audio_comprehensive(input_file, output_file, settings)
+            else:
+                logger.error("Preview processing failed")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Real-time preview processing failed: {e}")
+            return False
+
+    def get_processing_requirements(self, settings: AudioEnhancementSettings) -> Dict[str, Any]:
+        """Estimate processing requirements and time for given settings"""
+        try:
+            complexity_score = 0
+            
+            # Add complexity based on enabled features
+            if settings.noise_reduction:
+                complexity_score += 3 if settings.level == "aggressive" else 2
+            if settings.upscale_sample_rate:
+                complexity_score += 2
+            if settings.frequency_extension:
+                complexity_score += 2
+            if settings.stereo_widening:
+                complexity_score += 1
+            if settings.dynamic_compression:
+                complexity_score += 2 if settings.multiband_processing else 1
+            if settings.declipping or settings.artifact_removal:
+                complexity_score += 3
+            if settings.normalization:
+                complexity_score += 1
+            
+            # Estimate relative processing time multiplier
+            time_multiplier = max(1.0, complexity_score * 0.3)
+            
+            # Estimate memory requirements (rough)
+            memory_mb = 100 + (complexity_score * 50)
+            
+            return {
+                "complexity_score": complexity_score,
+                "estimated_time_multiplier": time_multiplier,
+                "estimated_memory_mb": memory_mb,
+                "cpu_intensive": complexity_score > 6,
+                "requires_enhanced_libs": settings.noise_reduction or settings.upscale_sample_rate,
+                "ffmpeg_only": not (settings.noise_reduction and ENHANCED_PROCESSING_AVAILABLE)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate processing requirements: {e}")
+            return {"error": str(e)}

@@ -926,3 +926,19 @@ class SessionManager:
             Statistics dictionary.
         """
         return self._async_manager.get_session_stats()
+
+    def create_session(self, url: str, file_path: str, total_size: int, metadata: Dict[str, Any] = None) -> str:
+        """Create new download session synchronously.
+        
+        Args:
+            url: The download URL.
+            file_path: Path where the file will be downloaded.
+            total_size: Total file size in bytes.
+            metadata: Optional metadata dictionary.
+            
+        Returns:
+            str: The session URL (used as ID).
+        """
+        self._async_manager.create_session(url, file_path, total_size, metadata)
+        asyncio.run(self._async_manager._save_sessions_async())
+        return url
