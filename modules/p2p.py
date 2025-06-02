@@ -476,8 +476,7 @@ class P2PManager:
             # Consider peer expired if not seen in 5 minutes
             if now - peer.last_seen > 300:  # 5 minutes
                 expired_peers.append(peer_id)
-                
-        # Remove expired peers
+                  # Remove expired peers
         for peer_id in expired_peers:
             logger.debug(f"Removing expired peer: {peer_id}")
             self.peers.pop(peer_id, None)
@@ -500,7 +499,7 @@ class P2PManager:
         """Send ping message to a peer"""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.settimeout(2)  # Short timeout for pings
+                s.settimeout(5)  # Increased timeout for stability
                 s.connect((peer.ip, peer.port))
                 
                 # Create ping message
@@ -512,7 +511,11 @@ class P2PManager:
                 
                 # Send encrypted if we have a symmetric key
                 if peer.symmetric_key and self.share_config.encryption:
-                    message_data = self._encrypt_message(message, peer.symmetric_key)
+                    try:
+                        message_data = self._encrypt_message(message, peer.symmetric_key)
+                    except Exception as encrypt_error:
+                        logger.warning(f"Encryption failed for ping to {peer.peer_id}: {encrypt_error}")
+                        message_data = json.dumps(message).encode()
                 else:
                     message_data = json.dumps(message).encode()
                     
@@ -520,12 +523,19 @@ class P2PManager:
                 s.sendall(len(message_data).to_bytes(4, byteorder="big"))
                 s.sendall(message_data)
                 
-                # Receive response (don't wait for it)
-                # This is just to complete the ping round-trip                s.settimeout(1)
+                # Wait for pong response with increased timeout
+                s.settimeout(3)
                 try:
-                    s.recv(1024)
+                    response_length = s.recv(4)
+                    if response_length:
+                        length = int.from_bytes(response_length, byteorder="big")
+                        if length > 0 and length < 10240:  # Reasonable size limit
+                            response_data = s.recv(length)
+                            # Successfully received pong
+                            peer.last_seen = time.time()
+                            logger.debug(f"Ping successful for peer {peer.peer_id}")
                 except socket.timeout:
-                    pass
+                    logger.debug(f"Ping timeout for peer {peer.peer_id}")
                     
         except Exception as e:
             # If ping fails, mark peer as disconnected
@@ -1174,7 +1184,7 @@ class P2PManager:
         
         try:
             # Open file and read requested chunk
-            with open(file_info.path, "rb") as f:
+            with open(file_info.file_path, "rb") as f:
                 chunk_size = self.share_config.chunk_size
                 f.seek(chunk_index * chunk_size)
                 chunk_data = f.read(chunk_size)
@@ -1189,31 +1199,18 @@ class P2PManager:
                 "file_id": file_id,
                 "chunk_index": chunk_index,
                 "chunk_hash": chunk_hash,
-                "final_chunk": chunk_index == len(file_info.chunk_hashes) - 1
+                "final_chunk": chunk_index == len(file_info.chunks) - 1
             }
             
             # Encrypt response header if possible
             if peer.symmetric_key and self.share_config.encryption:
-                header_data = self._encrypt_message(response, peer.symmetric_key)
-                
-                # Also encrypt chunk data
-                from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-                iv = os.urandom(12)  # 96 bits for GCM
-                cipher = Cipher(
-                    algorithms.AES(peer.symmetric_key),
-                    modes.GCM(iv),
-                    backend=default_backend()
-                )
-                encryptor = cipher.encryptor()
-                encrypted_chunk = encryptor.update(chunk_data) + encryptor.finalize()
-                chunk_data = iv + encryptor.tag + encrypted_chunk
+                response_data = self._encrypt_message(response, peer.symmetric_key)
             else:
-                header_data = json.dumps(response).encode()
+                response_data = json.dumps(response).encode()
                 
-            # Send header
-            writer.write(len(header_data).to_bytes(4, byteorder="big"))
-            writer.write(header_data)
-            await writer.drain()
+            # Send response header
+            writer.write(len(response_data).to_bytes(4, byteorder="big"))
+            writer.write(response_data)
             
             # Send chunk data length
             writer.write(len(chunk_data).to_bytes(4, byteorder="big"))
@@ -1238,28 +1235,32 @@ class P2PManager:
                 response_data = self._encrypt_message(response, peer.symmetric_key)
             else:
                 response_data = json.dumps(response).encode()
-                  # Send response
+                
+            # Send response
             writer.write(len(response_data).to_bytes(4, byteorder="big"))
             writer.write(response_data)
             await writer.drain()
-            
+
     def _detect_nat_type(self) -> None:
         """Detect NAT type using STUN"""
         try:
-            stun_servers = self.share_config.stun_servers
+            # Try multiple STUN servers to detect NAT type
+            results = []
+            for server in self.share_config.stun_servers:
+                result = self._try_stun_server(server)
+                if result:
+                    results.append(result)
+                    break
             
-            for server in stun_servers:
-                mapped_addr = self._try_stun_server(server)
-                if mapped_addr:
-                    self._process_stun_result(mapped_addr)
-                    return
-                    
-            # If we reach here, all STUN servers failed
-            logger.warning("Failed to detect NAT type using STUN")
-            self.nat_type = NAT_TYPES["UNKNOWN"]
-            
+            if results:
+                # Process first successful result
+                self._process_stun_result(results[0])
+            else:
+                logger.warning("Failed to contact any STUN servers")
+                self.nat_type = NAT_TYPES["UNKNOWN"]
+                
         except Exception as e:
-            logger.error(f"NAT detection error: {e}")
+            logger.error(f"NAT type detection failed: {e}")
             self.nat_type = NAT_TYPES["UNKNOWN"]
 
     def _try_stun_server(self, server: str) -> Optional[Tuple[str, int]]:
@@ -1291,58 +1292,81 @@ class P2PManager:
 
     def _parse_stun_response(self, response: bytes) -> Optional[Tuple[str, int]]:
         """Parse STUN response to extract mapped address"""
-        # Check for valid success response
-        if len(response) < 20 or response[0:2] != bytes([0x01, 0x01]):
-            return None
+        try:
+            if len(response) < 20:
+                return None
             
-        # Parse attributes to find mapped address
-        i = 20
-        while i < len(response):
-            attr_type = (response[i] << 8) | response[i+1]
-            attr_len = (response[i+2] << 8) | response[i+3]
+            # Check STUN header
+            msg_type = int.from_bytes(response[0:2], byteorder='big')
+            msg_length = int.from_bytes(response[2:4], byteorder='big')
             
-            if attr_type == 0x0001:  # MAPPED-ADDRESS
-                return self._extract_mapped_address(response, i)
+            if msg_type != 0x0101:  # Binding Response
+                return None
             
-            i += 4 + attr_len
-            
+            # Parse attributes
+            offset = 20
+            while offset < len(response):
+                if offset + 4 > len(response):
+                    break
+                    
+                attr_type = int.from_bytes(response[offset:offset+2], byteorder='big')
+                attr_length = int.from_bytes(response[offset+2:offset+4], byteorder='big')
+                
+                if attr_type == 0x0001:  # MAPPED-ADDRESS
+                    return self._extract_mapped_address(response, offset + 4)
+                    
+                # Move to next attribute
+                offset += 4 + attr_length
+                
+        except Exception as e:
+            logger.debug(f"Error parsing STUN response: {e}")
+        
         return None
 
     def _extract_mapped_address(self, response: bytes, offset: int) -> Optional[Tuple[str, int]]:
         """Extract IP and port from MAPPED-ADDRESS attribute"""
         try:
-            family = response[offset + 5]
-            port = (response[offset + 6] << 8) | response[offset + 7]
+            if offset + 8 > len(response):
+                return None
             
-            if family == 0x01:  # IPv4
-                ip = ".".join(str(b) for b in response[offset + 8:offset + 12])
-                return (ip, port)
-        except (IndexError, ValueError):
-            pass
-        return None
+            # Skip reserved byte
+            family = response[offset + 1]
+            if family != 0x01:  # IPv4
+                return None
+            
+            # Extract port and IP
+            port = int.from_bytes(response[offset+2:offset+4], byteorder='big')
+            ip_bytes = response[offset+4:offset+8]
+            ip = ".".join(str(b) for b in ip_bytes)
+            
+            return (ip, port)
+            
+        except Exception as e:
+            logger.debug(f"Error extracting mapped address: {e}")
+            return None
 
     def _process_stun_result(self, mapped_addr: Tuple[str, int]) -> None:
         """Process STUN result to determine NAT type"""
-        self.external_ip = mapped_addr[0]
+        self.external_ip, self.external_port = mapped_addr
         
-        # Determine NAT type (simplified)
+        # Simple NAT type detection
         local_ip = self._get_local_ip()
-        if local_ip == self.external_ip:
+        if self.external_ip == local_ip:
             self.nat_type = NAT_TYPES["OPEN"]
         else:
-            # Default to port restricted NAT
-            # Without multiple tests, we can't accurately determine more
-            self.nat_type = NAT_TYPES["PORT_RESTRICTED"]
-            
-        logger.debug(f"NAT type detected: {self.nat_type}, external IP: {self.external_ip}")
+            # Assume restricted cone NAT for now
+            self.nat_type = NAT_TYPES["RESTRICTED_CONE"]
+        
+        logger.debug(f"Detected NAT type: {self.nat_type}, External: {self.external_ip}:{self.external_port}")
+
     def _get_local_ip(self) -> str:
         """Get local IP address of the default interface"""
         try:
+            # Create a socket to determine local IP
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                # Doesn't actually connect
-                s.connect(("8.8.8.8", 53))
+                s.connect(("8.8.8.8", 80))
                 return s.getsockname()[0]
-        except (OSError, socket.error):
+        except Exception:
             return "127.0.0.1"
             
     async def connect_to_peer(self, address: str) -> Optional[PeerInfo]:
@@ -1958,8 +1982,7 @@ class P2PManager:
                 message_data = self.p2p_manager._encrypt_message(message, peer.symmetric_key)
             else:
                 message_data = json.dumps(message).encode()
-                
-            # Send with length prefix
+                  # Send with length prefix
             writer.write(len(message_data).to_bytes(4, byteorder="big"))
             writer.write(message_data)
             await writer.drain()
@@ -1971,12 +1994,794 @@ class P2PManager:
             logger.error(f"Error sending message to peer {peer.peer_id}: {e}")
             raise
 
-# Add library management message types
-MSG_TYPE.update({
-    "LIBRARY_UPDATE": 30,
-    "LIBRARY_REQUEST": 31,
-    "LIBRARY_RESPONSE": 32,
-    "LIBRARY_SUBSCRIBE": 33,
-    "FRIEND_REQUEST": 34,
-    "FRIEND_RESPONSE": 35
-})
+    # PUBLIC API METHODS - Core P2P functionality
+    async def start(self) -> bool:
+        """Start P2P service and begin listening for connections"""
+        try:
+            logger.info("Starting P2P service...")
+            
+            # Start the P2P server
+            if not await self.start_server():
+                logger.error("Failed to start P2P server")
+                return False
+                
+            # Load existing friends and libraries
+            self._load_friends()
+            self._load_libraries()
+            
+            # Start background sync worker
+            self._start_sync_worker()
+            
+            logger.info(f"P2P service started successfully on port {self.port}")
+            logger.info(f"Peer ID: {self.peer_id}")
+            if self.external_ip:
+                logger.info(f"External address: {self.external_ip}:{self.external_port}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start P2P service: {e}")
+            return False    
+    async def stop(self) -> None:
+        """Stop P2P service and cleanup connections"""
+        try:
+            logger.info("Stopping P2P service...")
+            
+            # Stop listening
+            if self.server:
+                self.server.close()
+                await self.server.wait_closed()
+                self.listening = False
+                
+            # Close all peer connections
+            for peer in self.peers.values():
+                peer.connected = False
+                
+            # Remove UPnP port mapping
+            if self.upnp and self.external_port:
+                try:
+                    self.upnp.deleteportmapping(self.external_port, 'TCP')
+                    logger.debug("Removed UPnP port mapping")
+                except Exception as e:
+                    logger.warning(f"Failed to remove UPnP mapping: {e}")
+
+            # Save state
+            self._save_friends()
+            self._save_libraries()
+            
+            # Clear state
+            self.peers.clear()
+            self.transfers.clear()
+            
+            logger.info("P2P service stopped")
+        except Exception as e:
+            logger.error(f"Error stopping P2P service: {e}")
+
+    async def share_file(self, file_path: str, max_peers: int = 10, encryption: bool = True) -> Optional[str]:    
+        
+        """Share a file via P2P network and return share code
+        
+        Args:
+            file_path: Path to file to share
+            max_peers: Maximum concurrent connections (default: 10)
+            encryption: Enable end-to-end encryption (default: True)
+            
+        Returns:
+            Share code for other peers, or None if sharing failed
+        """
+        try:
+            if not os.path.exists(file_path):
+                logger.error(f"File not found: {file_path}")
+                return None
+                
+            # Generate file ID and info
+            file_id = binascii.hexlify(os.urandom(16)).decode()
+            file_stat = os.stat(file_path)
+            
+            # Calculate file hash for integrity verification
+            file_hash = self._calculate_checksum(file_path)
+            
+            # Create file info
+            file_info = FileInfo(
+                file_id=file_id,
+                file_path=file_path,
+                file_name=os.path.basename(file_path),
+                file_size=file_stat.st_size,
+                hash=file_hash.hex(),
+                chunk_size=self.share_config.chunk_size,
+                chunks=[]  # Will be calculated if needed
+            )
+            
+            # Calculate chunks if file is large
+            if file_stat.st_size > self.share_config.chunk_size:
+                file_info.chunks = self._calculate_file_chunks(file_path)
+            
+            # Store in shared files
+            self.shared_files[file_id] = file_info
+            
+            # Generate share code (format: peer_id:file_id:port)
+            share_code = f"{self.peer_id}:{file_id}:{self.port}"
+            
+            # If we have external IP, use that in share code
+            if self.external_ip and self.external_port:
+                share_code = f"{self.peer_id}:{file_id}:{self.external_ip}:{self.external_port}"
+                
+            logger.info(f"File shared successfully: {file_path}")
+            logger.info(f"Share code: {share_code}")
+            
+            return share_code
+        except Exception as e:
+            logger.error(f"Failed to share file {file_path}: {e}")            
+            return None
+
+    async def fetch_file(self, share_code: str, output_path: str) -> bool:
+    
+        """
+        Download file using share code
+        Args:
+            share_code: Code received from file sharer
+            output_path: Directory to save downloaded file
+        Returns:
+            True if download successful, False otherwise
+        """
+        try:
+            # Parse share code
+            parts = share_code.split(":")
+            if len(parts) < 3:
+                logger.error(f"Invalid share code format: {share_code}")
+                return False
+
+            peer_id = parts[0]
+            file_id = parts[1]
+
+            # Determine peer address
+            if len(parts) == 4:  # peer_id:file_id:ip:port
+                peer_ip = parts[2]
+                peer_port = int(parts[3])
+            else:  # peer_id:file_id:port (local network)
+                peer_ip = "127.0.0.1"  # Assume local for now
+                peer_port = int(parts[2])
+
+            # Connect to peer
+            peer_address = f"{peer_ip}:{peer_port}"
+            peer = await self.connect_to_peer(peer_address)
+
+            if not peer:
+                logger.error(f"Failed to connect to peer: {peer_address}")
+                return False
+
+            # Request file
+            request = {
+                "type": MSG_TYPE["REQUEST"],
+                "peer_id": self.peer_id,
+                "file_id": file_id
+            }            # Send request to peer and handle download
+            success = await self._request_and_download_file(peer, request, output_path)
+            
+            if success:
+                logger.info(f"File downloaded successfully to: {output_path}")
+            else:
+                logger.error("File download failed")
+            
+            return success
+        except Exception as e:
+            logger.error(f"Failed to fetch file with code {share_code}: {e}")
+            return False
+
+    async def discover_peers(self, query: Optional[str] = None) -> List[PeerInfo]:
+        """Discover peers on the network
+        
+        Args:
+            query: Optional search query for specific content
+            
+        Returns:
+            List of discovered peers
+        """
+        try:
+            discovered_peers = []
+            
+            # Method 1: Local network broadcast discovery
+            local_peers = await self._discover_local_peers()
+            discovered_peers.extend(local_peers)
+            
+            # Method 2: DHT-based discovery (if enabled)
+            if self.share_config.dht_enabled:
+                dht_peers = await self._discover_dht_peers(query)
+                discovered_peers.extend(dht_peers)
+            
+            # Method 3: Friend network discovery
+            friend_peers = await self._discover_friend_peers()
+            discovered_peers.extend(friend_peers)
+            
+            # Remove duplicates
+            unique_peers = {}
+            for peer in discovered_peers:
+                if peer.peer_id not in unique_peers:
+                    unique_peers[peer.peer_id] = peer
+                    
+            logger.info(f"Discovered {len(unique_peers)} peers")
+            return list(unique_peers.values())
+        except Exception as e:
+            logger.error(f"Peer discovery failed: {e}")
+            return []
+
+    async def is_content_available(self, content_hash: str) -> bool:
+        """Check if content is available via P2P network
+        
+        Args:
+            content_hash: Hash of the content to check
+            
+        Returns:
+            True if content is available from peers
+        """
+        try:
+            # Check connected peers for content availability
+            for peer in self.peers.values():
+                if peer.connected:
+                    if await self._query_peer_for_content(peer, content_hash):
+                        return True
+                        
+            # If not found in connected peers, try discovery
+            peers = await self.discover_peers(content_hash)
+            for peer in peers:
+                if await self._query_peer_for_content(peer, content_hash):
+                    return True
+                    
+            return False
+        except Exception as e:
+            logger.warning(f"Content availability check failed: {e}")
+            return False
+
+    def get_peer_info(self) -> Dict[str, Any]:
+        """Get local peer information and network status
+        
+        Returns:
+            Dictionary containing peer details and network status
+        """
+        try:
+            return {
+                "peer_id": self.peer_id,
+                "listening": self.listening,
+                "port": self.port,
+                "external_ip": self.external_ip,
+                "external_port": self.external_port,
+                "nat_type": self.nat_type,
+                "connected_peers": len([p for p in self.peers.values() if p.connected]),
+                "total_peers": len(self.peers),
+                "shared_files": len(self.shared_files),
+                "active_transfers": len([t for t in self.transfers.values() if t.status == "active"]),
+                "libraries": len(self.libraries),
+                "subscribed_libraries": len(self.subscribed_libraries),
+                "friends": len(self.friends),
+                "upnp_enabled": self.upnp is not None,
+                "encryption_enabled": self.share_config.encryption
+            }
+        except Exception as e:
+            logger.error(f"Error getting peer info: {e}")            
+            return {}
+
+# HELPER METHODS FOR PUBLIC API
+
+    def _calculate_file_chunks(self, file_path: str) -> List[str]:
+        """Calculate chunk hashes for a file"""
+        chunks = []
+        try:
+            with open(file_path, 'rb') as f:
+                while True:
+                    chunk = f.read(self.share_config.chunk_size)
+                    if not chunk:
+                        break
+                    chunk_hash = hashlib.sha256(chunk).hexdigest()
+                    chunks.append(chunk_hash)
+            return chunks
+        except Exception as e:
+            logger.error(f"Error calculating file chunks: {e}")
+            return []
+
+    async def _request_and_download_file(self, peer: PeerInfo, request: Dict[str, Any], output_path: str) -> bool:
+        """Request and download file from peer"""
+        try:
+            # Connect and send request
+            reader, writer = await asyncio.open_connection(peer.ip, peer.port)
+            
+            # Encrypt request if we have symmetric key
+            if peer.symmetric_key and self.share_config.encryption:
+                request_data = self._encrypt_message(request, peer.symmetric_key)
+            else:
+                request_data = json.dumps(request).encode()
+                
+            # Send request
+            writer.write(len(request_data).to_bytes(4, byteorder="big"))
+            writer.write(request_data)
+            await writer.drain()
+            
+            # Read response
+            response_length = await reader.read(4)
+            if not response_length:
+                writer.close()
+                return False
+                
+            response_data = await reader.read(int.from_bytes(response_length, byteorder="big"))
+            
+            # Decrypt if needed
+            if peer.symmetric_key and self.share_config.encryption:
+                response = json.loads(self._decrypt_message(response_data, peer.symmetric_key).decode())
+            else:
+                response = json.loads(response_data.decode())
+                
+            # Check for error
+            if response.get("type") == MSG_TYPE["ERROR"]:
+                logger.error(f"Peer error: {response.get('error_message')}")
+                writer.close()
+                return False
+                
+            # Download file chunks
+            file_name = response.get("file_name", "downloaded_file")
+            output_file_path = os.path.join(output_path, file_name)
+            
+            success = await self._download_file_chunks(reader, writer, response, output_file_path, peer)
+            
+            writer.close()
+            return success
+            
+        except Exception as e:
+            logger.error(f"Error downloading file from peer: {e}")
+            return False
+    
+    async def _discover_local_peers(self) -> List[PeerInfo]:
+        """Discover peers on local network via broadcast"""
+        try:
+            discovered = []
+            
+            # Get local network interfaces
+            interfaces = netifaces.interfaces()
+            
+            for interface in interfaces:
+                try:
+                    addrs = netifaces.ifaddresses(interface)
+                    if netifaces.AF_INET in addrs:
+                        for addr_info in addrs[netifaces.AF_INET]:
+                            addr = addr_info.get('addr')
+                            netmask = addr_info.get('netmask')
+                            
+                            if addr and netmask and not addr.startswith('127.'):
+                                # Calculate network range
+                                network = ipaddress.IPv4Network(f"{addr}/{netmask}", strict=False)
+                                
+                                # Send broadcast discovery
+                                peers = await self._broadcast_discovery(str(network.network_address), str(network.broadcast_address))
+                                discovered.extend(peers)
+                                
+                except Exception as e:
+                    logger.debug(f"Error processing interface {interface}: {e}")
+                    continue
+            
+            logger.debug(f"Local discovery found {len(discovered)} peers")
+            return discovered
+            
+        except Exception as e:
+            logger.debug(f"Local peer discovery error: {e}")
+            return []
+    
+    async def _discover_dht_peers(self, query: Optional[str] = None) -> List[PeerInfo]:
+        """Discover peers via DHT network"""
+        try:
+            discovered = []
+            
+            # Implement a simple DHT-like discovery using known bootstrap nodes
+            bootstrap_nodes = [
+                ("dht.snatch.network", 8080),  # Hypothetical bootstrap node
+                ("bootstrap.p2p.example.com", 6881),  # Example DHT node
+            ]
+            
+            for node_host, node_port in bootstrap_nodes:
+                try:
+                    # Try to connect to bootstrap node and request peer list
+                    peers = await self._query_dht_node(node_host, node_port, query)
+                    discovered.extend(peers)
+                    
+                except Exception as e:
+                    logger.debug(f"DHT node {node_host}:{node_port} query failed: {e}")
+                    continue
+            
+            # Also check if any current peers know about other peers
+            for peer in self.peers.values():
+                if peer.connected:
+                    try:
+                        peer_discoveries = await self._query_peer_for_peers(peer)
+                        discovered.extend(peer_discoveries)
+                    except Exception as e:
+                        logger.debug(f"Peer discovery from {peer.peer_id} failed: {e}")
+            
+            logger.debug(f"DHT discovery found {len(discovered)} peers")
+            return discovered
+            
+        except Exception as e:
+            logger.debug(f"DHT peer discovery error: {e}")
+            return []
+    
+    async def _discover_friend_peers(self) -> List[PeerInfo]:
+        """Discover peers from friends list"""
+        try:
+            # Return currently known friends as potential peers
+            return list(self.friends.values())
+        except Exception as e:
+            logger.debug(f"Friend peer discovery error: {e}")
+            return []
+    
+    async def _query_peer_for_content(self, peer: PeerInfo, content_hash: str) -> bool:
+        """Query a peer to see if they have specific content"""
+        try:
+            # Send a content availability query
+            query = {
+                "type": MSG_TYPE["REQUEST"],
+                "peer_id": self.peer_id,
+                "content_hash": content_hash,
+                "query_only": True  # Just checking availability
+            }
+            
+            # Connect to peer and send query
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(peer.ip, peer.port), 
+                    timeout=5.0
+                )
+                
+                # Encrypt query if we have symmetric key
+                if peer.symmetric_key and self.share_config.encryption:
+                    query_data = self._encrypt_message(query, peer.symmetric_key)
+                else:
+                    query_data = json.dumps(query).encode()
+                
+                # Send query
+                writer.write(len(query_data).to_bytes(4, byteorder="big"))
+                writer.write(query_data)
+                await writer.drain()
+                
+                # Read response
+                length_bytes = await asyncio.wait_for(reader.read(4), timeout=3.0)
+                if not length_bytes:
+                    return False
+                    
+                message_length = int.from_bytes(length_bytes, byteorder="big")
+                response_data = await asyncio.wait_for(reader.read(message_length), timeout=3.0)
+                
+                if not response_data:
+                    return False
+                
+                # Parse response
+                if peer.symmetric_key and self.share_config.encryption:
+                    response_json = self._decrypt_message(response_data, peer.symmetric_key)
+                    response = json.loads(response_json)
+                else:
+                    response = json.loads(response_data.decode())
+                
+                # Check if content is available
+                return response.get("available", False)
+                
+            except asyncio.TimeoutError:
+                logger.debug(f"Timeout querying peer {peer.peer_id} for content")
+                return False
+            except Exception as e:
+                logger.debug(f"Error querying peer {peer.peer_id}: {e}")
+                return False
+            finally:
+                if 'writer' in locals():
+                    writer.close()
+                    
+        except Exception as e:
+            logger.debug(f"Content query error: {e}")
+            return False
+    
+    async def _download_file_chunks(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, 
+                                       file_info: Dict[str, Any], output_path: str, peer: PeerInfo) -> bool:
+        """Download file data in chunks"""
+        try:
+            file_size = file_info.get("file_size", 0)
+            chunks = file_info.get("chunks", [])
+            
+            with open(output_path, 'wb') as f:
+                if chunks:
+                    # Download chunk by chunk for large files
+                    for i, chunk_hash in enumerate(chunks):
+                        chunk_request = {
+                            "type": MSG_TYPE["DATA"],
+                            "chunk_index": i,
+                            "chunk_hash": chunk_hash
+                        }
+                        
+                        # Send chunk request
+                        if peer.symmetric_key and self.share_config.encryption:
+                            request_data = self._encrypt_message(chunk_request, peer.symmetric_key)
+                        else:
+                            request_data = json.dumps(chunk_request).encode()
+                            
+                        writer.write(len(request_data).to_bytes(4, byteorder="big"))
+                        writer.write(request_data)
+                        await writer.drain()
+                        
+                        # Read chunk response
+                        chunk_length = await reader.read(4)
+                        if not chunk_length:
+                            return False
+                            
+                        chunk_data = await reader.read(int.from_bytes(chunk_length, byteorder="big"))
+                        
+                        # Decrypt if needed
+                        if peer.symmetric_key and self.share_config.encryption:
+                            chunk_data = self._decrypt_message(chunk_data, peer.symmetric_key)
+                            
+                        f.write(chunk_data)
+                else:
+                    # Download as single chunk for small files
+                    data_length = await reader.read(4)
+                    if data_length:
+                        file_data = await reader.read(int.from_bytes(data_length, byteorder="big"))
+                        
+                        # Decrypt if needed
+                        if peer.symmetric_key and self.share_config.encryption:
+                            file_data = self._decrypt_message(file_data, peer.symmetric_key)
+                            
+                        f.write(file_data)
+                        
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error downloading file chunks: {e}")
+            return False
+
+    def _load_libraries(self) -> None:
+        """Load libraries from disk"""
+        try:
+            libraries_file = os.path.join(self.data_dir, "libraries.json")
+            if os.path.exists(libraries_file):
+                with open(libraries_file, 'r') as f:
+                    libraries_data = json.load(f)
+                    
+                for lib_id, lib_data in libraries_data.items():
+                    # Convert files dict back to LibraryFile objects
+                    files = {}
+                    for file_id, file_data in lib_data.get("files", {}).items():
+                        files[file_id] = LibraryFile(**file_data)
+                    
+                    lib_data["files"] = files
+                    self.libraries[lib_id] = SharedLibrary(**lib_data)
+                    
+        except Exception as e:
+            logger.error(f"Failed to load libraries: {e}")
+            
+    def _save_libraries(self) -> None:
+        """Save libraries to disk"""
+        try:
+            libraries_file = os.path.join(self.data_dir, "libraries.json")
+            libraries_data = {}
+            
+            for lib_id, library in self.libraries.items():
+                # Convert LibraryFile objects to dicts for JSON serialization
+                files = {}
+                for file_id, file_obj in library.files.items():
+                    files[file_id] = {
+                        "file_id": file_obj.file_id,
+                        "name": file_obj.name,
+                        "size": file_obj.size,
+                        "checksum": file_obj.checksum,
+                        "download_url": file_obj.download_url,
+                        "metadata": file_obj.metadata,
+                        "added_at": file_obj.added_at,
+                        "category": file_obj.category,
+                        "quality": file_obj.quality,
+                        "format": file_obj.format
+                    }
+                
+                libraries_data[lib_id] = {
+                    "library_id": library.library_id,
+                    "name": library.name,
+                    "description": library.description,
+                    "owner_peer_id": library.owner_peer_id,
+                    "created_at": library.created_at,
+                    "last_updated": library.last_updated,
+                    "files": files,
+                    "subscribers": list(library.subscribers),
+                    "auto_sync": library.auto_sync,
+                    "public": library.public,
+                    "tags": library.tags
+                }
+                
+            with open(libraries_file, 'w') as f:
+                json.dump(libraries_data, f, indent=2)
+                
+        except Exception as e:
+            logger.error(f"Failed to save libraries: {e}")
+
+    async def _broadcast_discovery(self, network_addr: str, broadcast_addr: str) -> List[PeerInfo]:
+        """Perform UDP broadcast discovery on a network segment"""
+        discovered = []
+        try:
+            # Create UDP socket for broadcast
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            sock.settimeout(2.0)  # 2 second timeout
+            
+            # Prepare discovery message
+            discovery_msg = {
+                "type": MSG_TYPE["PING"],
+                "peer_id": self.peer_id,
+                "port": self.port,
+                "discovery": True
+            }
+            message_data = json.dumps(discovery_msg).encode()
+            
+            # Broadcast on default P2P discovery port
+            discovery_port = 58264  # Custom P2P discovery port
+            
+            try:
+                sock.sendto(message_data, (broadcast_addr, discovery_port))
+                
+                # Listen for responses for a short time
+                start_time = time.time()
+                while time.time() - start_time < 2.0:
+                    try:
+                        response, addr = sock.recvfrom(1024)
+                        response_data = json.loads(response.decode())
+                        
+                        if response_data.get("type") == MSG_TYPE["PONG"]:
+                            peer_id = response_data.get("peer_id")
+                            peer_port = response_data.get("port")
+                            
+                            if peer_id and peer_id != self.peer_id:
+                                peer = PeerInfo(
+                                    peer_id=peer_id,
+                                    ip=addr[0],
+                                    port=peer_port,
+                                    connected=False
+                                )
+                                discovered.append(peer)
+                                
+                    except socket.timeout:
+                        break
+                    except Exception as e:
+                        logger.debug(f"Error processing broadcast response: {e}")
+                        break
+                        
+            except Exception as e:
+                logger.debug(f"Broadcast send error: {e}")
+                
+        except Exception as e:
+            logger.debug(f"Broadcast discovery error: {e}")
+        finally:
+            try:
+                sock.close()
+            except:
+                pass
+                
+        return discovered
+    
+    async def _query_dht_node(self, host: str, port: int, query: Optional[str] = None) -> List[PeerInfo]:
+        """Query a DHT bootstrap node for peer information"""
+        try:
+            # This is a simplified DHT query - in a real implementation
+            # you would use the BitTorrent DHT protocol or similar
+            
+            # For now, we'll simulate a simple peer list request
+            dht_query = {
+                "type": "dht_find_peers",
+                "query": query or "general",
+                "max_peers": 20
+            }
+            
+            # Try to connect and query (simplified)
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port),
+                    timeout=5.0
+                )
+                
+                query_data = json.dumps(dht_query).encode()
+                writer.write(len(query_data).to_bytes(4, byteorder="big"))
+                writer.write(query_data)
+                await writer.drain()
+                
+                # Read response (simplified)
+                length_bytes = await asyncio.wait_for(reader.read(4), timeout=3.0)
+                if length_bytes:
+                    message_length = int.from_bytes(length_bytes, byteorder="big")
+                    response_data = await asyncio.wait_for(reader.read(message_length), timeout=3.0)
+                    
+                    if response_data:
+                        response = json.loads(response_data.decode())
+                        peers_data = response.get("peers", [])
+                        
+                        discovered = []
+                        for peer_data in peers_data:
+                            peer = PeerInfo(
+                                peer_id=peer_data.get("peer_id", ""),
+                                ip=peer_data.get("ip", ""),
+                                port=peer_data.get("port", 0),
+                                connected=False
+                            )
+                            discovered.append(peer)
+                        
+                        return discovered
+                        
+            except Exception as e:
+                logger.debug(f"DHT query connection error: {e}")
+                
+        except Exception as e:
+            logger.debug(f"DHT node query error: {e}")
+            
+        return []
+    
+    async def _query_peer_for_peers(self, peer: PeerInfo) -> List[PeerInfo]:
+        """Ask a connected peer for other peers they know about"""
+        try:
+            # Send peer list request
+            peer_query = {
+                "type": MSG_TYPE["REQUEST"],
+                "peer_id": self.peer_id,
+                "request_type": "peer_list",
+                "max_peers": 10
+            }
+            
+            # Connect and send query
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(peer.ip, peer.port),
+                    timeout=5.0
+                )
+                
+                # Encrypt if possible
+                if peer.symmetric_key and self.share_config.encryption:
+                    query_data = self._encrypt_message(peer_query, peer.symmetric_key)
+                else:
+                    query_data = json.dumps(peer_query).encode()
+                
+                # Send query
+                writer.write(len(query_data).to_bytes(4, byteorder="big"))
+                writer.write(query_data)
+                await writer.drain()
+                
+                # Read response
+                length_bytes = await asyncio.wait_for(reader.read(4), timeout=3.0)
+                if not length_bytes:
+                    return []
+                    
+                message_length = int.from_bytes(length_bytes, byteorder="big")
+                response_data = await asyncio.wait_for(reader.read(message_length), timeout=3.0)
+                
+                if not response_data:
+                    return []
+                
+                # Parse response
+                if peer.symmetric_key and self.share_config.encryption:
+                    response_json = self._decrypt_message(response_data, peer.symmetric_key)
+                    response = json.loads(response_json)
+                else:
+                    response = json.loads(response_data.decode())
+                
+                # Extract peer list
+                peers_data = response.get("peers", [])
+                discovered = []
+                
+                for peer_data in peers_data:
+                    if peer_data.get("peer_id") != self.peer_id:  # Don't add ourselves
+                        new_peer = PeerInfo(
+                            peer_id=peer_data.get("peer_id", ""),
+                            ip=peer_data.get("ip", ""),
+                            port=peer_data.get("port", 0),
+                            connected=False
+                        )
+                        discovered.append(new_peer)
+                
+                return discovered
+                
+            except asyncio.TimeoutError:
+                logger.debug(f"Timeout querying peer {peer.peer_id} for peer list")
+                return []
+            except Exception as e:
+                logger.debug(f"Error querying peer {peer.peer_id} for peers: {e}")
+                return []
+            finally:
+                if 'writer' in locals():
+                    writer.close()
+                    
+        except Exception as e:
+            logger.debug(f"Peer query error: {e}")
+            return []

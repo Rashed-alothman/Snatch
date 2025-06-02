@@ -65,7 +65,6 @@ from .audio_processor import EnhancedAudioProcessor
 from .advanced_config import AdvancedConfigManager, ConfigCategory
 from .p2p import P2PManager
 from .network import NetworkManager
-from Theme.cyberpunk_interactive import CyberpunkInteractiveApp
 
 # Textual imports for TUI features
 from textual.app import App, ComposeResult
@@ -1844,54 +1843,70 @@ class InteractiveApp(App):
                 self.downloads.append(download_info)
             else:
                 raise DownloadManagerError("Download manager not initialized")
-                
         except Exception as e:
             logging.error(f"Error starting download: {e}")
             self.notify(f"Error starting download: {str(e)}", severity="error")
 
     def run_speed_test(self) -> None:
-        """Run network speed test using NetworkManager"""
-        self.notify("Running speed test...", severity="information")
+        """Run enhanced network speed test with detailed analysis and recommendations"""
+        self.notify("🚀 Starting enhanced network speed test...", severity="information")
         
         # Use @work decorator for proper async handling in Textual
         self._start_speed_test_task()
 
     @work
     async def _start_speed_test_task(self) -> None:
-        """Background task for speed test to fix async warnings"""
+        """Background task for enhanced speed test with rich display"""
         try:
-            # Import network module
-            from .network import NetworkManager
+            # Import enhanced speedtest function
+            from .network import run_speedtest
+            from rich.console import Console
             
-            # Create network manager
-            network_manager = NetworkManager(self.config)
+            # Create console for enhanced display
+            console = Console()
             
-            # Run speed test asynchronously
-            result = await network_manager.run_speed_test(detailed=True)
+            # Show starting message
+            self.notify("🚀 Running enhanced network speed test...", severity="information")
+            
+            # Run enhanced speed test with detailed analysis
+            result = await run_speedtest(detailed=True, use_cache=False, console=console)
+            
             if result:
-                # Update network status display
+                # Update network status display with enhanced information
                 try:
                     network_status = self.query_one("#network-status", Static)
-                    status_text = f"""Speed Test Results:
-                    Download: {result.download_mbps:.1f} Mbps
-                    Upload: {result.upload_mbps:.1f} Mbps  
-                    Ping: {result.ping_ms:.1f} ms
-                    Jitter: {result.jitter_ms:.1f} ms
-                    Packet Loss: {result.packet_loss:.1f}%"""
+                    
+                    # Create enhanced status display
+                    quality_stars = "⭐" * result.get_quality_rating()
+                    download_status = "🚀 Excellent" if result.download_mbps >= 100 else "✅ Very Good" if result.download_mbps >= 25 else "👍 Good" if result.download_mbps >= 5 else "⚠️ Fair" if result.download_mbps >= 1 else "❌ Poor"
+                    
+                    status_text = f"""🌐 Enhanced Speed Test Results {quality_stars}
+
+📥 Download: {result.download_mbps:.1f} Mbps ({download_status})
+📤 Upload: {result.upload_mbps:.1f} Mbps
+🏓 Ping: {result.ping_ms:.1f} ms
+📊 Jitter: {result.jitter_ms:.1f} ms (if available)
+📦 Packet Loss: {result.packet_loss:.2f}% (if available)
+
+🎯 Recommended Activities:
+{'✅ 4K streaming' if result.download_mbps >= 25 else '✅ HD streaming' if result.download_mbps >= 15 else '✅ SD streaming' if result.download_mbps >= 5 else '⚠️ Limited streaming'}
+{'✅ Online gaming' if result.ping_ms < 50 and result.download_mbps >= 3 else '👍 Casual gaming' if result.ping_ms < 100 else '❌ Gaming may lag'}
+{'✅ Video calls' if result.download_mbps >= 1.5 and result.ping_ms < 150 else '⚠️ Limited video calling'}"""
+                    
                     network_status.update(status_text)
                 except Exception:
-                    # If network status widget not found, just log
-                    logging.info(f"Speed test completed: {result.download_mbps:.1f} Mbps down, {result.upload_mbps:.1f} Mbps up")
+                    # If network status widget not found, just log enhanced results
+                    logging.info(f"Enhanced speed test completed: {result.download_mbps:.1f} Mbps down ({quality_stars}), {result.upload_mbps:.1f} Mbps up, {result.ping_ms:.1f} ms ping")
                 
-                self.notify(f"Speed test completed! Download: {result.download_mbps:.1f} Mbps", severity="information")
+                self.notify(f"✅ Enhanced speed test completed! {result.download_mbps:.1f} Mbps ({quality_stars})", severity="information")
             else:
-                self.notify("Speed test failed - no results returned", severity="error")
+                self.notify("❌ Enhanced speed test failed - no results returned", severity="error")
                 
         except ImportError:
-            self.notify("Network module not available for speed testing", severity="error")
+            self.notify("Network module not available for enhanced speed testing", severity="error")
         except Exception as e:
-            logging.error(f"Speed test error: {e}")
-            self.notify(f"Speed test failed: {str(e)}", severity="error")
+            logging.error(f"Enhanced speed test error: {e}")
+            self.notify(f"❌ Enhanced speed test failed: {str(e)}", severity="error")
     
     # Initialization Methods    def initialize_download_manager(self) -> None:
         """Initialize the download manager"""
@@ -2023,10 +2038,9 @@ class InteractiveApp(App):
             # Start performance monitoring
             if hasattr(self, 'download_manager') and self.download_manager and self.download_manager.performance_monitor:
                 await self.download_manager.performance_monitor.start_monitoring()
-                
-            # Set up periodic updates
-            self.set_interval(1.0, self._update_system_stats)
-            self.set_interval(0.5, self._update_download_progress)
+                  # Set up periodic updates with optimized intervals to reduce UI lag
+            self.set_interval(3.0, self._update_system_stats)  # Reduced from 1.0s to 3.0s
+            self.set_interval(2.0, self._update_download_progress)  # Reduced from 0.5s to 2.0s
             
         except Exception as e:
             logging.error(f"Error during app initialization: {e}")

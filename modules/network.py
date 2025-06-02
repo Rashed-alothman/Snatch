@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import socket
 import ipaddress
@@ -478,37 +479,49 @@ class NetworkManager:
             return f"ping -n {count} {host}"
         else:
             return f"ping -c {count} {host}"
-    
     async def _execute_ping(self, cmd: str) -> List[float]:
         """Execute ping command and parse results"""
         ping_times = []
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, _ = await proc.communicate()
-        output = stdout.decode()
-        
-        # Parse ping times from output
-        for line in output.splitlines():
-            if "time=" in line or "time<" in line:
+        try:
+            # Add timeout to prevent hanging
+            proc = await asyncio.wait_for(
+                asyncio.create_subprocess_shell(
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                ),
+                timeout=15.0  # 15 second timeout
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+            output = stdout.decode(errors='ignore')
+            
+            # Parse ping times from output with improved regex
+            import re
+            if platform.system().lower() == "windows":
+                # Windows ping format: "time=XXXms" or "time<1ms"
+                pattern = r'time[<=](\d+(?:\.\d+)?)ms'
+            else:
+                # Unix/Linux ping format: "time=XXX ms"
+                pattern = r'time=(\d+(?:\.\d+)?)\s*ms'
+                
+            matches = re.findall(pattern, output, re.IGNORECASE)
+            for match in matches:
                 try:
-                    # Extract time value
-                    time_str = line.split("time=")[1].split()[0].strip("ms")
-                    if time_str:
-                        ping_times.append(float(time_str))
-                except (IndexError, ValueError):
-                    pass
+                    ping_times.append(float(match))
+                except ValueError:
+                    continue
+                    
+        except asyncio.TimeoutError:
+            logger.warning(f"Ping command timed out: {cmd}")
+        except Exception as e:
+            logger.warning(f"Ping execution failed: {e}")
                     
         return ping_times
-    
     async def _test_download_speed(self) -> float:
         """Test download speed using HTTP"""
         # List of test file URLs with known sizes
         test_files = self._get_speed_test_urls()
         download_speeds = []
-        
         for url, expected_size in test_files:
             try:
                 speed = await self._measure_download_speed(url, expected_size)
@@ -516,7 +529,7 @@ class NetworkManager:
                     download_speeds.append(speed)
             except Exception as e:
                 logger.debug(f"Download speed test failed for {url}: {e}")
-                
+        
         if download_speeds:
             # Return average speed
             return sum(download_speeds) / len(download_speeds)
@@ -524,44 +537,78 @@ class NetworkManager:
         return 0
     
     def _get_speed_test_urls(self) -> List[Tuple[str, int]]:
-        """Get URLs for speed testing"""
+        """Get URLs for speed testing - Optimized for high-speed connections (500+ Mbps)"""
         return [
-            # URL, size in bytes
-            ("https://speed.cloudflare.com/100mb", 100 * 1024 * 1024),
-            ("https://speed.hetzner.de/100MB.bin", 100 * 1024 * 1024),
-            ("https://speedtest.tele2.net/10MB.zip", 10 * 1024 * 1024)
+            # URL, size in bytes - use larger files for high-speed connections            ("https://speed.cloudflare.com/__down?bytes=104857600", 100 * 1024 * 1024),  # 100MB Cloudflare
+            ("https://speedtest.tele2.net/100MB.zip", 100 * 1024 * 1024),  # 100MB Tele2
+            ("https://proof.ovh.net/files/100Mb.dat", 100 * 1024 * 1024),  # 100MB OVH
+            ("https://speed.hetzner.de/100MB.bin", 100 * 1024 * 1024),  # 100MB Hetzner
+            ("https://bouygues.testdebit.info/100M.iso", 100 * 1024 * 1024),  # 100MB Bouygues
+            # Fallback to smaller files if needed
+            ("https://speed.cloudflare.com/__down?bytes=52428800", 50 * 1024 * 1024),  # 50MB Cloudflare
+            ("https://speedtest.tele2.net/50MB.zip", 50 * 1024 * 1024),  # 50MB Tele2
         ]
-    
-    async def _measure_download_speed(self, url: str, expected_size: int) -> float:
-        """Measure download speed for a specific URL"""
-        timeout = aiohttp.ClientTimeout(total=20)  # 20 second timeout
-        start_time = time.time()
+        
+    async def _measure_download_speed(self, url: str, expected_size: int = None) -> float:
+        """Measure download speed for a specific URL - Optimized for high-speed connections (500+ Mbps)"""
+        timeout = aiohttp.ClientTimeout(total=30)  # 30 second timeout for high-speed
         downloaded_bytes = 0
         
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as response:
-                if response.status != 200:
-                    return 0
-                    
-                # Stream the response to measure speed
-                chunk_size = 64 * 1024  # 64KB chunks
-                while True:
-                    chunk = await response.content.read(chunk_size)
-                    if not chunk:
-                        break
-                    downloaded_bytes += len(chunk)
-                    
-                    # Stop after getting enough data for measurement
-                    if downloaded_bytes >= 5 * 1024 * 1024:  # 5MB is enough for testing
-                        break
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        logger.debug(f"HTTP {response.status} for {url}")
+                        return 0
                         
+                    # Get actual start time after connection is established
+                    start_time = time.time()
+                    
+                    # Use even larger chunks for high-speed connections (1MB chunks)
+                    chunk_size = 1024 * 1024  # 1MB chunks for maximum throughput
+                    
+                    # Download with precise timing - optimized for high speeds
+                    while True:
+                        chunk = await response.content.read(chunk_size)
+                        if not chunk:
+                            break
+                        downloaded_bytes += len(chunk)
+                        
+                        # Dynamic stopping criteria optimized for high-speed connections
+                        current_time = time.time()
+                        duration_so_far = current_time - start_time
+                        
+                        # For high-speed connections, download more data for accurate measurement
+                        # Minimum 20MB for speeds over 100 Mbps, 50MB for expected high speeds
+                        min_bytes = 50 * 1024 * 1024  # 50MB minimum for high-speed accuracy
+                        if expected_size and expected_size >= 50 * 1024 * 1024:
+                            min_bytes = expected_size  # Use full file size if large enough
+                            
+                        if downloaded_bytes >= min_bytes:
+                            break
+                            
+                        # Stop if we've been downloading for too long 
+                        # Allow longer time for high-speed measurements
+                        max_duration = 15  # Maximum 15 seconds for speed test
+                        if duration_so_far > max_duration:
+                            break
+                            
+        except Exception as e:
+            logger.debug(f"Download speed test error for {url}: {e}")
+            return 0
+                            
         end_time = time.time()
         duration = end_time - start_time
         
-        if duration > 0 and downloaded_bytes > 0:
-            # Calculate speed in Mbps
-            return (downloaded_bytes * 8) / (duration * 1000 * 1000)
+        # Require minimum duration and data for accurate high-speed measurement
+        if duration > 0.5 and downloaded_bytes > 1024 * 1024:  # Minimum 0.5s and 1MB
+            # Calculate speed in Mbps with high precision
+            # Convert bytes to bits (*8), then to Mbps (/1,000,000)
+            speed_mbps = (downloaded_bytes * 8) / (duration * 1_000_000)
+            logger.debug(f"Downloaded {downloaded_bytes:,} bytes in {duration:.3f}s = {speed_mbps:.2f} Mbps from {url}")
+            return speed_mbps
         
+        logger.debug(f"Download test invalid: {duration:.3f}s, {downloaded_bytes:,} bytes")
         return 0
     
     async def _test_upload_speed(self) -> float:
@@ -597,17 +644,28 @@ class NetworkManager:
         timeout = aiohttp.ClientTimeout(total=20)  # 20 second timeout
         start_time = time.time()
         
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, data=data) as response:
-                if response.status not in (200, 201):
-                    return 0
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, data=data) as response:
+                    if response.status not in (200, 201, 202):
+                        logger.debug(f"Upload HTTP {response.status} for {url}")
+                        return 0
                     
-        end_time = time.time()
-        duration = end_time - start_time
-        
-        if duration > 0:
-            # Calculate speed in Mbps
-            return (len(data) * 8) / (duration * 1000 * 1000)
+                    # Wait for response to complete
+                    await response.read()
+                        
+            end_time = time.time()
+            duration = end_time - start_time
+            if duration > 0:
+                # Calculate speed in Mbps - Fixed calculation
+                # Convert bytes to bits (multiply by 8), then to Mbps (divide by 1,000,000)
+                speed_mbps = (len(data) * 8) / (duration * 1_000_000)
+                logger.debug(f"Uploaded {len(data)} bytes in {duration:.2f}s = {speed_mbps:.2f} Mbps")
+                return speed_mbps
+                        
+        except Exception as e:
+            logger.debug(f"Upload speed test error for {url}: {e}")
+            return 0
         
         return 0
     
@@ -632,9 +690,24 @@ class NetworkManager:
             logger.error(f"Packet loss test failed: {e}")
             
         return 0
-    
     def _parse_packet_loss_output(self, output: str) -> float:
         """Parse packet loss percentage from ping output"""
+        # Platform-specific packet loss parsing
+        if platform.system().lower() == "windows":
+            # Windows format: "(X% loss)"
+            pattern = r'\((\d+(?:\.\d+)?)% loss\)'
+        else:
+            # Unix/Linux format: "X% packet loss"
+            pattern = r'(\d+(?:\.\d+)?)% packet loss'
+        
+        matches = re.findall(pattern, output, re.IGNORECASE)
+        if matches:
+            try:
+                return float(matches[0])
+            except ValueError:
+                pass
+        
+        # Fallback to original method if regex fails
         for line in output.splitlines():
             if "loss" in line and "%" in line:
                 try:
@@ -643,6 +716,7 @@ class NetworkManager:
                     return float(loss_str)
                 except (IndexError, ValueError):
                     pass
+        
         return 0
     
     def _display_speed_test_results(self, result: SpeedTestResult, console: Console) -> None:

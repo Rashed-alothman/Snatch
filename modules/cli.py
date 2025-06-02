@@ -40,6 +40,35 @@ install(show_locals=True)
 # Initialize console
 console = Console()
 
+# Constants for duplicate strings
+FALLBACK_INTERACTIVE_MSG = "[yellow]Falling back to enhanced interactive mode.[/]"
+FALLBACK_SIMPLE_MSG = "[yellow]Falling back to simple interactive mode...[/]"
+SKIP_CONFIRMATION_HELP = "Skip confirmation prompt"
+SETTING_MODIFY_HELP = "Setting to modify"
+NEW_VALUE_HELP = "New value for the setting"
+BOTH_SETTING_VALUE_MSG = "[red]Both setting and value required, or use --show[/]"
+P2P_SERVICE_FAILED_MSG = "[red]Failed to start P2P service[/]"
+P2P_NOT_AVAILABLE_MSG = "[red]P2P functionality not available[/]"
+PEER_ID_COLUMN = "Peer ID"
+LAST_SEEN_COLUMN = "Last Seen"
+P2P_SERVICE_STARTING_MSG = "[yellow]P2P service not running. Starting...[/]"
+
+# Additional duplicate string constants
+INTERRUPTED_MSG = "\n[yellow]Operation interrupted. Type 'exit' to quit.[/]"
+UNKNOWN_COMMAND_MSG = "[yellow]Unknown command:[/]"
+HELP_AVAILABLE_MSG = "[yellow]Type 'help' for available commands[/]"
+PROVIDE_URL_MSG = "[yellow]Please provide a URL to download[/]"
+QUEUE_CLEARED_MSG = "[yellow]Queue cleared[/]"
+SCHEDULER_PAUSED_MSG = "[yellow]Scheduler paused[/]"
+MONITORING_STOPPED_MSG = "\n[yellow]Monitoring stopped by user[/]"
+PRESS_CTRL_C_MSG = "[yellow]Press Ctrl+C to stop early[/]"
+INVALID_ACTION_MSG = "[red]Invalid action:"
+LIBRARY_NAME_REQUIRED_MSG = "[red]Library name required for create action[/]"
+LIBRARY_FRIEND_REQUIRED_MSG = "[red]Library name and friend ID required for share action[/]"
+SEARCH_QUERY_REQUIRED_MSG = "[red]Search query required for search action[/]"
+COMING_SOON_MSG = "[yellow]Library {} functionality coming soon[/]"
+VALID_ACTIONS_MSG = "[yellow]Valid actions: {}"
+
 class EnhancedCLI:
     """Enhanced CLI with Rich interface and preset profiles"""
     
@@ -279,7 +308,8 @@ class EnhancedCLI:
             help=f"{APP_NAME} - A powerful media downloader",
             epilog=EXAMPLES
         )
-            # Download command          @app.command("download", help="Download media from URLs")
+            # Download command          
+        @app.command("download", help="Download media from URLs")
         def download(
             urls: List[str] = typer.Argument(None, help="URLs to download"),
             audio_only: bool = typer.Option(False, "--audio-only", "-a", help="Download audio only"),
@@ -393,7 +423,7 @@ class EnhancedCLI:
             launch_enhanced_interactive_mode(self.config)
             return 0
             
-        # Modern interactive interface command
+        # Modern interactive interface command        
         @app.command("modern", help="Run with modern interactive interface")
         def modern():
             """Run with modern beautiful interactive interface"""
@@ -402,12 +432,12 @@ class EnhancedCLI:
                 run_modern_interactive(self.config)
             except ImportError as e:
                 console.print(f"[bold red]Modern interface not available: {str(e)}[/]")
-                console.print("[yellow]Falling back to enhanced interactive mode.[/]")
+                console.print(FALLBACK_INTERACTIVE_MSG)
                 from .interactive_mode import launch_enhanced_interactive_mode
                 launch_enhanced_interactive_mode(self.config)
             except Exception as e:
                 console.print(f"[bold red]Error launching modern interface: {str(e)}[/]")
-                console.print("[yellow]Falling back to enhanced interactive mode.[/]")
+                console.print(FALLBACK_INTERACTIVE_MSG)
                 from .interactive_mode import launch_enhanced_interactive_mode
                 launch_enhanced_interactive_mode(self.config)
             return 0
@@ -439,12 +469,12 @@ class EnhancedCLI:
         def version():
             """Show version information"""
             console.print(f"[bold cyan]{APP_NAME}[/] [bold green]v{VERSION}[/]")
-            return 0
-          # Run speedtest command
-        @app.command("speedtest", help="Run download speed test")
+            return 0        # Run speedtest command
+        @app.command("speedtest", help="Run enhanced network speed test with detailed analysis")
         def speedtest():
-            """Run download speed test"""
-            self.run_async(run_speedtest())
+            """Run enhanced network speed test with comprehensive metrics and recommendations"""
+            console.print("[bold cyan]🌐 Starting Enhanced Network Speed Test...[/]")
+            self.run_async(run_speedtest(detailed=True, use_cache=False, console=console))
             return 0
         
         # Show system info command
@@ -563,7 +593,7 @@ class EnhancedCLI:
         def clear_cache_command(
             cache_type: str = typer.Option("all", "--type", help="Cache type to clear (all, metadata, downloads, sessions, thumbnails, temp)"),
             dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without actually deleting"),
-            no_confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+            no_confirm: bool = typer.Option(False, "--yes", "-y", help=SKIP_CONFIRMATION_HELP),
         ):
             """Clear cached data with safety checks"""
             return self._clear_cache_command(cache_type, dry_run, not no_confirm)
@@ -599,7 +629,7 @@ class EnhancedCLI:
             return self._config_backup_command(action, backup_name)
         @config_app.command("reset", help="Reset configuration to defaults")
         def config_reset(
-            category: str = typer.Option(None, "--category", help="Reset only specific category"),            no_confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+            category: str = typer.Option(None, "--category", help="Reset only specific category"),no_confirm: bool = typer.Option(False, "--yes", "-y", help=SKIP_CONFIRMATION_HELP),
         ):
             """Reset configuration to default values"""
             return self._config_reset_command(category, not no_confirm)
@@ -619,8 +649,8 @@ class EnhancedCLI:
         
         @customize_app.command("performance", help="Configure performance settings")
         def customize_performance(
-            setting: str = typer.Option(None, "--setting", help="Setting to modify"),
-            value: str = typer.Option(None, "--value", help="New value for the setting"),
+            setting: str = typer.Option(None, "--setting", help=SETTING_MODIFY_HELP),
+            value: str = typer.Option(None, "--value", help=NEW_VALUE_HELP),
             show_all: bool = typer.Option(False, "--show", help="Show all performance settings"),
         ):
             """Configure performance settings"""
@@ -628,8 +658,8 @@ class EnhancedCLI:
         
         @customize_app.command("interface", help="Configure interface preferences")
         def customize_interface(
-            setting: str = typer.Option(None, "--setting", help="Setting to modify"),
-            value: str = typer.Option(None, "--value", help="New value for the setting"),
+            setting: str = typer.Option(None, "--setting", help=SETTING_MODIFY_HELP),
+            value: str = typer.Option(None, "--value", help=NEW_VALUE_HELP),
             show_all: bool = typer.Option(False, "--show", help="Show all interface settings"),
         ):
             """Configure interface preferences"""
@@ -637,8 +667,8 @@ class EnhancedCLI:
         
         @customize_app.command("behavior", help="Configure behavior preferences")
         def customize_behavior(
-            setting: str = typer.Option(None, "--setting", help="Setting to modify"),
-            value: str = typer.Option(None, "--value", help="New value for the setting"),
+            setting: str = typer.Option(None, "--setting", help=SETTING_MODIFY_HELP),
+            value: str = typer.Option(None, "--value", help=NEW_VALUE_HELP),
             show_all: bool = typer.Option(False, "--show", help="Show all behavior settings"),
         ):
             """Configure behavior preferences"""
@@ -678,10 +708,70 @@ class EnhancedCLI:
         
         @customize_app.command("reset", help="Reset customization to defaults")
         def customize_reset(
-            no_confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+            no_confirm: bool = typer.Option(False, "--yes", "-y", help=SKIP_CONFIRMATION_HELP),
         ):
             """Reset all customization settings to defaults"""
             return self._customize_reset_command(not no_confirm)
+            
+        # P2P (Peer-to-Peer) file sharing commands
+        p2p_app = typer.Typer(help="Peer-to-peer file sharing commands")
+        app.add_typer(p2p_app, name="p2p")
+        
+        @p2p_app.command("start", help="Start P2P service")
+        def p2p_start():
+            """Start P2P service for file sharing"""
+            return self.run_async(self._p2p_start_command())
+            
+        @p2p_app.command("stop", help="Stop P2P service")
+        def p2p_stop():
+            """Stop P2P service"""
+            return self.run_async(self._p2p_stop_command())
+            
+        @p2p_app.command("status", help="Show P2P service status")
+        def p2p_status():
+            """Show P2P service status and peer information"""
+            return self.run_async(self._p2p_status_command())
+            
+        @p2p_app.command("share", help="Share a file via P2P network")
+        def p2p_share(
+            file_path: str = typer.Argument(..., help="Path to file to share"),
+            max_peers: int = typer.Option(10, "--max-peers", help="Maximum number of peers to serve"),
+            encryption: bool = typer.Option(True, "--encryption/--no-encryption", help="Enable encryption"),
+        ):
+            """Share a file via P2P network and get share code"""
+            return self.run_async(self._p2p_share_command(file_path, max_peers, encryption))
+            
+        @p2p_app.command("fetch", help="Download file using share code")
+        def p2p_fetch(
+            share_code: str = typer.Argument(..., help="Share code from file sharer"),
+            output_dir: str = typer.Option(".", "--output-dir", "-o", help="Directory to save downloaded file"),
+        ):
+            """Download file using share code"""
+            return self.run_async(self._p2p_fetch_command(share_code, output_dir))
+            
+        @p2p_app.command("discover", help="Discover available peers")
+        def p2p_discover(
+            query: str = typer.Option(None, "--query", "-q", help="Search query for content discovery"),
+            timeout: int = typer.Option(30, "--timeout", "-t", help="Discovery timeout in seconds"),
+        ):
+            """Discover peers on the P2P network"""
+            return self.run_async(self._p2p_discover_command(query, timeout))
+            
+        @p2p_app.command("peers", help="List connected peers")
+        def p2p_peers():
+            """List all connected P2P peers"""
+            return self.run_async(self._p2p_peers_command())
+            
+        @p2p_app.command("library", help="Manage P2P libraries")
+        def p2p_library(
+            action: str = typer.Argument(..., help="Action: create, list, share, search"),
+            library_name: str = typer.Option(None, "--name", help="Library name"),
+            directory: str = typer.Option(None, "--directory", "-d", help="Directory to add to library"),
+            friend_id: str = typer.Option(None, "--friend", help="Friend peer ID to share with"),
+            query: str = typer.Option(None, "--query", "-q", help="Search query"),
+        ):
+            """Manage P2P libraries for organized sharing"""
+            return self.run_async(self._p2p_library_command(action, library_name, directory, friend_id, query))
             
         return app
     
@@ -716,7 +806,7 @@ class EnhancedCLI:
             return True
         except ImportError as e:
             console_obj.print(f"[yellow]Could not load enhanced interface: {str(e)}[/]")
-            console_obj.print("[yellow]Falling back to simple interactive mode...[/]")
+            console_obj.print(FALLBACK_SIMPLE_MSG)
             return False
     
     async def _run_simple_interactive_mode(self, console_obj: Console) -> None:
@@ -730,7 +820,7 @@ class EnhancedCLI:
                     break  # Exit was requested
                     
             except KeyboardInterrupt:
-                console_obj.print("\n[yellow]Operation interrupted. Type 'exit' to quit.[/]")
+                console_obj.print(INTERRUPTED_MSG)
                 continue
             except Exception as error:
                 console_obj.print(f"[bold red]Command error:[/] {str(error)}")
@@ -747,10 +837,9 @@ class EnhancedCLI:
             
         elif command.startswith('download '):
             await self._handle_download_command(command, console_obj)
-            
         elif command:
-            console_obj.print(f"[yellow]Unknown command:[/] {command}")
-            console_obj.print("[yellow]Type 'help' for available commands[/]")
+            console_obj.print(f"{UNKNOWN_COMMAND_MSG} {command}")
+            console_obj.print(HELP_AVAILABLE_MSG)
             
         return False
     
@@ -815,13 +904,13 @@ class EnhancedCLI:
         """Handle scheduler actions"""
         if action == "pause":
             await scheduler.pause_all()
-            console.print("[yellow]Scheduler paused[/]")
+            console.print(SCHEDULER_PAUSED_MSG)        
         elif action == "resume":
             await scheduler.resume_all()
             console.print("[green]Scheduler resumed[/]")
         elif action == "clear":
             await scheduler.clear_queue()
-            console.print("[yellow]Queue cleared[/]")
+            console.print(QUEUE_CLEARED_MSG)
         return 0
     async def _performance_command_async(self, action: str, duration: int) -> int:
         """Handle performance command asynchronously"""
@@ -1232,7 +1321,7 @@ class EnhancedCLI:
                     console.print(f"[red]Invalid value for {setting}: {value}[/]")
                     return 1
             else:
-                console.print("[red]Both setting and value required, or use --show[/]")
+                console.print(BOTH_SETTING_VALUE_MSG)
                 return 1
                 
         except Exception as e:
@@ -1287,7 +1376,7 @@ class EnhancedCLI:
                     console.print(f"[red]Invalid value for {setting}: {value}[/]")
                     return 1
             else:
-                console.print("[red]Both setting and value required, or use --show[/]")
+                console.print(BOTH_SETTING_VALUE_MSG)
                 return 1
                 
         except Exception as e:
@@ -1339,7 +1428,7 @@ class EnhancedCLI:
                     console.print(f"[red]Invalid value for {setting}: {value}[/]")
                     return 1
             else:
-                console.print("[red]Both setting and value required, or use --show[/]")
+                console.print(BOTH_SETTING_VALUE_MSG)
                 return 1
                 
         except Exception as e:
@@ -1796,62 +1885,350 @@ class EnhancedCLI:
                 from .interactive_mode import launch_enhanced_interactive_mode
                 launch_enhanced_interactive_mode(self.config)
             except Exception as fallback_error:
-                console.print(f"[red]Fallback also failed: {str(fallback_error)}[/]")
-                console.print("[yellow]Please run 'snatch interactive' command directly.[/]")
-
-
-def signal_handler(sig: int, frame: Any) -> NoReturn:
-    """Handle Ctrl+C gracefully"""
-    console.print("\n[yellow]Interrupted by user[/yellow]")
-    sys.exit(0)
-
-async def async_main() -> None:
-    """Async main function that handles all async initialization"""
-    # Initialize configuration
-    config = await initialize_config_async()
-    if not config:
-        sys.exit(1)
-
-    # Create CLI
-    cli = EnhancedCLI(config)
-    app = cli.setup_argparse()
+                console.print(f"[red]Fallback also failed: {str(fallback_error)}[/")
     
-    # Run the appropriate command based on arguments
-    # If no arguments, default to textual interface
-    if len(sys.argv) <= 1:
+    # P2P Command Implementations
+    async def _p2p_start_command(self) -> int:
+        """Start P2P service"""
         try:
-            # Try to use the modern textual interface first
-            from Theme.textual_interface import start_textual_interface
-            start_textual_interface(config)
-        except ImportError:
-            # Fall back to classic interactive mode if textual is not available
-            console.print("[yellow]Textual interface not available. Using classic interactive mode.[/]")
-            from .interactive_mode import launch_textual_interface
-            launch_textual_interface(config)
-    else:
-        # Otherwise run the Typer app with the arguments
-        app()
-
-def main() -> None:
-    """Main entry point with enhanced CLI"""
-    # Configure logging
-    setup_logging()
+            if not self.download_manager.p2p_manager:
+                console.print("[red]P2P functionality not available. Check configuration.[/]")
+                return 1
+                
+            console.print("[cyan]Starting P2P service...[/]")
+            success = await self.download_manager.start_p2p_server()
+            
+            if success:
+                peer_info = self.download_manager.p2p_manager.get_peer_info()
+                console.print("[green]P2P service started successfully![/]")
+                console.print(f"[cyan]Peer ID:[/] {peer_info.get('peer_id', 'Unknown')}")
+                console.print(f"[cyan]Listening on:[/] {peer_info.get('ip', 'Unknown')}:{peer_info.get('port', 'Unknown')}")
+                if peer_info.get('external_ip'):
+                    console.print(f"[cyan]External address:[/] {peer_info['external_ip']}:{peer_info.get('external_port', peer_info.get('port'))}")
+                return 0
+            else:
+                console.print(P2P_SERVICE_FAILED_MSG)
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error starting P2P service: {str(e)}[/]")
+            return 1
     
-    # Enable Ctrl+C handling
-    signal.signal(signal.SIGINT, signal_handler)
+    async def _p2p_stop_command(self) -> int:
+        """Stop P2P service"""
+        try:
+            if not self.download_manager.p2p_manager:
+                console.print(P2P_NOT_AVAILABLE_MSG)
+                return 1
+                
+            console.print("[cyan]Stopping P2P service...[/]")
+            await self.download_manager.stop_p2p_server()
+            console.print("[green]P2P service stopped[/]")
+            return 0
+            
+        except Exception as e:
+            console.print(f"[red]Error stopping P2P service: {str(e)}[/]")
+            return 1
+    
+    async def _p2p_status_command(self) -> int:
+        """Show P2P service status"""
+        try:
+            if not self.download_manager.p2p_manager:
+                console.print(P2P_NOT_AVAILABLE_MSG)
+                return 1
+            
+            p2p_manager = self.download_manager.p2p_manager
+            
+            # Service status
+            status = "Running" if p2p_manager.listening else "Stopped"
+            console.print(f"[cyan]P2P Service Status:[/] {status}")
+            
+            if p2p_manager.listening:
+                peer_info = p2p_manager.get_peer_info()
+                console.print(f"[cyan]Peer ID:[/] {peer_info.get('peer_id', 'Unknown')}")
+                console.print(f"[cyan]Local address:[/] {peer_info.get('ip', 'Unknown')}:{peer_info.get('port', 'Unknown')}")
+                
+                if peer_info.get('external_ip'):
+                    console.print(f"[cyan]External address:[/] {peer_info['external_ip']}:{peer_info.get('external_port', peer_info.get('port'))}")
+                    
+                console.print(f"[cyan]NAT Type:[/] {peer_info.get('nat_type', 'Unknown')}")
+                
+                # Show connected peers
+                peers = await self.download_manager.get_p2p_peers()
+                console.print(f"[cyan]Connected Peers:[/] {len(peers)}")
+                
+                if peers:
+                    table = Table()
+                    table.add_column(PEER_ID_COLUMN, style="cyan")
+                    table.add_column("Address", style="green")
+                    table.add_column("Status", style="yellow")
+                    table.add_column(LAST_SEEN_COLUMN, style="dim")
+                    
+                    for peer in peers:
+                        last_seen = time.strftime('%H:%M:%S', time.localtime(peer.get('last_seen', 0)))
+                        status = "Connected" if peer.get('connected') else "Disconnected"
+                        table.add_row(
+                            peer.get('peer_id', 'Unknown')[:12] + "...",
+                            f"{peer.get('ip', 'Unknown')}:{peer.get('port', 'Unknown')}",
+                            status,
+                            last_seen
+                        )
+                    
+                    console.print(table)
+                
+                # Show shared files
+                shared_count = len(p2p_manager.shared_files) if hasattr(p2p_manager, 'shared_files') else 0
+                console.print(f"[cyan]Shared Files:[/] {shared_count}")
+                
+            return 0
+            
+        except Exception as e:
+            console.print(f"[red]Error getting P2P status: {str(e)}[/]")
+            return 1
+    
+    async def _p2p_share_command(self, file_path: str, max_peers: int, encryption: bool) -> int:
+        """Share a file via P2P network"""
+        try:
+            if not self.download_manager.p2p_manager:
+                console.print(P2P_NOT_AVAILABLE_MSG)
+                return 1
+                
+            if not os.path.exists(file_path):
+                console.print(f"[red]File not found: {file_path}[/]")
+                return 1
+                
+            # Ensure P2P service is running
+            if not self.download_manager.p2p_manager.listening:
+                console.print(P2P_SERVICE_STARTING_MSG)
+                if not await self.download_manager.start_p2p_server():
+                    console.print(P2P_SERVICE_FAILED_MSG)
+                    return 1
+            
+            console.print(f"[cyan]Sharing file:[/] {file_path}")
+            console.print(f"[cyan]Max peers:[/] {max_peers}")
+            console.print(f"[cyan]Encryption:[/] {'Enabled' if encryption else 'Disabled'}")
+            
+            share_code = await self.download_manager.share_file_p2p(file_path)
+            
+            if share_code:
+                console.print("[green]File shared successfully![/]")
+                console.print(f"[bold cyan]Share Code:[/] [bold green]{share_code}[/]")
+                console.print("[yellow]Share this code with others to let them download the file[/]")
+                return 0
+            else:
+                console.print("[red]Failed to share file[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error sharing file: {str(e)}[/]")
+            return 1
+    
+    async def _p2p_fetch_command(self, share_code: str, output_dir: str) -> int:
+        """Download file using share code"""
+        try:
+            if not self.download_manager.p2p_manager:
+                console.print(P2P_NOT_AVAILABLE_MSG)
+                return 1
+                
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+                
+            # Ensure P2P service is running
+            if not self.download_manager.p2p_manager.listening:
+                console.print(P2P_SERVICE_STARTING_MSG)
+                if not await self.download_manager.start_p2p_server():
+                    console.print(P2P_SERVICE_FAILED_MSG)
+                    return 1
+            
+            console.print(f"[cyan]Downloading file with share code:[/] {share_code}")
+            console.print(f"[cyan]Output directory:[/] {output_dir}")
+            
+            success = await self.download_manager.p2p_manager.fetch_file(share_code, output_dir)
+            
+            if success:
+                console.print("[green]File downloaded successfully![/]")
+                console.print(f"[cyan]Saved to:[/] {output_dir}")
+                return 0
+            else:
+                console.print("[red]Failed to download file[/]")
+                console.print("[yellow]Check the share code and network connectivity[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error downloading file: {str(e)}[/]")
+            return 1
+    
+    async def _p2p_discover_command(self, query: str, timeout: int) -> int:
+        """Discover peers on P2P network"""
+        try:
+            if not self.download_manager.p2p_manager:
+                console.print(P2P_NOT_AVAILABLE_MSG)
+                return 1
+                
+            # Ensure P2P service is running
+            if not self.download_manager.p2p_manager.listening:
+                console.print(P2P_SERVICE_STARTING_MSG)
+                if not await self.download_manager.start_p2p_server():
+                    console.print(P2P_SERVICE_FAILED_MSG)
+                    return 1
+            
+            console.print("[cyan]Discovering peers on P2P network...[/]")
+            if query:
+                console.print(f"[cyan]Search query:[/] {query}")
+            console.print(f"[cyan]Timeout:[/] {timeout} seconds")
+            
+            # Start discovery with timeout
+            discovered_peers = await asyncio.wait_for(
+                self.download_manager.p2p_manager.discover_peers(query),
+                timeout=timeout
+            )
+            
+            if discovered_peers:
+                console.print(f"[green]Discovered {len(discovered_peers)} peers:[/]")
+                
+                table = Table()
+                table.add_column(PEER_ID_COLUMN, style="cyan")
+                table.add_column("Address", style="green")
+                table.add_column("NAT Type", style="yellow")
+                table.add_column(LAST_SEEN_COLUMN, style="dim")
+                
+                for peer in discovered_peers:
+                    last_seen = time.strftime('%H:%M:%S', time.localtime(peer.last_seen)) if peer.last_seen else "Unknown"
+                    table.add_row(
+                        peer.peer_id[:12] + "...",
+                        f"{peer.ip}:{peer.port}",
+                        peer.nat_type or "Unknown",
+                        last_seen
+                    )
+                
+                console.print(table)
+                
+                # Optionally, return the list of discovered peers
+                # return [peer.peer_id for peer in discovered_peers]
+                
+            else:
+                console.print("[yellow]No peers discovered[/]")
+                return 0
+                
+        except asyncio.TimeoutError:
+            console.print(f"[yellow]Discovery timed out after {timeout} seconds[/]")
+            return 0
+        except Exception as e:
+            console.print(f"[red]Error during peer discovery: {str(e)}[/]")
+            return 1
+    
+    async def _p2p_peers_command(self) -> int:
+        """List connected P2P peers"""
+        try:
+            if not self.download_manager.p2p_manager:
+                console.print(P2P_NOT_AVAILABLE_MSG)
+                return 1
+            
+            peers = await self.download_manager.get_p2p_peers()
+            
+            if peers:
+                console.print(f"[green]Connected Peers ({len(peers)}):[/]")
+                
+                table = Table()
+                table.add_column(PEER_ID_COLUMN, style="cyan")
+                table.add_column("Address", style="green")
+                table.add_column("Status", style="yellow")
+                table.add_column("NAT Type", style="dim")
+                table.add_column(LAST_SEEN_COLUMN, style="dim")
+                
+                for peer in peers:
+                    last_seen = time.strftime('%H:%M:%S', time.localtime(peer.get('last_seen', 0)))
+                    status = "Connected" if peer.get('connected') else "Disconnected"
+                    table.add_row(
+                        peer.get('peer_id', 'Unknown')[:12] + "...",
+                        f"{peer.get('ip', 'Unknown')}:{peer.get('port', 'Unknown')}",
+                        status,
+                        peer.get('nat_type', 'Unknown'),
+                        last_seen
+                    )
+                
+                console.print(table)
+                return 0
+            else:
+                console.print("[yellow]No connected peers[/]")
+                return 0
+                
+        except Exception as e:
+            console.print(f"[red]Error getting peer list: {str(e)}[/]")
+            return 1
+    
+    async def _p2p_library_command(self, action: str, library_name: str, directory: str, friend_id: str, query: str) -> int:
+        """Manage P2P libraries"""
+        try:
+            if not self.download_manager.p2p_manager:
+                console.print(P2P_NOT_AVAILABLE_MSG)
+                return 1            
+            if action == "create":
+                if not library_name:
+                    console.print("[red]Library name required for create action[/]")
+                    return 1
+                    
+                console.print(f"[cyan]Creating library:[/] {library_name}")
+                if directory:
+                    console.print(f"[cyan]Directory to add:[/] {directory}")
+                # Implementation would depend on P2P manager library methods
+                console.print("[yellow]Library creation functionality coming soon[/]")
+                return 0
+                
+            elif action == "list":
+                console.print("[cyan]Available Libraries:[/]")
+                # Show libraries if implemented
+                console.print("[yellow]Library listing functionality coming soon[/]")
+                return 0
+                
+            elif action == "share":
+                if not library_name or not friend_id:
+                    console.print("[red]Library name and friend ID required for share action[/]")
+                    return 1
+                    
+                console.print(f"[cyan]Sharing library '{library_name}' with friend:[/] {friend_id}")
+                console.print("[yellow]Library sharing functionality coming soon[/]")
+                return 0
+                
+            elif action == "search":
+                if not query:
+                    console.print("[red]Search query required for search action[/]")
+                    return 1
+                    
+                console.print(f"[cyan]Searching libraries for:[/] {query}")
+                console.print("[yellow]Library search functionality coming soon[/]")
+                return 0
+                
+            else:
+                console.print(f"[red]Invalid action: {action}[/]")
+                console.print("[yellow]Valid actions: create, list, share, search[/]")
+                return 1
+                
+        except Exception as e:
+            console.print(f"[red]Error managing P2P library: {str(e)}[/]")
+            return 1
 
+
+def main():
+    """Main entry point for the CLI application"""
     try:
-        # Proper event loop handling without deprecation warnings
-        try:
-            loop = asyncio.get_running_loop()
-            # We're in a running loop - this shouldn't happen for CLI entry
-            loop.run_until_complete(async_main())
-        except RuntimeError:
-            # No running loop - this is the normal case for CLI
-            asyncio.run(async_main())
-    except Exception:
-        console.print_exception()
+        # Initialize configuration
+        config = asyncio.run(initialize_config_async())
+        
+        # Create CLI instance  
+        cli = EnhancedCLI(config)
+        
+        # Setup and run the Typer app
+        app = cli.setup_argparse()
+        app()
+        
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Operation cancelled by user[/]")
         sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Fatal error: {str(e)}[/]")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
