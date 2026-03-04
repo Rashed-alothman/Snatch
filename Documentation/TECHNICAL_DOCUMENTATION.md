@@ -75,12 +75,12 @@ Plugin Interface ← Hook Registry → Download Manager
 
 ### Entry Points
 
-#### `modules/__init__.py`
+#### `snatch/__init__.py`
 - **Purpose**: Package initialization and public API definition
 - **Exports**: `main_app`, `DownloadManager`, `load_config`, `__version__`
 - **Integration Points**: Primary entry point for external usage
 
-#### `modules/cli.py`
+#### `snatch/cli.py`
 - **Purpose**: Command-line interface implementation with Rich formatting
 - **Key Classes**: `EnhancedCLI`
 - **Dependencies**: typer, rich, asyncio
@@ -88,80 +88,80 @@ Plugin Interface ← Hook Registry → Download Manager
 
 ### Core Management
 
-#### `modules/manager.py`
+#### `snatch/manager.py`
 - **Purpose**: Central download management with async/sync support
 - **Key Classes**: `AsyncDownloadManager`, `DownloadManager`, `DownloadHooks`
 - **Features**: Error recovery, retry mechanisms, memory management
 - **Plugin Hooks**: Pre/post download, chunk processing, custom processors
 
-#### `modules/session.py`
+#### `snatch/session.py`
 - **Purpose**: Session persistence and state management
 - **Key Classes**: `AsyncSessionManager`, `SessionManager`
 - **Features**: Download resumption, session tracking, concurrent session handling
 
 ### Configuration System
 
-#### `modules/config.py`
+#### `snatch/config.py`
 - **Purpose**: Configuration loading and validation
 - **Key Functions**: `load_config`, `initialize_config_async`
 - **Integration Points**: All components depend on configuration
 
-#### `modules/defaults.py`
+#### `snatch/defaults.py`
 - **Purpose**: Default values and format presets
 - **Constants**: `FORMAT_PRESETS`, `CACHE_DIR`, `MAX_RETRIES`
 
 ### Processing & Enhancement
 
-#### `modules/audio_processor.py`
+#### `snatch/audio_processor.py`
 - **Purpose**: Advanced audio processing and enhancement
 - **Key Classes**: `AudioProcessor`, `EnhancedAudioProcessor`
 - **Features**: Surround sound upmixing, noise reduction, normalization
 - **Plugin Integration**: Extensible filter chains, custom processing pipelines
 
-#### `modules/file_organizer.py`
+#### `snatch/file_organizer.py`
 - **Purpose**: File system organization and metadata management
 - **Key Classes**: `FileOrganizer`
 - **Features**: Smart file organization, metadata extraction
 
 ### Networking
 
-#### `modules/network.py`
+#### `snatch/network.py`
 - **Purpose**: Network utilities and connectivity management
 - **Key Functions**: `check_internet_connection`, `run_speedtest`
 - **Features**: Speed testing, network monitoring
 
-#### `modules/p2p.py`
+#### `snatch/p2p.py`
 - **Purpose**: Peer-to-peer file sharing implementation
 - **Features**: DHT support, file sharing, NAT traversal preparation
 
 ### User Interface
 
-#### `modules/cyberpunk_ui.py` & `modules/cyberpunk_interactive.py`
+#### `snatch/theme/cyberpunk_ui.py` & `snatch/theme/cyberpunk_interactive.py`
 - **Purpose**: Modern cyberpunk-themed interactive interface
 - **Key Classes**: `CyberpunkInteractiveApp`
 - **Features**: Rich UI, progress tracking, interactive controls
 
-#### `modules/textual_interface.py`
+#### `snatch/theme/textual_interface.py`
 - **Purpose**: Textual-based terminal user interface
 - **Features**: Modern TUI with widgets, responsive design
 
 ### Utilities & Infrastructure
 
-#### `modules/error_handler.py`
+#### `snatch/error_handler.py`
 - **Purpose**: Centralized error handling and reporting
 - **Key Classes**: `EnhancedErrorHandler`
 - **Features**: Error categorization, logging, recovery strategies
 
-#### `modules/logging_config.py`
+#### `snatch/logging_config.py`
 - **Purpose**: Logging configuration and formatting
 - **Features**: Rich formatting, module-level logging, colored output
 
-#### `modules/cache.py`
+#### `snatch/cache.py`
 - **Purpose**: Download caching and metadata storage
 - **Key Classes**: `DownloadCache`
 - **Features**: Resume support, metadata caching
 
-#### `modules/progress.py`
+#### `snatch/progress.py`
 - **Purpose**: Progress tracking and display
 - **Key Classes**: `DownloadStats`, `Spinner`
 - **Features**: Real-time progress, speed calculation
@@ -215,31 +215,31 @@ class CustomHook(DownloadHooks):
 
 ## Module Documentation
 
-### `modules.cli`
+### `snatch.cli`
 - **Responsibility**: Command-line interface and user interaction
 - **Public API**: `main()`, `EnhancedCLI`
 - **Configuration**: Format presets, output options, UI preferences
 - **Plugin Hooks**: Command extensions, custom UI elements
 
-### `modules.manager`
+### `snatch.manager`
 - **Responsibility**: Core download management and coordination
 - **Public API**: `AsyncDownloadManager`, `DownloadManager`, `DownloadHooks`
 - **Configuration**: Retry settings, memory limits, concurrent downloads
 - **Plugin Hooks**: Download lifecycle, custom processors, error handlers
 
-### `modules.audio_processor`
+### `snatch.audio_processor`
 - **Responsibility**: Audio enhancement and processing
 - **Public API**: `AudioProcessor`, `EnhancedAudioProcessor`
 - **Configuration**: FFmpeg settings, filter presets, quality options
 - **Plugin Hooks**: Custom filters, processing pipelines, format converters
 
-### `modules.session`
+### `snatch.session`
 - **Responsibility**: Session persistence and state management
 - **Public API**: `AsyncSessionManager`, `SessionManager`
 - **Configuration**: Session storage location, cleanup policies
 - **Plugin Hooks**: Session lifecycle, custom storage backends
 
-### `modules.network`
+### `snatch.network`
 - **Responsibility**: Network operations and monitoring
 - **Public API**: Network utility functions, connectivity checks
 - **Configuration**: Timeout settings, proxy configuration
@@ -331,7 +331,7 @@ async def my_custom_processor(file_path: str, options: Dict[str, Any]) -> None:
 ```python
 import logging
 from typing import Dict, Any
-from modules.manager import DownloadHooks, DownloadChunk
+from snatch.manager import DownloadHooks, DownloadChunk
 
 logger = logging.getLogger(__name__)
 
@@ -388,10 +388,10 @@ Plugins can be configured through the main configuration file:
 
 ### Public API Overview
 
-The Snatch public API is exposed through `modules/__init__.py`:
+The Snatch public API is exposed through `snatch/__init__.py`:
 
 ```python
-from modules import main_app, DownloadManager, load_config, __version__
+from snatch import main_app, DownloadManager, load_config, __version__
 ```
 
 ### Core Functions
@@ -400,7 +400,7 @@ from modules import main_app, DownloadManager, load_config, __version__
 - **Purpose**: Main application entry point
 - **Parameters**: None (uses CLI arguments)
 - **Returns**: Exit code
-- **Usage**: `python -m modules.cli`
+- **Usage**: `snatch`
 
 #### `load_config(config_path: Optional[str] = None) -> Dict[str, Any]`
 - **Purpose**: Load and validate configuration

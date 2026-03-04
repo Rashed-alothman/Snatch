@@ -29,9 +29,24 @@ Please review our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
 ## Development Setup
 
 1. Fork the repository.
-2. Create a branch for your feature or bug fix.
-3. Commit your changes with clear messages.
-4. Push to your fork and create a pull request.
+2. Clone and install in development mode:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/Snatch.git
+   cd Snatch
+   pip install -e ".[dev,all]"
+   ```
+3. Run the test suite:
+   ```bash
+   python -m pytest tests/ -v
+   ```
+4. Format your code:
+   ```bash
+   black snatch/ tests/
+   isort --profile black snatch/ tests/
+   ```
+5. Create a branch for your feature or bug fix.
+6. Commit your changes with clear messages.
+7. Push to your fork and create a pull request.
 
 ## Communication
 

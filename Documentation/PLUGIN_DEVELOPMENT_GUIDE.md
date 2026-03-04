@@ -84,7 +84,7 @@ Download hooks allow plugins to interact with the download lifecycle at key poin
 #### Interface Definition
 
 ```python
-from modules.manager import DownloadHooks, DownloadChunk
+from snatch.manager import DownloadHooks, DownloadChunk
 from typing import Dict, Any
 
 class DownloadPlugin(DownloadHooks, PluginInterface):
@@ -143,7 +143,7 @@ import time
 import json
 from pathlib import Path
 from typing import Dict, Any
-from modules.manager import DownloadChunk
+from snatch.manager import DownloadChunk
 
 class AnalyticsPlugin(DownloadPlugin):
     """Plugin that tracks download analytics and performance metrics"""

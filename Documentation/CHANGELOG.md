@@ -5,6 +5,45 @@ All notable changes to the Snatch project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-03-04
+
+### 🏗️ Package Restructuring
+
+- **BREAKING**: Renamed `modules/` package to `snatch/` for standard Python naming
+- **BREAKING**: Moved `Theme/` directory into `snatch/theme/` sub-package with fixed relative imports
+- **BREAKING**: Removed `Snatch.py` entry point; use `snatch` command or `python -m snatch.cli`
+- **BREAKING**: Raised minimum Python version to 3.10+
+- **NEW**: Modern `pyproject.toml` packaging with optional dependency groups (`[audio]`, `[p2p]`, `[video]`, `[dev]`)
+- **NEW**: Console entry point `snatch` available globally after `pip install`
+- **NEW**: pytest-based test suite with fixtures for config, cache, CLI, and utilities
+
+### 🔧 Code Consolidation
+
+- **MERGED**: `config_helpers.py` into `config.py` (4 config modules → 2)
+- **MERGED**: `advanced_config.py` into `config_manager.py`
+- **FIXED**: Single source of truth for version (`constants.py` → `2.0.0`)
+- **FIXED**: Duplicate `"organize"` key in `PROCESS_PREFIXES`
+- **FIXED**: `DEFAULT_TIMEOUT` conflict between `defaults.py` and `constants.py`
+- **FIXED**: Broken Theme relative imports (`from .manager` → `from ..manager`)
+
+### 🧹 Cleanup
+
+- **REMOVED**: `setupfiles/` directory (stale v1.7.0 requirements, pip freeze dump)
+- **REMOVED**: Empty placeholder files (`cyberpunk_interactive.py`, `working_interactive.py`)
+- **REMOVED**: Stale documentation summaries (FIXES_README, FIXES_SUMMARY, etc.)
+- **REMOVED**: All `__pycache__/` from git tracking
+- **SIMPLIFIED**: `setup.py` reduced to 2-line shim (config in `pyproject.toml`)
+- **CLEANED**: `requirements.txt` removed transitive dependencies
+
+### 📦 CI/CD
+
+- **REWRITTEN**: GitHub Actions pipeline for `snatch/` package structure
+- **UPDATED**: Python matrix to 3.10, 3.12
+- **FIXED**: Test job uses `pip install -e ".[dev,all]"` and `pytest`
+- **REMOVED**: `fix-code-issues` job that patched nonexistent `Snatch.py`
+
+---
+
 ## [1.8.0] - 2025-05-31
 
 ### 🎵 Major New Features

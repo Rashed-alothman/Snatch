@@ -17,14 +17,45 @@
 <img src="https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/Rashed-alothman/f2ae0a272ff1f011523e43f8c5abad65/raw/snatch-ci-status.json"/>
 <img src="https://github.com/Rashed-alothman/Snatch/actions/workflows/codeql.yml/badge.svg" alt="CodeQL Status" />
 <img src="https://img.shields.io/badge/version-2.0.0-blue" alt="Version 2.0.0" />
-<img src="https://img.shields.io/badge/python-3.7+-yellow" alt="Python 3.7+" />
+<img src="https://img.shields.io/badge/python-3.10+-yellow" alt="Python 3.10+" />
 <img src="https://img.shields.io/badge/platforms-Windows%20|%20macOS%20|%20Linux-green" alt="Platforms" />
 <img src="https://img.shields.io/badge/license-MIT-orange" alt="License" />
 </p>
 
-## What's New in v1.8.0
+## What's New in v2.0.0
 
-### 🎯 Major New Features & Enhancements
+### Package Restructuring
+
+- **Renamed package**: `modules/` → `snatch/` with proper Python packaging
+- **Modern packaging**: Added `pyproject.toml` with optional dependency groups (`[audio]`, `[p2p]`, `[video]`)
+- **Console entry point**: `snatch` command available globally after `pip install`
+- **Consolidated config**: Merged 4 config modules into 2 clean ones
+- **Fixed Theme imports**: Moved `Theme/` into `snatch/theme/` sub-package with corrected imports
+- **Unified version**: Single source of truth for version `2.0.0` in `constants.py`
+- **Cleaned CI/CD**: Fully updated GitHub Actions pipeline for new package structure
+- **Test infrastructure**: pytest-based test suite with fixtures for config, cache, CLI
+
+### Installation
+
+```bash
+# Basic install
+pip install -e .
+
+# With all optional features
+pip install -e ".[all]"
+
+# Audio processing features only
+pip install -e ".[audio]"
+
+# Development
+pip install -e ".[dev,all]"
+```
+
+---
+
+## Features
+
+### 🎯 Major Features & Enhancements
 
 #### **🎵 Comprehensive Audio Enhancement System**
 
@@ -89,22 +120,22 @@ snatch download "URL" --resolution 720 --upscale --upscale-factor 4 --replace-or
 
 #### **Complete Package Refactoring & Modularization**
 
-- **Modular Architecture**: Split monolithic `Snatch.py` into a well-structured package under `modules/`:
-  - `cli.py` - Command-line interface and argument parsing
-  - `manager.py` - Core download management and orchestration
+- **Modular Architecture**: Well-structured `snatch/` package:
+  - `cli.py` - Command-line interface and argument parsing (Typer)
+  - `manager.py` - Core download management and orchestration (yt-dlp)
   - `config.py` - Configuration loading, validation, and management
+  - `config_manager.py` - Advanced configuration editing, profiles, backup/restore
   - `audio_processor.py` - Advanced audio enhancement and processing
   - `ffmpeg_helper.py` - Video upscaling and FFmpeg processing
   - `p2p.py` - Peer-to-peer networking and file sharing
   - `cache.py` - Intelligent caching and metadata storage
-  - `session.py` - Network session management and optimization
+  - `session.py` - Download session management and resume
   - `progress.py` - Enhanced progress tracking and display
-  - `utils.py` - Shared utilities and helper functions
-  - `plugins.py` - Plugin system and hook management
+  - `common_utils.py` - Shared utilities and helper functions
   - `logging_config.py` - Comprehensive logging configuration
-  - `constants.py` - Application constants and defaults
+  - `constants.py` - Application constants, version, and defaults
   - `metadata.py` - Media information extraction and processing
-  - `cyberpunk_ui.py` - Cyberpunk-themed UI components
+  - `theme/` - Modern TUI interfaces (Textual, Rich)
 
 #### **Enhanced Plugin System**
 
@@ -205,13 +236,6 @@ We've created an extensive documentation ecosystem to support developers and use
 - Platform-specific troubleshooting
 - Error codes reference
 - Advanced debugging techniques
-
-#### **🧪 [Integration Testing](./INTEGRATION_TESTING.md)**
-
-- Comprehensive testing strategies
-- Test suite documentation
-- Continuous integration setup
-- Quality assurance procedures
 
 ### 🛠️ Technical Improvements
 
@@ -451,10 +475,10 @@ snatch customize reset
 
 Before installing Snatch, make sure you have:
 
-1. **Python**: Version 3.8 or higher
+1. **Python**: Version 3.10 or higher
 
    ```powershell
-   python --version  # Should show 3.8 or higher
+   python --version  # Should show 3.10 or higher
    ```
 
 2. **Git**: For cloning the repository
@@ -464,7 +488,7 @@ Before installing Snatch, make sure you have:
    ```
 
 3. **FFmpeg**: Required for audio/video processing
-   - Windows users can run `setupfiles/setup_ffmpeg.py` after installation
+   - Windows users can run `python setup_ffmpeg.py` after installation
    - Linux/macOS users can use their package manager
 
 ### Step-by-Step Installation
@@ -494,18 +518,18 @@ Before installing Snatch, make sure you have:
 3. **Install Dependencies**
 
    ```powershell
-   # Install required packages
-   pip install -r setupfiles/requirements.txt
-
    # Install Snatch in development mode
    pip install -e .
+
+   # Or with all optional features
+   pip install -e ".[all]"
    ```
 
 4. **Setup FFmpeg (Windows)**
 
    ```powershell
    # Automatic FFmpeg setup for Windows
-   python setupfiles/setup_ffmpeg.py
+   python setup_ffmpeg.py
    ```
 
 5. **Verify Installation**
@@ -591,7 +615,7 @@ snatch download "URL" --audio-only --format flac --channels 8
 # Download with custom quality
 snatch download "URL" --audio-only --format mp3 --quality 320
 
-# Audio Enhancement Commands (NEW in v1.8.0)
+# Audio Enhancement Commands
 # Enhance downloaded audio with AI-powered processing
 snatch audio enhance "myfile.mp3" --preset music
 snatch audio enhance "podcast.wav" --preset podcast --output "enhanced_podcast.wav"
@@ -749,19 +773,19 @@ When downloading a playlist, Snatch will present options to:
 Download multiple URLs at once:
 
 ```bash
-python Snatch.py "URL1" "URL2" "URL3"
+snatch download "URL1" "URL2" "URL3"
 ```
 
 #### 3. Custom Output Directory
 
 ```bash
-python Snatch.py "URL" --output-dir "path/to/directory"
+snatch download "URL" --output "path/to/directory"
 ```
 
 #### 4. Format Specification
 
 ```bash
-python Snatch.py "URL" --format-id 137+140  # For advanced users
+snatch download "URL" --format-id 137+140  # For advanced users
 ```
 
 #### 5. Automatic File Organization
@@ -771,14 +795,10 @@ Snatch can automatically organize your downloaded files based on metadata extrac
 Enable organization with:
 
 ```bash
-python Snatch.py --organize URL
+snatch download URL --organize
 ```
 
 Or set it permanently in the configuration:
-
-```bash
-python setup_ffmpeg.py
-```
 
 #### Organization Templates
 
@@ -817,10 +837,10 @@ Snatch now offers enhanced audio conversion options:
 
 ```bash
 # Download with 7.1 surround sound in Opus format
-python Snatch.py "URL" --audio-only --audio-channels 8
+snatch "URL" --audio-only --audio-channels 8
 
 # Skip interactive prompts (useful for scripting)
-python Snatch.py "URL" --audio-only --non-interactive
+snatch "URL" --audio-only --non-interactive
 ```
 
 #### 7. Advanced Command-line Options
@@ -829,34 +849,34 @@ Snatch supports several advanced options for more control over your downloads:
 
 ```bash
 # Resume interrupted downloads
-python Snatch.py "URL" --resume
+snatch "URL" --resume
 
 # Show download statistics after completion
-python Snatch.py "URL" --stats
+snatch "URL" --stats
 
 # Display system resource statistics
-python Snatch.py "URL" --system-stats
+snatch "URL" --system-stats
 
 # Skip using cached media information
-python Snatch.py "URL" --no-cache
+snatch "URL" --no-cache
 
 # Disable automatic retry logic
-python Snatch.py "URL" --no-retry
+snatch "URL" --no-retry
 
 # Limit download speed (e.g., 2M = 2MB/s)
-python Snatch.py "URL" --throttle 2M
+snatch "URL" --throttle 2M
 
 # Use aria2c as the download engine for better performance
-python Snatch.py "URL" --aria2c
+snatch "URL" --aria2c
 
 # Enable detailed logging for troubleshooting
-python Snatch.py "URL" --verbose
+snatch "URL" --verbose
 
 # Test all available formats for best quality (slower)
-python Snatch.py "URL" --test-formats
+snatch "URL" --test-formats
 
 # Use fast format selection (default)
-python Snatch.py "URL" --fast
+snatch "URL" --fast
 ```
 
 #### 8. Network Speed Testing
@@ -865,10 +885,10 @@ Snatch can automatically test your network speed to optimize download settings:
 
 ```bash
 # Run a standalone speed test
-python Snatch.py speedtest
+snatch speedtest
 
 # Get detailed speed test results
-python Snatch.py test
+snatch test
 ```
 
 ## 🏗️ Technical Architecture
@@ -921,7 +941,7 @@ Snatch supports over 1000 websites including:
 To see the full list of supported sites:
 
 ```bash
-python Snatch.py --list-sites
+snatch --list-sites
 ```
 
 <h2 id="Troubleshooting">🔍 Troubleshooting</h2>
@@ -971,9 +991,10 @@ Contributions are welcome! Feel free to:
 
 ### 📦 Core Architecture & Packaging  
 
-- ✅ Modular package structure under `modules/`
-- ✅ `modules/__init__.py` with `__version__` and public API
-- ✅ Basic setup.py configuration
+- ✅ Modular package structure under `snatch/`
+- ✅ `snatch/__init__.py` with `__version__` and public API
+- ✅ Modern `pyproject.toml` packaging with optional dependency groups
+- ✅ Console entry point (`snatch` command)
 - ✅ Editable install support
 - ⬜ PyPI packaging and distribution
 

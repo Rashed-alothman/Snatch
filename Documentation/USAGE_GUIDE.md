@@ -17,7 +17,7 @@ snatch textual
 # Direct download with best quality
 snatch download "https://example.com/video"
 
-# Download with specific resolution (FIXED in v1.8.0)
+# Download with specific resolution
 snatch download "https://example.com/video" --resolution 1080
 
 # Download with video upscaling
