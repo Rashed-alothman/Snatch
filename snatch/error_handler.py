@@ -254,9 +254,10 @@ class EnhancedErrorHandler:
         """Check if internet connection is available"""
         try:
             import urllib.request
+            import urllib.error
             urllib.request.urlopen('http://www.google.com', timeout=5)
             return True
-        except:
+        except (OSError, urllib.error.URLError):
             logging.error("No internet connection available")
             return False
     
@@ -462,7 +463,8 @@ def handle_errors(category: ErrorCategory = ErrorCategory.UNKNOWN,
                     raise
                 return None
         
-        return async_wrapper if asyncio.iscoroutinefunction(func) else wrapper
+        import inspect
+        return async_wrapper if inspect.iscoroutinefunction(func) else wrapper
     return decorator
 
 @contextmanager

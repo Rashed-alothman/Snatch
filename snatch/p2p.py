@@ -2649,7 +2649,7 @@ class P2PManager:
         finally:
             try:
                 sock.close()
-            except:
+            except Exception:
                 pass
                 
         return discovered

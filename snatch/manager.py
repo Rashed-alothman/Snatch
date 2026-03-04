@@ -18,7 +18,9 @@ import psutil
 import re
 import threading
 import time
+from io import BytesIO
 import aiohttp
+import aiofiles
 import backoff
 from abc import ABC, abstractmethod
 from contextlib import contextmanager, asynccontextmanager
@@ -935,17 +937,31 @@ class AsyncDownloadManager:
             self.yt_dlp_available = False
             logging.warning("yt-dlp not available, some functionality may be limited")
 
+    def _create_http_client(self) -> aiohttp.ClientSession:
+        """Create an aiohttp session with connection pooling and timeouts."""
+        connector_kwargs = {
+            "limit": 30,
+            "limit_per_host": 10,
+            "ttl_dns_cache": 300,
+        }
+        # enable_cleanup_closed is deprecated in Python 3.14+ (CPython fix)
+        if sys.version_info < (3, 14):
+            connector_kwargs["enable_cleanup_closed"] = True
+        connector = aiohttp.TCPConnector(**connector_kwargs)
+        timeout = aiohttp.ClientTimeout(total=300, connect=30, sock_read=60)
+        return aiohttp.ClientSession(connector=connector, timeout=timeout)
+
     @property
     def http_client(self) -> HTTPClientProtocol:
         """Get the HTTP client session, creating it if needed"""
         if not self._http_client:
-            self._http_client = aiohttp.ClientSession()
+            self._http_client = self._create_http_client()
         return self._http_client
 
     async def __aenter__(self):
         """Async context manager entry"""
         if not self._http_client and not self.user_provided_client:
-            self._http_client = aiohttp.ClientSession()
+            self._http_client = self._create_http_client()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -964,22 +980,29 @@ class AsyncDownloadManager:
         max_tries=5
     )
     async def _download_chunk(self, url: str, chunk: DownloadChunk) -> bool:
-        """Download a single chunk with retries and exponential backoff"""
+        """Download a single chunk with streaming reads and inline hashing"""
         headers = {"Range": f"bytes={chunk.start}-{chunk.end}"}
-        
+
         try:
             async with self.http_client.get(url, headers=headers) as response:
                 if response.status != 206:
                     logging.error(f"Range request failed: got status {response.status}")
                     return False
-                    
-                chunk.data = await response.read()
-                chunk.sha256 = await self._calculate_sha256(chunk.data)
-                
+
+                # Stream data in 64KB sub-chunks, compute SHA256 inline
+                buffer = BytesIO()
+                hasher = hashlib.sha256()
+                async for data in response.content.iter_chunked(64 * 1024):
+                    buffer.write(data)
+                    hasher.update(data)
+
+                chunk.data = buffer.getvalue()
+                chunk.sha256 = hasher.hexdigest()
+
                 # Notify hooks
                 for hook in self.hooks:
                     await hook.post_chunk(chunk, chunk.sha256)
-                    
+
                 return True
         except Exception as e:
             logging.error(f"Chunk download error: {str(e)}")
@@ -1070,19 +1093,36 @@ class AsyncDownloadManager:
             progress.update(task, completed=resume_from)
             
             try:
-                with open(temp_path, mode) as f:
-                    for chunk in chunks:
-                        success = await self._download_chunk(url, chunk)
-                        if not success:
-                            raise DownloadError(f"Failed to download chunk {chunk.start}-{chunk.end}")
-                            
-                        f.write(chunk.data)
-                        progress.update(task, advance=len(chunk.data))
-                        
-                        # Update session
-                        downloaded = chunk.end + 1
-                        self.session_manager.update_session(url, {"progress": downloaded / total_size * 100})
-                  # Rename temp file to final
+                max_concurrent = self.config.get("max_concurrent_chunks", 8)
+                semaphore = asyncio.Semaphore(max_concurrent)
+
+                async def _download_with_limit(c):
+                    async with semaphore:
+                        return await self._download_chunk(url, c)
+
+                async with aiofiles.open(temp_path, mode) as f:
+                    # Download in parallel batches, write in order
+                    for i in range(0, len(chunks), max_concurrent):
+                        batch = chunks[i:i + max_concurrent]
+                        results = await asyncio.gather(
+                            *[_download_with_limit(c) for c in batch],
+                            return_exceptions=True,
+                        )
+                        for c, result in zip(batch, results):
+                            if isinstance(result, Exception):
+                                raise DownloadError(f"Chunk {c.start}-{c.end} failed: {result}")
+                            if not result:
+                                raise DownloadError(f"Failed to download chunk {c.start}-{c.end}")
+
+                            await f.write(c.data)
+                            progress.update(task, advance=len(c.data))
+                            c.data = None  # Free memory eagerly
+
+                            # Update session
+                            downloaded = c.end + 1
+                            self.session_manager.update_session(url, {"progress": downloaded / total_size * 100})
+
+                # Rename temp file to final
                 os.replace(temp_path, output_path)
             except Exception as e:
                 logging.error(f"Download failed: {str(e)}")

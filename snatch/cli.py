@@ -1,5 +1,7 @@
 """
 Enhanced CLI module with Rich interface and preset support.
+
+Rich Console and traceback are lazily initialized to speed up CLI startup.
 """
 
 import asyncio
@@ -13,11 +15,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, NoReturn
 import typer
 import yaml
-from rich.console import Console
-from rich.traceback import install
 from rich.prompt import Confirm
-from rich.live import Live
-from rich.table import Table
 
 # Local imports
 from .constants import VERSION, EXAMPLES, APP_NAME
@@ -34,11 +32,26 @@ from .config_manager import ConfigurationManager, CacheType
 from .customization_manager import CustomizationManager, ThemePreset, ConfigFormat, InterfaceMode, ProgressStyle, NotificationLevel
 from .audio_processor import EnhancedAudioProcessor, AudioEnhancementSettings, AUDIO_ENHANCEMENT_PRESETS
 
-# Enable Rich traceback formatting
-install(show_locals=True)
+# --- Lazy Rich Console (deferred from module level) ---
+_console = None
 
-# Initialize console
-console = Console()
+
+def get_console():
+    """Lazy Console factory — avoids creating Console until first use."""
+    global _console
+    if _console is None:
+        from rich.console import Console
+        _console = Console()
+    return _console
+
+
+class _LazyConsole:
+    """Proxy that defers Console creation until first attribute access."""
+    def __getattr__(self, name):
+        return getattr(get_console(), name)
+
+
+console = _LazyConsole()
 
 # Constants for duplicate strings
 FALLBACK_INTERACTIVE_MSG = "[yellow]Falling back to enhanced interactive mode.[/]"
@@ -75,10 +88,10 @@ class EnhancedCLI:
     def __init__(self, config: Dict[str, Any]):
         if not config:
             raise ValueError("Configuration must be provided")
-            
+
         self.config = config
         self._pending_download = None  # Store pending download for async execution
-        
+
         # Initialize error handler
         error_log_path = config.get("error_log_path", "logs/snatch_errors.log")
         self.error_handler = EnhancedErrorHandler(log_file=error_log_path)
@@ -2204,6 +2217,10 @@ class EnhancedCLI:
 def main():
     """Main entry point for the CLI application"""
     try:
+        # Enable Rich traceback formatting (deferred from module level)
+        from rich.traceback import install
+        install(show_locals=True)
+
         # Initialize configuration
         config = asyncio.run(initialize_config_async())
         

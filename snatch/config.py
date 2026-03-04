@@ -267,19 +267,32 @@ def _ensure_config_directory() -> None:
     if config_dir:
         os.makedirs(config_dir, exist_ok=True)
 
+_cached_config: Optional[Dict[str, Any]] = None
+_config_mtime: float = 0.0
+
+
 def _load_existing_config() -> Dict[str, Any]:
-    """Load existing config file or return defaults"""
+    """Load existing config file or return cached copy if unchanged on disk."""
+    global _cached_config, _config_mtime
+
     config = DEFAULT_CONFIG.copy()
-    
+
     if os.path.exists(CONFIG_FILE):
         try:
+            current_mtime = os.path.getmtime(CONFIG_FILE)
+            if _cached_config is not None and current_mtime == _config_mtime:
+                return _cached_config.copy()
+
             with open(CONFIG_FILE) as f:
                 loaded_config = json.load(f)
             if isinstance(loaded_config, dict):
                 config.update(loaded_config)
+
+            _cached_config = config
+            _config_mtime = current_mtime
         except (json.JSONDecodeError, TypeError) as e:
             logger.error(f"Failed to parse config file: {e}")
-            
+
     return config
 
 def _ensure_output_directories(config: Dict[str, Any]) -> None:

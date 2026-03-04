@@ -125,7 +125,7 @@ class PerformanceMonitor:
         """Collect current system and application metrics"""
         try:
             # System metrics
-            cpu_percent = psutil.cpu_percent(interval=1)
+            cpu_percent = psutil.cpu_percent(interval=None)
             memory = psutil.virtual_memory()
             disk_io = psutil.disk_io_counters()
             network_io = psutil.net_io_counters()
