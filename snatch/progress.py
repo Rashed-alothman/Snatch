@@ -202,10 +202,6 @@ class DetailedProgressDisplay:
                     if len(self._speed_samples) > self._max_samples:
                         self._speed_samples.pop(0)
 
-                # Limit samples list size
-                if len(self._speed_samples) > self._max_samples:
-                    self._speed_samples.pop(0)
-
                 # Update last sample info
                 self._last_sample_time = now
                 self._last_sample_bytes = self.downloaded
@@ -690,7 +686,7 @@ class ColorProgressBar:
             try:
                 self.progress.update(n)
             except Exception:
-                pass  # Last resort if everything fails
+                logging.debug("Progress bar update failed", exc_info=True)
 
     def set_description(self, description: str) -> None:
         self.progress.set_description_str(description)
@@ -785,18 +781,18 @@ class SpinnerAnimation:
         # Keep track of terminal width for dynamic resizing
         try:
             self.term_width = shutil.get_terminal_size().columns
-        except:
+        except Exception:
             self.term_width = 80
-            
+
     def start(self):
         """Start the spinner animation in a separate thread"""
         if self.running:
             return
-            
+
         self.running = True
         self._stop_event.clear()
         self._pause_event.clear()
-        
+
         def spin():
             index = 0
             while not self._stop_event.is_set():
@@ -804,8 +800,8 @@ class SpinnerAnimation:
                     try:
                         # Get current terminal width for proper wrapping
                         self.term_width = shutil.get_terminal_size().columns
-                    except:
-                        pass
+                    except Exception:
+                        logging.debug("Terminal size detection failed")
                         
                     status = f"\r{self.color}{self.frames[index]}{Style.RESET_ALL} {self.message}"
                     

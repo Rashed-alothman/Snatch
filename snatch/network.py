@@ -196,29 +196,27 @@ class NetworkManager:
         return self.connection_status
         
     async def _perform_connection_check(self) -> bool:
-        """Perform actual connection check"""
-        # Check multiple reliable endpoints
+        """Perform actual connection check — tests endpoints in parallel."""
         test_endpoints = [
             "https://www.google.com",
             "https://www.cloudflare.com",
             "https://www.microsoft.com",
             "https://www.apple.com"
         ]
-        
-        # Try to connect to each with a short timeout
+
         timeout = aiohttp.ClientTimeout(total=3)
-        for endpoint in test_endpoints:
+
+        async def _check_one(endpoint: str) -> bool:
             try:
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.head(endpoint) as response:
-                        if response.status < 400:
-                            return True
+                        return response.status < 400
             except Exception as e:
-                # Just try the next endpoint
                 logger.debug(f"Connection check failed for {endpoint}: {e}")
-                continue
-                
-        return False
+                return False
+
+        results = await asyncio.gather(*[_check_one(ep) for ep in test_endpoints])
+        return any(results)
     
     async def get_connection_info(self) -> Dict[str, Any]:
         """Get detailed connection information"""

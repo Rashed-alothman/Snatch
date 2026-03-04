@@ -1,4 +1,5 @@
 """Cache management for downloaded media information"""
+import heapq
 import threading
 import logging
 import json
@@ -56,14 +57,11 @@ class DownloadCache:
                 self._memory_cache.pop(k, None)
                 self._access_times.pop(k, None)
                 
-            # If still too many entries, remove oldest
+            # If still too many entries, evict oldest via heapq (O(n+k) vs O(n log n))
             if len(self._memory_cache) > self.max_memory_entries:
-                sorted_items = sorted(
-                    self._access_times.items(),
-                    key=lambda x: x[1]
-                )
                 to_remove = len(self._memory_cache) - self.max_memory_entries
-                for k, _ in sorted_items[:to_remove]:
+                oldest = heapq.nsmallest(to_remove, self._access_times.items(), key=lambda x: x[1])
+                for k, _ in oldest:
                     self._memory_cache.pop(k, None)
                     self._access_times.pop(k, None)
                     
