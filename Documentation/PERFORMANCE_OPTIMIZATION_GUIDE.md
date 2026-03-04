@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides comprehensive strategies and techniques for optimizing the performance of the Snatch media downloader across different system configurations and use cases, with special focus on the new audio enhancement features introduced in v1.8.0.
+This guide provides comprehensive strategies and techniques for optimizing the performance of the Snatch media downloader across different system configurations and use cases, with special focus on the audio enhancement features.
 
 ## Table of Contents
 

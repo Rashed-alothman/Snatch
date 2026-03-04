@@ -2,7 +2,7 @@
 
 ## Overview
 
-Snatch v1.8.0 introduces a comprehensive audio enhancement system that leverages AI-powered algorithms to improve audio quality, reduce noise, and optimize audio content for different use cases. This guide covers all aspects of the audio enhancement features.
+Snatch includes a comprehensive audio enhancement system that leverages AI-powered algorithms to improve audio quality, reduce noise, and optimize audio content for different use cases. This guide covers all aspects of the audio enhancement features.
 
 ## Table of Contents
 

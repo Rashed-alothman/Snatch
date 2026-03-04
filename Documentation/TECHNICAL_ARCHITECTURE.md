@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document provides a comprehensive overview of the Snatch Media Downloader's technical architecture, including the major components, data flow, and system integration patterns introduced in v1.8.0.
+This document provides a comprehensive overview of the Snatch Media Downloader's technical architecture, including the major components, data flow, and system integration patterns as of v2.0.0.
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ This document provides a comprehensive overview of the Snatch Media Downloader's
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Snatch v1.8.0                           │
+│                        Snatch v2.0.0                           │
 ├─────────────────────────────────────────────────────────────────┤
 │  CLI Interface    │  Interactive Mode  │  Configuration System  │
 ├─────────────────────────────────────────────────────────────────┤

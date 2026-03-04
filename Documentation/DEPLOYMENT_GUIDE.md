@@ -68,19 +68,15 @@ python -m pip install --upgrade pip
 #### 2. Install Dependencies
 
 ```bash
-# Install development dependencies
-pip install -r setupfiles/requirements.txt
-pip install -r setupfiles/requirements-dev.txt
-
-# Install in editable mode
-pip install -e .
+# Install in editable mode with development dependencies
+pip install -e ".[dev]"
 ```
 
 #### 3. Setup FFmpeg
 
 ```bash
 # Windows (automated)
-python setupfiles/setup_ffmpeg.py
+python setup_ffmpeg.py
 
 # Linux
 sudo apt-get install ffmpeg
@@ -179,7 +175,6 @@ source venv/bin/activate
 
 # Install dependencies
 pip install --upgrade pip
-pip install -r setupfiles/requirements.txt
 pip install .
 ```
 
@@ -227,7 +222,7 @@ User=snatch
 Group=snatch
 WorkingDirectory=/opt/snatch
 Environment=PATH=/opt/snatch/venv/bin
-ExecStart=/opt/snatch/venv/bin/python -m modules.cli daemon
+ExecStart=/opt/snatch/venv/bin/snatch daemon
 Restart=always
 RestartSec=10
 
@@ -276,10 +271,6 @@ RUN useradd -m -u 1000 snatch
 # Set working directory
 WORKDIR /app
 
-# Copy requirements
-COPY setupfiles/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
 # Copy application
 COPY . .
 RUN pip install --no-cache-dir .
@@ -297,7 +288,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD snatch --version || exit 1
 
-CMD ["python", "-m", "modules.cli", "daemon"]
+CMD ["snatch", "daemon"]
 ```
 
 ### Docker Compose
@@ -407,17 +398,16 @@ python -m venv venv
 
 # Install dependencies
 python -m pip install --upgrade pip
-pip install -r setupfiles\requirements.txt
 pip install .
 
 # Setup FFmpeg
-python setupfiles\setup_ffmpeg.py
+python setup_ffmpeg.py
 
 # Create desktop shortcut
 $WshShell = New-Object -comObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\Snatch.lnk")
-$Shortcut.TargetPath = "$InstallPath\venv\Scripts\python.exe"
-$Shortcut.Arguments = "-m modules.cli"
+$Shortcut.TargetPath = "$InstallPath\venv\Scripts\snatch.exe"
+$Shortcut.Arguments = ""
 $Shortcut.WorkingDirectory = $InstallPath
 $Shortcut.Save()
 
@@ -436,10 +426,10 @@ Write-Host "You can run Snatch from: $InstallPath\venv\Scripts\snatch.exe" -Fore
 class Snatch < Formula
   desc "Advanced media downloader with modern interface"
   homepage "https://github.com/your-username/snatch"
-  url "https://github.com/your-username/snatch/archive/v1.8.0.tar.gz"
+  url "https://github.com/your-username/snatch/archive/v2.0.0.tar.gz"
   sha256 "your-sha256-hash"
   
-  depends_on "python@3.9"
+  depends_on "python@3.10"
   depends_on "ffmpeg"
   depends_on "aria2"
   
@@ -465,14 +455,14 @@ brew install snatch
 
 ```bash
 # Create .deb package structure
-mkdir -p snatch-1.8.0/DEBIAN
-mkdir -p snatch-1.8.0/opt/snatch
-mkdir -p snatch-1.8.0/usr/bin
+mkdir -p snatch-2.0.0/DEBIAN
+mkdir -p snatch-2.0.0/opt/snatch
+mkdir -p snatch-2.0.0/usr/bin
 
 # Control file
-cat > snatch-1.8.0/DEBIAN/control << EOF
+cat > snatch-2.0.0/DEBIAN/control << EOF
 Package: snatch
-Version: 1.8.0
+Version: 2.0.0
 Section: utils
 Priority: optional
 Architecture: all
@@ -484,7 +474,7 @@ Description: Advanced media downloader
 EOF
 
 # Post-installation script
-cat > snatch-1.8.0/DEBIAN/postinst << 'EOF'
+cat > snatch-2.0.0/DEBIAN/postinst << 'EOF'
 #!/bin/bash
 set -e
 
@@ -499,10 +489,10 @@ echo "Snatch installed successfully!"
 echo "Run 'snatch --help' to get started."
 EOF
 
-chmod 755 snatch-1.8.0/DEBIAN/postinst
+chmod 755 snatch-2.0.0/DEBIAN/postinst
 
 # Build package
-dpkg-deb --build snatch-1.8.0
+dpkg-deb --build snatch-2.0.0
 ```
 
 #### RPM Package (RHEL/CentOS/Fedora)
@@ -510,7 +500,7 @@ dpkg-deb --build snatch-1.8.0
 ```spec
 # snatch.spec
 Name:           snatch
-Version:        1.8.0
+Version:        2.0.0
 Release:        1%{?dist}
 Summary:        Advanced media downloader
 
@@ -531,7 +521,6 @@ hundreds of websites with modern interface and features.
 %build
 python3 -m venv venv
 source venv/bin/activate
-pip install -r setupfiles/requirements.txt
 pip install .
 
 %install
@@ -545,7 +534,7 @@ ln -s /opt/snatch/venv/bin/snatch %{buildroot}/usr/bin/snatch
 /usr/bin/snatch
 
 %changelog
-* Sat May 24 2025 Your Name <your.email@example.com> - 1.8.0-1
+* Sat May 24 2025 Your Name <your.email@example.com> - 2.0.0-1
 - Initial RPM package
 ```
 
@@ -877,7 +866,7 @@ spec:
     spec:
       containers:
       - name: snatch
-        image: snatch:1.8.0
+        image: snatch:2.0.0
         resources:
           requests:
             memory: "512Mi"
@@ -1047,7 +1036,7 @@ sudo systemctl status snatch
 sudo journalctl -u snatch -f
 
 # Debug mode
-sudo -u snatch /opt/snatch/venv/bin/python -m modules.cli --debug
+sudo -u snatch /opt/snatch/venv/bin/snatch --debug
 ```
 
 ### Deployment Checklist

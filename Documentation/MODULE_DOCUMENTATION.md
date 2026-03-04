@@ -2,7 +2,7 @@
 
 ## Core Module Analysis
 
-### modules/manager.py - Download Management System
+### snatch/manager.py - Download Management System
 
 #### Architecture Overview
 
@@ -130,7 +130,7 @@ The manager implements sophisticated memory management:
 
 ---
 
-### modules/audio_processor.py - Audio Enhancement System
+### snatch/audio_processor.py - Audio Enhancement System
 
 #### Architecture Overview
 
@@ -232,7 +232,7 @@ await processor.apply_filter_chain([
 
 ---
 
-### modules/p2p.py - Peer-to-Peer System
+### snatch/p2p.py - Peer-to-Peer System
 
 #### Architecture Overview
 
@@ -351,7 +351,7 @@ p2p.register_discovery_method(CustomDiscovery())
 
 ---
 
-### modules/session.py - Session Management
+### snatch/session.py - Session Management
 
 #### Purpose
 
@@ -402,7 +402,7 @@ Provides persistent session management for download resumption and state trackin
 
 ---
 
-### modules/config.py - Configuration System
+### snatch/config.py - Configuration System
 
 #### Purpose
 
@@ -456,7 +456,7 @@ Centralized configuration management with validation, defaults, and environment 
 
 ---
 
-### modules/cache.py - Caching System
+### snatch/cache.py - Caching System
 
 #### Purpose
 

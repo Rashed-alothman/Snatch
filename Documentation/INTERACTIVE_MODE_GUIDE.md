@@ -254,7 +254,7 @@ snatch customize interface --setting high_contrast_mode --value true
 
 ```bash
 # Check dependencies
-pip install -r setupfiles/requirements.txt
+pip install -e ".[all]"
 
 # Verify installation
 snatch --version

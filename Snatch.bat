@@ -17,7 +17,7 @@ set "SCRIPT_DIR=%~dp0"
 
 REM Run as module using pythonpath to ensure imports work correctly
 set "PYTHONPATH=%SCRIPT_DIR%;%PYTHONPATH%"
-python -m modules.cli %*
+python -m snatch.cli %*
 
 if %ERRORLEVEL% NEQ 0 (
     echo.

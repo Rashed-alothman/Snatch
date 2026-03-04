@@ -41,7 +41,7 @@ snatch --verify-deps
 
 | Problem | Quick Fix | Command |
 |---------|-----------|---------|
-| FFmpeg not found | Install/configure FFmpeg | `python setupfiles/setup_ffmpeg.py` |
+| FFmpeg not found | Install/configure FFmpeg | `python setup_ffmpeg.py` |
 | Permission denied | Run as administrator | Right-click → Run as administrator |
 | Network timeout | Check internet connection | `ping google.com` |
 | Corrupted cache | Clear cache | `snatch --clear-cache` |
@@ -131,7 +131,7 @@ pip cache purge
 
 ```bash
 # Windows (automated)
-python setupfiles/setup_ffmpeg.py
+python setup_ffmpeg.py
 
 # Windows (manual)
 # 1. Download from https://ffmpeg.org/download.html
@@ -496,8 +496,8 @@ snatch info | grep -i ffmpeg
 
    ```bash
    # Windows
-   python setupfiles/setup_ffmpeg.py
-   
+   python setup_ffmpeg.py
+
    # Linux
    sudo apt-get remove ffmpeg
    sudo apt-get install ffmpeg

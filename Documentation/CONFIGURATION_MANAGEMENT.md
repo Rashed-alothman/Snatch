@@ -13,20 +13,20 @@ Clear cached data with safety checks and user feedback.
 #### Usage
 ```bash
 # Clear all cache with confirmation
-python -m modules.cli --clear-cache
+snatch --clear-cache
 
 # Clear specific cache types
-python -m modules.cli --clear-cache --type=metadata
-python -m modules.cli --clear-cache --type=downloads
-python -m modules.cli --clear-cache --type=sessions
-python -m modules.cli --clear-cache --type=thumbnails
-python -m modules.cli --clear-cache --type=temp
+snatch --clear-cache --type=metadata
+snatch --clear-cache --type=downloads
+snatch --clear-cache --type=sessions
+snatch --clear-cache --type=thumbnails
+snatch --clear-cache --type=temp
 
 # Dry run to see what would be deleted
-python -m modules.cli --clear-cache --dry-run
+snatch --clear-cache --dry-run
 
 # Skip confirmation prompt
-python -m modules.cli --clear-cache --yes
+snatch --clear-cache --yes
 ```
 
 #### Cache Types
@@ -51,14 +51,14 @@ Interactive configuration file editing with validation and backup.
 #### Usage
 ```bash
 # Open config in default editor
-python -m modules.cli config edit
+snatch config edit
 
 # Specify custom editor
-python -m modules.cli config edit --editor=notepad
-python -m modules.cli config edit --editor=code
+snatch config edit --editor=notepad
+snatch config edit --editor=code
 
 # Skip backup creation
-python -m modules.cli config edit --no-backup
+snatch config edit --no-backup
 ```
 
 #### Features
@@ -75,25 +75,25 @@ Display current configuration with multiple output formats and filtering.
 #### Usage
 ```bash
 # Show all configuration in table format
-python -m modules.cli config show
+snatch config show
 
 # Different output formats
-python -m modules.cli config show --format=json
-python -m modules.cli config show --format=yaml
-python -m modules.cli config show --format=table
+snatch config show --format=json
+snatch config show --format=yaml
+snatch config show --format=table
 
 # Filter by category
-python -m modules.cli config show --category=download
-python -m modules.cli config show --category=video
-python -m modules.cli config show --category=audio
-python -m modules.cli config show --category=network
+snatch config show --category=download
+snatch config show --category=video
+snatch config show --category=audio
+snatch config show --category=network
 
 # Show only non-default values
-python -m modules.cli config show --non-default
+snatch config show --non-default
 
 # Save to file
-python -m modules.cli config show --output=config_export.json
-python -m modules.cli config show --format=yaml --output=config.yaml
+snatch config show --output=config_export.json
+snatch config show --format=yaml --output=config.yaml
 ```
 
 #### Output Formats
@@ -116,13 +116,13 @@ Manage configuration backups with create, list, and restore functionality.
 #### Usage
 ```bash
 # List available backups
-python -m modules.cli config backup list
+snatch config backup list
 
 # Create new backup
-python -m modules.cli config backup create
+snatch config backup create
 
 # Restore from backup
-python -m modules.cli config backup restore --name=config_backup_20250527_220658.json
+snatch config backup restore --name=config_backup_20250527_220658.json
 ```
 
 #### Features
@@ -138,13 +138,13 @@ Reset configuration to default values with category support.
 #### Usage
 ```bash
 # Reset all configuration (with confirmation)
-python -m modules.cli config reset
+snatch config reset
 
 # Reset specific category
-python -m modules.cli config reset --category=download
+snatch config reset --category=download
 
 # Skip confirmation
-python -m modules.cli config reset --yes
+snatch config reset --yes
 ```
 
 ## Configuration Categories
@@ -200,34 +200,34 @@ python -m modules.cli config reset --yes
 ### Complete Workflow Example
 ```bash
 # 1. Show current configuration
-python -m modules.cli config show --category=download
+snatch config show --category=download
 
 # 2. Create backup before changes
-python -m modules.cli config backup create
+snatch config backup create
 
 # 3. Edit configuration
-python -m modules.cli config edit
+snatch config edit
 
 # 4. Verify changes
-python -m modules.cli config show --non-default
+snatch config show --non-default
 
 # 5. Clear cache after changes
-python -m modules.cli --clear-cache --type=metadata --dry-run
-python -m modules.cli --clear-cache --type=metadata
+snatch --clear-cache --type=metadata --dry-run
+snatch --clear-cache --type=metadata
 ```
 
 ### Maintenance Workflow
 ```bash
 # Weekly cache cleanup
-python -m modules.cli --clear-cache --type=temp
-python -m modules.cli --clear-cache --type=thumbnails
+snatch --clear-cache --type=temp
+snatch --clear-cache --type=thumbnails
 
 # Monthly full cleanup
-python -m modules.cli --clear-cache --dry-run
-python -m modules.cli --clear-cache
+snatch --clear-cache --dry-run
+snatch --clear-cache
 
 # Export configuration for backup
-python -m modules.cli config show --format=yaml --output=weekly_backup.yaml
+snatch config show --format=yaml --output=weekly_backup.yaml
 ```
 
 ## Error Handling
@@ -271,12 +271,12 @@ All configuration commands include comprehensive error handling:
 Use the built-in help system for detailed command information:
 
 ```bash
-python -m modules.cli --help
-python -m modules.cli config --help
-python -m modules.cli config show --help
-python -m modules.cli config edit --help
-python -m modules.cli config backup --help
-python -m modules.cli --clear-cache --help
+snatch --help
+snatch config --help
+snatch config show --help
+snatch config edit --help
+snatch config backup --help
+snatch --clear-cache --help
 ```
 
 ## Integration with Existing Features

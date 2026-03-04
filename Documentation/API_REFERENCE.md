@@ -440,7 +440,7 @@ AudioProcessor(config: Dict[str, Any])
 
 ### EnhancedAudioProcessor
 
-Enhanced processor with AI-based improvements, professional presets, and advanced algorithms introduced in v1.8.0.
+Enhanced processor with AI-based improvements, professional presets, and advanced algorithms.
 
 #### Constructor
 
