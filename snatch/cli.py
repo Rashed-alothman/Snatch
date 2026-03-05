@@ -153,11 +153,11 @@ class EnhancedCLI:
         """Run download(s) with proper context management"""
         async with self.download_manager:
             try:
-                console = Console()
-                console.print(f"[bold cyan]Processing {len(urls)} URLs[/]")
+                con = get_console()
+                con.print(f"[bold cyan]Processing {len(urls)} URLs[/]")
                 result = await self.download_manager.download_with_options(urls, options)
                 if result:
-                    console.print(f"[bold green]Successfully downloaded {len(result)} files[/]")
+                    con.print(f"[bold green]Successfully downloaded {len(result)} files[/]")
                     self.error_handler.log_error(
                         f"Successfully downloaded {len(result)} files",
                         ErrorCategory.DOWNLOAD,
@@ -165,8 +165,7 @@ class EnhancedCLI:
                         context={"downloaded_files": len(result), "urls": urls}
                     )
             except asyncio.CancelledError:
-                console = Console()
-                console.print("[bold yellow]Download was cancelled.[/]")
+                get_console().print("[bold yellow]Download was cancelled.[/]")
                 self.error_handler.log_error(
                     "Download process was cancelled",
                     ErrorCategory.DOWNLOAD,
@@ -181,8 +180,7 @@ class EnhancedCLI:
                     ErrorSeverity.ERROR,
                     context={"urls": urls, "options": options}
                 )
-                console = Console()
-                console.print(f"[bold red]Error: {str(e)}[/]")
+                get_console().print(f"[bold red]Error: {str(e)}[/]")
                 raise
 
     def run_async(self, coro: Any) -> Any:
@@ -228,20 +226,33 @@ class EnhancedCLI:
     def _log_download_mode(self, options: Dict[str, Any]) -> None:
         """Log download mode information"""
         if options.get("audio_only"):
-            console.print(f"[bold cyan]Audio mode:[/] Downloading as {options.get('audio_format', 'mp3')}")
+            fmt = options.get('audio_format', 'mp3')
+            quality = options.get('audio_quality', 'best')
+            console.print(f"[bold cyan]Audio mode:[/] {fmt} (quality: {quality})")
             if options.get("upmix_71"):
                 console.print("[bold cyan]Audio processing:[/] Upmixing to 7.1 surround")
             if options.get("denoise"):
                 console.print("[bold cyan]Audio processing:[/] Applying noise reduction")
+            if options.get("enhance_audio"):
+                preset = options.get("audio_enhancement_preset")
+                level = options.get("audio_enhancement_level", "medium")
+                label = f"preset={preset}" if preset else f"level={level}"
+                console.print(f"[bold cyan]Audio enhancement:[/] {label}")
         elif options.get("resolution"):
             resolution = options.get('resolution')
-            console.print(f"[bold cyan]Video mode:[/] Setting resolution to {resolution}")
-            
+            codec = options.get('video_codec', 'auto')
+            codec_info = f" ({codec})" if codec != "auto" else ""
+            console.print(f"[bold cyan]Video mode:[/] {resolution}p{codec_info}")
+        else:
+            codec = options.get('video_codec', 'auto')
+            if codec != 'auto':
+                console.print(f"[bold cyan]Video mode:[/] best quality ({codec})")
+
         # Log upscaling information
         if options.get("upscale_video"):
             method = options.get("upscale_method", "lanczos")
             factor = options.get("upscale_factor", 2)
-            console.print(f"[bold cyan]Video upscaling:[/] {method} {factor}x enhancement enabled")
+            console.print(f"[bold cyan]Video upscaling:[/] {method} {factor}x")
 
     @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.WARNING)
     def _run_download_safely(self, urls: List[str], options: Dict[str, Any]) -> int:
@@ -353,7 +364,8 @@ class EnhancedCLI:
             target_lufs: float = typer.Option(-16.0, "--target-lufs", help="Target loudness in LUFS (-23.0 for broadcast)"),
             declipping: bool = typer.Option(False, "--declipping", help="Remove audio clipping artifacts"),
             
-            # Video upscaling options
+            # Video codec and upscaling options
+            video_codec: str = typer.Option("auto", "--video-codec", help="Preferred video codec (h264, h265, vp9, av1, auto)"),
             upscale_video: bool = typer.Option(False, "--upscale", "-u", help="Enable video upscaling"),
             upscale_method: str = typer.Option("lanczos", "--upscale-method", help="Upscaling method (realesrgan, lanczos, bicubic)"),
             upscale_factor: int = typer.Option(2, "--upscale-factor", help="Upscaling factor (2x, 4x)"),
@@ -415,7 +427,8 @@ class EnhancedCLI:
                 "target_lufs": target_lufs,
                 "declipping": declipping,
                 
-                # Video upscaling
+                # Video codec and upscaling
+                "video_codec": video_codec,
                 "upscale_video": upscale_video,
                 "upscale_method": upscale_method,
                 "upscale_factor": upscale_factor,
@@ -759,7 +772,7 @@ class EnhancedCLI:
         """Show active downloads asynchronously"""
         async with AsyncSessionManager(self.config["session_file"]) as sm:
             sessions = sm.get_active_sessions()
-            console_obj = Console()
+            console_obj = get_console()
             if sessions:
                 console_obj.print("[bold green]Active downloads:[/]")
                 for session in sessions:
@@ -769,7 +782,7 @@ class EnhancedCLI:
                 
     async def interactive_mode(self) -> None:
         """Rich interactive mode with command history"""
-        console_obj = Console()
+        console_obj = get_console()
         console_obj.print("[bold cyan]Starting interactive mode[/]")
         
         # Try textual interface first, fallback to simple mode
@@ -808,40 +821,133 @@ class EnhancedCLI:
     
     async def _handle_command(self, command: str, console_obj: Console) -> bool:
         """Handle interactive command. Returns True if exit was requested."""
-        if command in ['exit', 'quit']:
+        if command in ['exit', 'quit', 'q']:
             console_obj.print("[bold cyan]Exiting interactive mode[/]")
             return True
-            
-        elif command == 'help':
+
+        elif command in ['help', '?']:
             self._show_help(console_obj)
-            
-        elif command.startswith('download '):
-            await self._handle_download_command(command, console_obj)
+
+        elif command in ['clear', 'cls']:
+            console_obj.clear()
+
+        elif command.startswith('download ') or command.startswith('dl '):
+            parts = command.split(None, 1)
+            if len(parts) > 1:
+                await self._handle_smart_download(parts[1], console_obj)
+
+        elif command.startswith(('audio ', 'flac ', 'mp3 ', 'opus ', 'wav ', 'm4a ', 'aac ')):
+            await self._handle_smart_download(command, console_obj)
+
+        elif command.startswith(('http://', 'https://', 'www.')):
+            # Bare URL or "URL format/resolution" syntax
+            await self._handle_smart_download(command, console_obj)
+
         elif command:
             console_obj.print(f"{UNKNOWN_COMMAND_MSG} {command}")
             console_obj.print(HELP_AVAILABLE_MSG)
-            
+
         return False
-    
+
     def _show_help(self, console_obj: Console) -> None:
         """Show help text for interactive mode"""
-        console_obj.print("[bold cyan]Available commands:[/]")
-        console_obj.print("  [green]download [URL][/] - Download media from URL")
-        console_obj.print("  [green]help[/] - Show this help")
-        console_obj.print("  [green]exit[/] or [green]quit[/] - Exit interactive mode")
-    
-    async def _handle_download_command(self, command: str, console_obj: Console) -> None:
-        """Handle download command in interactive mode"""
-        url = command[9:].strip()
+        console_obj.print("[bold cyan]Interactive Mode Commands:[/]")
+        console_obj.print("")
+        console_obj.print("  [green]<URL>[/]                    Download in best quality")
+        console_obj.print("  [green]<URL> 1080[/]               Download at 1080p")
+        console_obj.print("  [green]<URL> 720[/]                Download at 720p")
+        console_obj.print("  [green]<URL> 4k[/]                 Download at 4K")
+        console_obj.print("  [green]<URL> flac[/]               Download audio as FLAC")
+        console_obj.print("  [green]<URL> mp3[/]                Download audio as MP3")
+        console_obj.print("  [green]<URL> opus[/]               Download audio as Opus")
+        console_obj.print("  [green]audio <URL>[/]              Download audio (default format)")
+        console_obj.print("  [green]flac <URL>[/]               Download audio as FLAC")
+        console_obj.print("  [green]mp3 <URL>[/]                Download audio as MP3")
+        console_obj.print("  [green]download <URL>[/]           Download in best quality")
+        console_obj.print("")
+        console_obj.print("  [green]help[/] or [green]?[/]              Show this help")
+        console_obj.print("  [green]clear[/] or [green]cls[/]           Clear screen")
+        console_obj.print("  [green]exit[/] or [green]quit[/] or [green]q[/]     Exit")
+
+    def _parse_interactive_input(self, raw_input: str) -> tuple:
+        """Parse freeform interactive input into (url, options).
+
+        Supports patterns like:
+            <URL>                       → best quality video
+            <URL> 1080                  → 1080p video
+            <URL> flac                  → audio as FLAC
+            audio <URL>                 → audio default format
+            flac <URL>                  → audio as FLAC
+            mp3 <URL>                   → audio as MP3
+        """
+        import re as _re
+
+        audio_formats = {'flac', 'mp3', 'opus', 'wav', 'm4a', 'aac'}
+        resolution_names = {'4k', '2k', 'hd', 'sd'}
+        resolution_pattern = _re.compile(r'^(\d{3,4})p?$')
+
+        parts = raw_input.strip().split()
+        url = None
+        options: Dict[str, Any] = {}
+
+        for part in parts:
+            lower = part.lower()
+
+            # Is this a URL?
+            if part.startswith(('http://', 'https://', 'www.')):
+                url = part
+                continue
+
+            # Audio format keyword (before or after URL)
+            if lower in audio_formats:
+                options['audio_only'] = True
+                options['audio_format'] = lower
+                options['audio_quality'] = 'best'
+                continue
+
+            # "audio" keyword
+            if lower == 'audio':
+                options['audio_only'] = True
+                options['audio_format'] = options.get('audio_format', 'mp3')
+                options['audio_quality'] = 'best'
+                continue
+
+            # Resolution number (e.g., "1080", "720p", "480")
+            m = resolution_pattern.match(lower)
+            if m:
+                options['resolution'] = m.group(1)
+                continue
+
+            # Named resolution (4k, hd, etc.)
+            if lower in resolution_names:
+                options['resolution'] = lower
+                continue
+
+        return url, options
+
+    async def _handle_smart_download(self, raw_input: str, console_obj: Console) -> None:
+        """Parse freeform input and start a download with detected options."""
+        url, options = self._parse_interactive_input(raw_input)
+
         if not url:
-            console_obj.print("[yellow]Please provide a URL to download[/]")
+            console_obj.print(PROVIDE_URL_MSG)
             return
-            
-        console_obj.print(f"[cyan]Starting download of:[/] {url}")
+
+        # Show a summary of what we're about to do
+        mode_parts = []
+        if options.get('audio_only'):
+            mode_parts.append(f"audio ({options.get('audio_format', 'mp3')})")
+        if options.get('resolution'):
+            mode_parts.append(f"{options['resolution']}p")
+        mode = ", ".join(mode_parts) if mode_parts else "best quality"
+        console_obj.print(f"[cyan]Downloading:[/] {url}  [dim]({mode})[/]")
+
         try:
-            options = {}  # Default options
-            await self.download_manager.download(url, **options)            
-            console_obj.print(f"[bold green]Download complete:[/] {url}")
+            result = await self.download_manager.download_with_options([url], options)
+            if result:
+                console_obj.print(f"[bold green]Download complete[/]")
+            else:
+                console_obj.print(f"[bold yellow]Download finished with no output files[/]")
         except Exception as e:
             console_obj.print(f"[bold red]Download error:[/] {str(e)}")
     
