@@ -54,7 +54,6 @@ class _LazyConsole:
 console = _LazyConsole()
 
 # Constants for duplicate strings
-FALLBACK_INTERACTIVE_MSG = "[yellow]Falling back to enhanced interactive mode.[/]"
 FALLBACK_SIMPLE_MSG = "[yellow]Falling back to simple interactive mode...[/]"
 SKIP_CONFIRMATION_HELP = "Skip confirmation prompt"
 SETTING_MODIFY_HELP = "Setting to modify"
@@ -319,7 +318,9 @@ class EnhancedCLI:
         app = typer.Typer(
             name=APP_NAME,
             help=f"{APP_NAME} - A powerful media downloader",
-            epilog=EXAMPLES
+            epilog=EXAMPLES,
+            invoke_without_command=True,
+            no_args_is_help=True,
         )
             # Download command          
         @app.command("download", help="Download media from URLs")
@@ -431,45 +432,11 @@ class EnhancedCLI:
             return self.execute_download(all_urls, options)        # Interactive mode command        
         @app.command("interactive", help="Run in interactive mode")
         def interactive():
-            """Run in enhanced interactive mode with cyberpunk interface"""
+            """Launch the interactive TUI"""
             from .interactive_mode import launch_enhanced_interactive_mode
             launch_enhanced_interactive_mode(self.config)
             return 0
-            
-        # Modern interactive interface command        
-        @app.command("modern", help="Run with modern interactive interface")
-        def modern():
-            """Run with modern beautiful interactive interface"""
-            try:
-                from .theme.modern_interactive import run_modern_interactive
-                run_modern_interactive(self.config)
-            except ImportError as e:
-                console.print(f"[bold red]Modern interface not available: {str(e)}[/]")
-                console.print(FALLBACK_INTERACTIVE_MSG)
-                from .interactive_mode import launch_enhanced_interactive_mode
-                launch_enhanced_interactive_mode(self.config)
-            except Exception as e:
-                console.print(f"[bold red]Error launching modern interface: {str(e)}[/]")
-                console.print(FALLBACK_INTERACTIVE_MSG)
-                from .interactive_mode import launch_enhanced_interactive_mode
-                launch_enhanced_interactive_mode(self.config)
-            return 0
 
-        # New textual interface command
-        @app.command("textual", help="Run with modern Textual interface")
-        def textual():
-            """Run with modern Textual interface"""
-            try:
-                # Import at runtime to avoid dependencies if not used
-                from .theme.textual_interface import start_textual_interface
-                # Pass the current CLI instance to maintain state
-                start_textual_interface(self.config)
-            except ImportError as e:
-                console.print(f"[bold yellow]Textual interface not available: {str(e)}[/]")
-                console.print("[yellow]Falling back to enhanced interactive mode.[/]")
-                from .interactive_mode import launch_enhanced_interactive_mode
-                launch_enhanced_interactive_mode(self.config)
-        
         # List supported sites command
         @app.command("list-sites", help="List all supported sites")
         def list_sites():
@@ -2217,6 +2184,10 @@ class EnhancedCLI:
 def main():
     """Main entry point for the CLI application"""
     try:
+        # Suppress noisy INFO/DEBUG logs unless --verbose is passed
+        if "--verbose" not in sys.argv and "-v" not in sys.argv:
+            logging.getLogger().setLevel(logging.WARNING)
+
         # Enable Rich traceback formatting (deferred from module level)
         from rich.traceback import install
         install(show_locals=True)

@@ -46,12 +46,10 @@ DEFAULT_MAX_RETRIES = 5
 # Sample command examples for help
 EXAMPLES = """
 Examples:
-snatch https://www.youtube.com/watch?v=dQw4w9WgXcQ
-snatch --audio-only https://soundcloud.com/artist/track
-snatch --audio-only --upmix-7.1 --denoise https://example.com/audio
-snatch --resolution 1080 https://vimeo.com/video_id
-snatch --textual  # Launch modern textual interface
-snatch --interactive  # Launch classic interactive mode
+snatch download https://www.youtube.com/watch?v=dQw4w9WgXcQ
+snatch download --audio-only https://soundcloud.com/artist/track
+snatch download --resolution 1080 https://vimeo.com/video_id
+snatch interactive  # Launch interactive TUI
 """
 
 # Audio processing settings
