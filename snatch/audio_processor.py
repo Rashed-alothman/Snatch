@@ -38,7 +38,7 @@ try:
     import pyloudnorm as pyln
     ENHANCED_PROCESSING_AVAILABLE = True
 except ImportError as e:
-    logging.warning(f"Enhanced audio processing libraries not available: {e}")
+    logging.debug(f"Enhanced audio processing libraries not available: {e}")
     ENHANCED_PROCESSING_AVAILABLE = False
 
 # Configure logging

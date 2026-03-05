@@ -109,7 +109,7 @@ class EnhancedErrorHandler:
             show_path=False,
             rich_tracebacks=True
         )
-        console_handler.setLevel(logging.INFO)
+        console_handler.setLevel(logging.WARNING)
         console_formatter = logging.Formatter(
             fmt='%(message)s'
         )
