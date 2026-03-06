@@ -610,3 +610,24 @@ AUDIO_ENHANCEMENT_DEFAULTS = {
     "chunked_processing": True,
     "chunk_size_seconds": 30,  # Process in 30-second chunks for large files
 }
+
+# Audio quality mapping: human-readable names → yt-dlp FFmpeg quality values
+# For FFmpegExtractAudio: "0" = best, "10" = worst; for bitrate-based codecs these map to kbps
+AUDIO_QUALITY_MAP = {
+    "best": "0",       # Highest quality (VBR best for mp3/opus, lossless for flac)
+    "high": "192",     # 192 kbps
+    "medium": "128",   # 128 kbps
+    "low": "96",       # 96 kbps
+    "tiny": "64",      # 64 kbps (voice/podcast)
+    # Also accept raw numeric strings
+}
+
+# Video codec preference filters for yt-dlp format selection
+VIDEO_CODEC_PREFERENCE = {
+    "h264": "[vcodec^=avc1]",
+    "h265": "[vcodec^=hev1]",
+    "hevc": "[vcodec^=hev1]",
+    "vp9": "[vcodec=vp9]",
+    "av1": "[vcodec^=av01]",
+    "auto": "",  # No codec filter — let yt-dlp pick the best
+}

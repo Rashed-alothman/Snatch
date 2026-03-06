@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import threading
 import time
 import asyncio
@@ -379,9 +380,20 @@ def test_functionality() -> bool:
     """Run basic tests to verify functionality"""
     print(f"{Fore.CYAN}Running basic tests...{Style.RESET_ALL}")
     try:
-        # Test configuration initialization
+        # Test configuration initialization (async function — must be run properly)
         print(f"{Fore.CYAN}Testing configuration...{Style.RESET_ALL}")
-        config = initialize_config_async(force_validation=True)
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context — can't use asyncio.run()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                config = pool.submit(lambda: asyncio.run(initialize_config_async(force_validation=True))).result()
+        except RuntimeError:
+            config = asyncio.run(initialize_config_async(force_validation=True))
+
+        if not config:
+            print(f"{Fore.RED}Failed to initialize configuration!{Style.RESET_ALL}")
+            return False
 
         # Check if FFmpeg is available in the config
         if not config.get("ffmpeg_location") or not validate_ffmpeg_installation():

@@ -128,41 +128,46 @@ class VideoUpscaler:
             logging.error(f"Video upscaling failed: {str(e)}")
             return False
     
-    async def _upscale_with_realesrgan(self, input_path: str, output_path: str, 
+    async def _upscale_with_realesrgan(self, input_path: str, output_path: str,
                                      config: Dict[str, Any]) -> bool:
         """Upscale video using Real-ESRGAN AI upscaling"""
+        frames_dir = None
+        upscaled_dir = None
         try:
             scale_factor = config.get("scale_factor", 2)
             model_name = f"RealESRGAN_x{scale_factor}plus"
-            
+
+            # Detect source framerate instead of hardcoding
+            video_info = await self._get_video_info(input_path)
+            source_fps = video_info.get("r_frame_rate", "30/1") if video_info else "30/1"
+
             # Extract frames from video
             frames_dir = self.temp_dir / f"frames_{Path(input_path).stem}"
             frames_dir.mkdir(exist_ok=True)
-            
-            # Extract frames using FFmpeg
+
             extract_cmd = [
                 self.ffmpeg_path,
                 "-i", input_path,
-                "-vf", "fps=30",  # Limit to 30fps for processing
+                "-vf", f"fps={source_fps}",
                 str(frames_dir / "frame_%06d.png")
             ]
-            
-            logging.info("Extracting video frames...")            
+
+            logging.info(f"Extracting video frames at {source_fps} fps...")
             result = await asyncio.create_subprocess_exec(
                 *extract_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            _, _ = await result.communicate()
-            
+            _, stderr = await result.communicate()
+
             if result.returncode != 0:
-                logging.error("Failed to extract video frames")
+                logging.error(f"Failed to extract video frames: {stderr.decode()[:200]}")
                 return False
-            
+
             # Upscale frames with Real-ESRGAN
             upscaled_dir = self.temp_dir / f"upscaled_{Path(input_path).stem}"
             upscaled_dir.mkdir(exist_ok=True)
-            
+
             realesrgan_cmd = [
                 "realesrgan-ncnn-vulkan",
                 "-i", str(frames_dir),
@@ -171,30 +176,32 @@ class VideoUpscaler:
                 "-s", str(scale_factor),
                 "-f", "png"
             ]
-            
-            logging.info(f"Upscaling frames with Real-ESRGAN {model_name}...")            
+
+            logging.info(f"Upscaling frames with Real-ESRGAN {model_name}...")
             result = await asyncio.create_subprocess_exec(
                 *realesrgan_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            _, _ = await result.communicate()
-            
+            _, stderr = await result.communicate()
+
             if result.returncode != 0:
-                logging.error("Real-ESRGAN upscaling failed, falling back to traditional method")
-                return await self._upscale_with_ffmpeg(input_path, output_path, 
+                logging.error(f"Real-ESRGAN failed ({stderr.decode()[:200]}), falling back to lanczos")
+                return await self._upscale_with_ffmpeg(input_path, output_path,
                                                      {**config, "method": "lanczos"})
-            
+
             # Reconstruct video from upscaled frames
             return await self._reconstruct_video(input_path, output_path, upscaled_dir)
-            
+
         except Exception as e:
             logging.error(f"Real-ESRGAN upscaling error: {str(e)}")
-            return await self._upscale_with_ffmpeg(input_path, output_path, 
+            return await self._upscale_with_ffmpeg(input_path, output_path,
                                                  {**config, "method": "lanczos"})
         finally:
-            # Cleanup temporary directories
-            self._cleanup_temp_dirs([frames_dir, upscaled_dir])
+            # Cleanup temporary directories (only if they were created)
+            dirs_to_clean = [d for d in [frames_dir, upscaled_dir] if d is not None]
+            if dirs_to_clean:
+                self._cleanup_temp_dirs(dirs_to_clean)
     
     async def _upscale_with_ffmpeg(self, input_path: str, output_path: str, 
                                  config: Dict[str, Any]) -> bool:
@@ -226,21 +233,29 @@ class VideoUpscaler:
                     new_height = 2160
                     new_width = int(2160 * aspect_ratio)
             
+            # Map quality setting to CRF value
+            quality = config.get("quality", "high")
+            crf_map = {"low": "28", "medium": "23", "high": "18"}
+            crf = crf_map.get(quality, "18")
+
+            preset_map = {"low": "fast", "medium": "medium", "high": "slow"}
+            preset = preset_map.get(quality, "slow")
+
             # Build FFmpeg command for upscaling
             upscale_filter = f"scale={new_width}:{new_height}:flags={method}"
-            
+
             cmd = [
                 self.ffmpeg_path,
                 "-i", input_path,
                 "-vf", upscale_filter,
                 "-c:v", "libx264",
-                "-crf", "18",  # High quality
-                "-preset", "slow",
+                "-crf", crf,
+                "-preset", preset,
                 "-c:a", "copy",  # Copy audio without re-encoding
                 "-y",  # Overwrite output file
                 output_path
             ]
-            logging.info(f"Upscaling video with FFmpeg {method} to {new_width}x{new_height}")
+            logging.info(f"Upscaling video with FFmpeg {method} to {new_width}x{new_height} (quality={quality}, CRF={crf})")
             
             result = await asyncio.create_subprocess_exec(
                 *cmd,
