@@ -363,7 +363,7 @@ class AsyncSessionManager:
                         except (TypeError, ValueError) as e:
                             logging.error("Failed to load session from backup: %s", str(e))
                             continue  # Skip invalid sessions
-                            logging.info(f"Successfully recovered sessions from backup: {backup}")
+                    logging.info(f"Successfully recovered sessions from backup: {backup}")
                 return True
             except Exception as e:
                 logging.warning(f"Failed to load backup {backup}: {e}")
@@ -507,7 +507,8 @@ class AsyncSessionManager:
             metadata=metadata,
             resume_data=resume_data
         )
-        with self.lock:self._sessions[url] = session
+        with self.lock:
+            self._sessions[url] = session
             
     @handle_errors(ErrorCategory.DOWNLOAD, ErrorSeverity.WARNING)
     def update_session(self, url: str, bytes_downloaded: int, status: Optional[str] = None, 
@@ -789,26 +790,41 @@ class AsyncSessionManager:
 
 class SessionManager:
     """Synchronous wrapper around AsyncSessionManager with enhanced backwards compatibility."""
-    
+
     def __init__(self, session_file: Optional[str] = None):
         """Initialize session manager with sync interface.
-        
+
         Args:
             session_file: Path to the sessions data file. If None, uses default path.
-        """        # Use config directory for sessions file if no path provided
+        """
+        # Use config directory for sessions file if no path provided
         if session_file is None:
             session_file = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), 
+                os.path.dirname(os.path.dirname(__file__)),
                 'sessions',
                 DOWNLOAD_SESSIONS_FILE
             )
             os.makedirs(os.path.dirname(session_file), exist_ok=True)
-            
+
         self._async_manager = AsyncSessionManager(session_file)
-        
+
         # Initialize error handler
-        error_log_path = "logs/snatch_errors.log" 
+        error_log_path = "logs/snatch_errors.log"
         self.error_handler = EnhancedErrorHandler(log_file=error_log_path)
+
+    def _run_async_save(self) -> None:
+        """Safely run async save from sync context without crashing if an event loop is already running."""
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            # Already in an async context — schedule save as a fire-and-forget task
+            loop.create_task(self._async_manager._save_sessions_async())
+        else:
+            # No event loop running — safe to use asyncio.run()
+            self._run_async_save()
         
     def update_session(self, url: str, percentage: float, **metadata) -> None:
         """Update session state synchronously.
@@ -857,7 +873,7 @@ class SessionManager:
             self._async_manager._sessions[url] = session
             
         # Trigger sync save
-        asyncio.run(self._async_manager._save_sessions_async())
+        self._run_async_save()
         
     def get_session(self, url: str) -> Optional[Dict[str, Any]]:
         """Get session data synchronously.
@@ -879,7 +895,7 @@ class SessionManager:
         with self._async_manager.lock:
             if url in self._async_manager._sessions:
                 del self._async_manager._sessions[url]
-                asyncio.run(self._async_manager._save_sessions_async())
+                self._run_async_save()
                 
     def cancel_session(self, url: str) -> bool:
         """Cancel a download session synchronously.
@@ -891,7 +907,7 @@ class SessionManager:
             bool: True if session was cancelled, False otherwise.
         """
         result = self._async_manager.cancel_session(url)
-        asyncio.run(self._async_manager._save_sessions_async())
+        self._run_async_save()
         return result
         
     def resume_session(self, url: str) -> bool:
@@ -904,7 +920,7 @@ class SessionManager:
             bool: True if session was resumed, False otherwise.
         """
         result = self._async_manager.resume_session(url)
-        asyncio.run(self._async_manager._save_sessions_async())
+        self._run_async_save()
         return result
         
     def list_sessions(self, filter_status: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -940,5 +956,5 @@ class SessionManager:
             str: The session URL (used as ID).
         """
         self._async_manager.create_session(url, file_path, total_size, metadata)
-        asyncio.run(self._async_manager._save_sessions_async())
+        self._run_async_save()
         return url

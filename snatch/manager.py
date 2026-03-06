@@ -49,22 +49,9 @@ FORMAT_1080P = "bestvideo[height<=1080]+bestaudio/best[height<=1080]"
 FORMAT_720P = "bestvideo[height<=720]+bestaudio/best[height<=720]"
 FORMAT_480P = "bestvideo[height<=480]+bestaudio/best[height<=480]"
 
-# Define custom exception classes
-class DownloadError(Exception):
-    """Base exception for download errors"""
-    pass
-    
-class NetworkError(DownloadError):
-    """Network-related errors"""
-    pass
-    
-class ResourceError(DownloadError):
-    """Resource-related errors (file not found, etc.)"""
-    pass
-    
-class AudioConversionError(DownloadError):
-    """Raised when audio conversion fails"""
-    pass
+# Note: Exception classes (DownloadError, NetworkError, ResourceError, etc.)
+# are defined further below with the full hierarchy. AudioConversionError
+# is added there as well to avoid duplicate class definitions.
 
 # Import local utils to avoid circular imports
 try:
@@ -220,6 +207,10 @@ class SystemResourceError(DownloadError):
 
 class AuthenticationError(DownloadError):
     """Raised when authentication fails"""
+    pass
+
+class AudioConversionError(DownloadError):
+    """Raised when audio conversion fails"""
     pass
 
 @dataclass
@@ -893,20 +884,25 @@ class AsyncDownloadManager:
         
         # Initialize advanced systems if not provided
         if not self.performance_monitor or not self.advanced_scheduler:
-            self._initialize_advanced_systems()        # Create audio processor instance
-        self.audio_processor = EnhancedAudioProcessor(config) if 'EnhancedAudioProcessor' in globals() else None
+            self._initialize_advanced_systems()
+
+        # Create audio processor instance (graceful if FFmpeg missing)
+        self.audio_processor = None
+        try:
+            self.audio_processor = EnhancedAudioProcessor(config)
+        except Exception as e:
+            logging.debug(f"Audio processor init deferred: {e}")
         
-        # Initialize video upscaler
+        # Initialize video upscaler (always create so --upscale CLI flag works)
         self.video_upscaler = None
-        if config.get("upscaling", {}).get("enabled", False):
-            try:
-                from .ffmpeg_helper import create_video_upscaler
-                self.video_upscaler = create_video_upscaler(config)
-                logging.info("Video upscaler initialized successfully")
-            except ImportError as e:
-                logging.warning(f"Video upscaling not available: {e}")
-            except Exception as e:
-                logging.error(f"Failed to initialize video upscaler: {e}")
+        try:
+            from .ffmpeg_helper import create_video_upscaler
+            self.video_upscaler = create_video_upscaler(config)
+            logging.info("Video upscaler initialized successfully")
+        except ImportError as e:
+            logging.debug(f"Video upscaling not available: {e}")
+        except Exception as e:
+            logging.debug(f"Failed to initialize video upscaler: {e}")
         
         # Initialize P2P manager if enabled
         self.p2p_manager = None
@@ -1244,19 +1240,23 @@ class AsyncDownloadManager:
         ydl_opts = self._setup_download_options(options)
         downloaded_files = []
         console = Console()
-        
-        with console.status("[bold green]Downloading...") as _:
-            for url in urls:
-                try:
+
+        total = len(urls)
+        for idx, url in enumerate(urls, 1):
+            try:
+                if total > 1:
+                    console.print(f"\n[bold cyan][{idx}/{total}][/] {url}")
+                else:
                     console.print(f"[cyan]Downloading:[/] {url}")
-                    file_path = await self._download_single_file(url, ydl_opts, options, console)
-                    
-                    if file_path:
-                        downloaded_files.append(file_path)
-                except Exception as e:
-                    console.print(f"[bold red]Error downloading {url}: {str(e)}[/]")
-                    logging.error(f"Download error for {url}: {str(e)}")
-        
+
+                file_path = await self._download_single_file(url, ydl_opts, options, console)
+
+                if file_path:
+                    downloaded_files.append(file_path)
+            except Exception as e:
+                console.print(f"[bold red]Error downloading {url}: {str(e)}[/]")
+                logging.error(f"Download error for {url}: {str(e)}")
+
         self._report_download_results(downloaded_files, console)
         return downloaded_files
     
@@ -1275,7 +1275,15 @@ class AsyncDownloadManager:
         if not downloaded_files:
             console.print("[bold yellow]No files were successfully downloaded.[/]")
         else:
-            console.print(f"[bold green]Successfully downloaded {len(downloaded_files)} files.[/]")
+            console.print(f"\n[bold green]Successfully downloaded {len(downloaded_files)} file(s):[/]")
+            for fp in downloaded_files:
+                size_str = ""
+                try:
+                    size_bytes = os.path.getsize(fp)
+                    size_str = f" ({format_size(size_bytes)})"
+                except OSError:
+                    pass
+                console.print(f"  [dim]{os.path.basename(fp)}{size_str}[/]")
     
     async def _download_single_file(self, url: str, ydl_opts: Dict[str, Any], options: Dict[str, Any], console: Console) -> Optional[str]:
         """Download a single file with all processing options"""
@@ -1371,49 +1379,84 @@ class AsyncDownloadManager:
         try:
             from .common_utils import sanitize_filename
         except ImportError:
-            # Fall back to local implementation if import fails
             def sanitize_filename(filename: str) -> str:
-                """Sanitize filename by removing invalid characters"""
                 invalid_chars = r'[<>:"/\\|?*\x00-\x1F]'
                 return re.sub(invalid_chars, '_', filename).strip('. ')
-        
+
         ydl_opts = {}
-        
+
         # Set output directory based on audio_only flag
         output_dir = self.config.get(
-            "audio_output" if options.get("audio_only") else "video_output", 
+            "audio_output" if options.get("audio_only") else "video_output",
             "downloads"
         )
         os.makedirs(output_dir, exist_ok=True)
-        
+
         # Set output template
         if options.get("filename"):
             filename = sanitize_filename(options.get("filename"))
             ydl_opts["outtmpl"] = os.path.join(output_dir, f"{filename}.%(ext)s")
         else:
             ydl_opts["outtmpl"] = os.path.join(output_dir, "%(title)s.%(ext)s")
-        
+
+        # Merge format: ensure combined video+audio gets a proper container
+        if not options.get("audio_only"):
+            ydl_opts["merge_output_format"] = "mp4"
+
+        # Robust common options for all downloads
+        ffmpeg_path = self.config.get("ffmpeg_location") or locate_ffmpeg()
+        if ffmpeg_path:
+            ydl_opts["ffmpeg_location"] = os.path.dirname(ffmpeg_path)
+
+        ydl_opts.update({
+            "concurrent_fragment_downloads": self.config.get("concurrent_fragment_downloads", 8),
+            "retries": self.config.get("max_retries", 5),
+            "fragment_retries": self.config.get("max_retries", 5),
+            "socket_timeout": 30,
+            "extractor_retries": 3,
+            "file_access_retries": 3,
+            "ignoreerrors": False,      # Fail fast so we can report errors
+            "no_warnings": True,
+            "quiet": options.get("quiet", False),
+        })
+
         # Configure format-specific options
         self._configure_format_options(ydl_opts, options)
-        
+
         return ydl_opts
     
     def _configure_format_options(self, ydl_opts: Dict[str, Any], options: Dict[str, Any]) -> None:
         """Configure format-specific download options."""
         # Handle audio-only downloads
         if options.get("audio_only"):
-            ydl_opts["format"] = COMPREHENSIVE_BESTAUDIO_FORMAT
-
-            # Map quality name to yt-dlp value using AUDIO_QUALITY_MAP
+            audio_format = options.get("audio_format", "mp3")
             raw_quality = options.get("audio_quality", "best")
-            quality = AUDIO_QUALITY_MAP.get(raw_quality, raw_quality)  # Allow raw numeric passthrough
 
-            ydl_opts["postprocessors"] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': options.get("audio_format", "mp3"),
-                'preferredquality': quality,
-            }]
-            logging.info(f"Audio download configured: format={options.get('audio_format', 'mp3')}, quality={quality} (from '{raw_quality}')")
+            # For lossless formats, always use best quality source
+            lossless_formats = {"flac", "wav", "alac"}
+            if audio_format in lossless_formats:
+                quality = "0"  # Best source quality for lossless
+            else:
+                quality = AUDIO_QUALITY_MAP.get(raw_quality, raw_quality)
+
+            ydl_opts["format"] = COMPREHENSIVE_BESTAUDIO_FORMAT
+            ydl_opts["postprocessors"] = [
+                {
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': audio_format,
+                    'preferredquality': quality,
+                },
+                {
+                    'key': 'FFmpegMetadata',   # Embed metadata (title, artist, etc.)
+                },
+                {
+                    'key': 'EmbedThumbnail',    # Embed album art when available
+                    'already_have_thumbnail': False,
+                },
+            ]
+            ydl_opts["writethumbnail"] = True  # Download thumbnail for embedding
+
+            logging.info(f"Audio download configured: format={audio_format}, quality={quality} (from '{raw_quality}')")
 
         # Handle resolution-specific downloads
         elif options.get("resolution"):
@@ -1485,58 +1528,102 @@ class AsyncDownloadManager:
         try:
             import yt_dlp
 
-            # Add throttled progress hook (max once per second)
-            _last_progress_time = [0.0]
+            # Use Rich progress bar instead of flooding console with print statements
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(bar_width=30),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("•"),
+                TransferSpeedColumn(),
+                TextColumn("•"),
+                TimeElapsedColumn(),
+                console=console,
+                transient=True,
+            )
+
+            _task_id = [None]
 
             def progress_hook(d):
                 if d['status'] == 'downloading':
-                    now = time.time()
-                    if now - _last_progress_time[0] < 1.0:
-                        return  # Skip — throttle to 1 update/second
-                    _last_progress_time[0] = now
-                    percent = d.get('_percent_str', 'N/A').strip()
-                    speed = d.get('_speed_str', 'N/A').strip()
-                    eta = d.get('_eta_str', '')
-                    eta_part = f" | ETA: {eta}" if eta else ""
-                    console.print(f"[cyan]Progress:[/] {percent} at {speed}{eta_part}")
+                    total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+                    downloaded = d.get('downloaded_bytes', 0)
+
+                    if _task_id[0] is None and total > 0:
+                        _task_id[0] = progress.add_task("Downloading", total=total)
+                    if _task_id[0] is not None:
+                        progress.update(_task_id[0], completed=downloaded)
+
                 elif d['status'] == 'finished':
-                    console.print(f"[green]Download completed:[/] {d['filename']}")
-            
+                    if _task_id[0] is not None:
+                        progress.update(_task_id[0], completed=progress.tasks[_task_id[0]].total)
+                    filename = os.path.basename(d.get('filename', 'unknown'))
+                    console.print(f"[green]Download completed:[/] {filename}")
+
             ydl_opts["progress_hooks"] = [progress_hook]
-            
-            # Setup error handling
-            def error_hook(error_msg):
-                self.error_handler.log_error(
-                    f"yt-dlp error: {error_msg}",
-                    ErrorCategory.DOWNLOAD,
-                    ErrorSeverity.ERROR,
-                    context={"url": url, "ydl_error": True}
-                )
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                try:
-                    # Extract info first to get filename
-                    info = ydl.extract_info(url, download=False)
-                    if not info:
-                        raise DownloadError("Failed to extract video information")
-                      # Download the video
-                    ydl.download([url])
-                    
-                    # Get the downloaded filename
-                    downloaded_file = ydl.prepare_filename(info)
-                    
-                    # Check if upscaling is requested and applicable
-                    if self._should_upscale_video(options, downloaded_file):
-                        upscaled_file = await self._apply_video_upscaling(downloaded_file, options, console)
-                        if upscaled_file:
-                            return upscaled_file
-                    
-                    return downloaded_file
-                    
-                except Exception as e:
-                    error_hook(str(e))
-                    raise DownloadError(f"Download failed for {url}: {str(e)}") from e
-                    
+
+            with progress:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    try:
+                        # Extract info first to get filename and validate URL
+                        info = ydl.extract_info(url, download=False)
+                        if not info:
+                            raise DownloadError("Failed to extract media information. The URL may be invalid or unsupported.")
+
+                        title = info.get('title', 'Unknown')
+                        console.print(f"[cyan]Title:[/] {title}")
+
+                        # Show selected format info
+                        fmt = info.get('format', info.get('format_id', 'N/A'))
+                        console.print(f"[dim]Format: {fmt}[/]")
+
+                        # Download the media
+                        ydl.download([url])
+
+                        # Get the downloaded filename
+                        downloaded_file = ydl.prepare_filename(info)
+
+                        # For audio extractions, the extension may have changed
+                        if options.get("audio_only"):
+                            audio_ext = options.get("audio_format", "mp3")
+                            alt_path = os.path.splitext(downloaded_file)[0] + f".{audio_ext}"
+                            if os.path.exists(alt_path):
+                                downloaded_file = alt_path
+
+                        # Check if upscaling is requested and applicable
+                        if self._should_upscale_video(options, downloaded_file):
+                            upscaled_file = await self._apply_video_upscaling(downloaded_file, options, console)
+                            if upscaled_file:
+                                return upscaled_file
+
+                        return downloaded_file
+
+                    except yt_dlp.utils.DownloadError as e:
+                        error_msg = str(e)
+                        # Provide user-friendly error messages for common failures
+                        if "Unsupported URL" in error_msg:
+                            console.print(f"[red]Unsupported URL:[/] This site may not be supported")
+                        elif "Video unavailable" in error_msg or "Private video" in error_msg:
+                            console.print(f"[red]Video unavailable:[/] It may be private, deleted, or region-locked")
+                        elif "HTTP Error 403" in error_msg:
+                            console.print(f"[red]Access denied:[/] The content requires authentication or is geo-restricted")
+                        elif "format" in error_msg.lower():
+                            console.print(f"[red]Format error:[/] The requested quality may not be available. Try without --resolution")
+                        else:
+                            console.print(f"[red]Download error:[/] {error_msg[:200]}")
+                        return None
+
+                    except Exception as e:
+                        self.error_handler.log_error(
+                            f"yt-dlp error: {str(e)}",
+                            ErrorCategory.DOWNLOAD,
+                            ErrorSeverity.ERROR,
+                            context={"url": url, "ydl_error": True}
+                        )
+                        raise DownloadError(f"Download failed for {url}: {str(e)}") from e
+
+        except DownloadError:
+            return None  # Already reported
         except Exception as e:
             self.error_handler.log_error(
                 f"Failed to download {url}: {str(e)}",

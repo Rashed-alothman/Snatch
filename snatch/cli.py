@@ -804,46 +804,67 @@ class EnhancedCLI:
     
     async def _run_simple_interactive_mode(self, console_obj: Console) -> None:
         """Run simple fallback interactive mode"""
+        from rich.panel import Panel
+
+        console_obj.print(Panel(
+            "[bold cyan]Snatch Interactive Mode[/]\n\n"
+            "Paste a URL to download. Add modifiers for format/quality:\n\n"
+            "  [green]<URL>[/]           Best quality video\n"
+            "  [green]<URL> 1080[/]      1080p video\n"
+            "  [green]<URL> flac[/]      Audio as FLAC\n"
+            "  [green]<URL> mp3[/]       Audio as MP3\n"
+            "  [green]<URL> upscale[/]   Download + AI upscale\n\n"
+            "Type [green]help[/] for all commands, [green]q[/] to quit.",
+            title="Snatch",
+            border_style="cyan",
+        ))
+
         while True:
             try:
-                command = console_obj.input("[bold cyan]Enter command (or 'help', 'exit'):[/] ")
-                command = command.strip().lower()
-                
-                if await self._handle_command(command, console_obj):
-                    break  # Exit was requested
-                    
+                command = console_obj.input("\n[bold cyan]snatch>[/] ")
+                command = command.strip()
+                # Don't lowercase the whole thing — URLs are case-sensitive
+                command_lower = command.lower()
+
+                if await self._handle_command(command_lower if not command_lower.startswith(('http', 'www.')) else command, console_obj):
+                    break
+
             except KeyboardInterrupt:
                 console_obj.print(INTERRUPTED_MSG)
                 continue
+            except EOFError:
+                break
             except Exception as error:
                 console_obj.print(f"[bold red]Command error:[/] {str(error)}")
                 continue
     
     async def _handle_command(self, command: str, console_obj: Console) -> bool:
         """Handle interactive command. Returns True if exit was requested."""
-        if command in ['exit', 'quit', 'q']:
+        cmd_lower = command.strip().lower() if command else ""
+
+        if cmd_lower in ['exit', 'quit', 'q']:
             console_obj.print("[bold cyan]Exiting interactive mode[/]")
             return True
 
-        elif command in ['help', '?']:
+        elif cmd_lower in ['help', '?']:
             self._show_help(console_obj)
 
-        elif command in ['clear', 'cls']:
+        elif cmd_lower in ['clear', 'cls']:
             console_obj.clear()
 
-        elif command.startswith('download ') or command.startswith('dl '):
+        elif cmd_lower.startswith('download ') or cmd_lower.startswith('dl '):
             parts = command.split(None, 1)
             if len(parts) > 1:
                 await self._handle_smart_download(parts[1], console_obj)
 
-        elif command.startswith(('audio ', 'flac ', 'mp3 ', 'opus ', 'wav ', 'm4a ', 'aac ')):
+        elif cmd_lower.startswith(('audio ', 'flac ', 'mp3 ', 'opus ', 'wav ', 'm4a ', 'aac ')):
             await self._handle_smart_download(command, console_obj)
 
-        elif command.startswith(('http://', 'https://', 'www.')):
-            # Bare URL or "URL format/resolution" syntax
+        elif command.startswith(('http://', 'https://', 'www.', 'HTTP://', 'HTTPS://')):
+            # Bare URL or "URL format/resolution" syntax — preserve original case for URL
             await self._handle_smart_download(command, console_obj)
 
-        elif command:
+        elif cmd_lower:
             console_obj.print(f"{UNKNOWN_COMMAND_MSG} {command}")
             console_obj.print(HELP_AVAILABLE_MSG)
 
@@ -851,23 +872,29 @@ class EnhancedCLI:
 
     def _show_help(self, console_obj: Console) -> None:
         """Show help text for interactive mode"""
-        console_obj.print("[bold cyan]Interactive Mode Commands:[/]")
-        console_obj.print("")
-        console_obj.print("  [green]<URL>[/]                    Download in best quality")
-        console_obj.print("  [green]<URL> 1080[/]               Download at 1080p")
-        console_obj.print("  [green]<URL> 720[/]                Download at 720p")
-        console_obj.print("  [green]<URL> 4k[/]                 Download at 4K")
-        console_obj.print("  [green]<URL> flac[/]               Download audio as FLAC")
-        console_obj.print("  [green]<URL> mp3[/]                Download audio as MP3")
-        console_obj.print("  [green]<URL> opus[/]               Download audio as Opus")
-        console_obj.print("  [green]audio <URL>[/]              Download audio (default format)")
-        console_obj.print("  [green]flac <URL>[/]               Download audio as FLAC")
-        console_obj.print("  [green]mp3 <URL>[/]                Download audio as MP3")
-        console_obj.print("  [green]download <URL>[/]           Download in best quality")
-        console_obj.print("")
-        console_obj.print("  [green]help[/] or [green]?[/]              Show this help")
-        console_obj.print("  [green]clear[/] or [green]cls[/]           Clear screen")
-        console_obj.print("  [green]exit[/] or [green]quit[/] or [green]q[/]     Exit")
+        from rich.table import Table
+        table = Table(title="Interactive Mode Commands", border_style="cyan", show_lines=False)
+        table.add_column("Command", style="green", min_width=28)
+        table.add_column("Description", style="white")
+
+        table.add_row("<URL>",                    "Download in best quality")
+        table.add_row("<URL> 1080",               "Download at 1080p")
+        table.add_row("<URL> 720 / 4k / hd",      "Download at 720p / 4K / 1080p")
+        table.add_row("<URL> flac",               "Download audio as FLAC (lossless)")
+        table.add_row("<URL> mp3",                "Download audio as MP3")
+        table.add_row("<URL> opus / wav / aac",    "Download audio in other formats")
+        table.add_row("<URL> upscale",            "Download + AI video upscaling (2x)")
+        table.add_row("<URL> upscale 4x",         "Download + AI upscaling (4x)")
+        table.add_row("<URL> enhance",            "Download + audio enhancement")
+        table.add_row("<URL> denoise",            "Download + noise reduction")
+        table.add_row("audio <URL>",              "Download audio (default format)")
+        table.add_row("flac <URL>",               "Download audio as FLAC")
+        table.add_row("download <URL> / dl <URL>", "Download in best quality")
+        table.add_row("", "")
+        table.add_row("help / ?",                 "Show this help")
+        table.add_row("clear / cls",              "Clear screen")
+        table.add_row("exit / quit / q",          "Exit interactive mode")
+        console_obj.print(table)
 
     def _parse_interactive_input(self, raw_input: str) -> tuple:
         """Parse freeform interactive input into (url, options).
@@ -878,13 +905,17 @@ class EnhancedCLI:
             <URL> flac                  → audio as FLAC
             audio <URL>                 → audio default format
             flac <URL>                  → audio as FLAC
-            mp3 <URL>                   → audio as MP3
+            <URL> upscale              → download + AI upscale (2x)
+            <URL> upscale 4x           → download + AI upscale (4x)
+            <URL> enhance              → download + audio enhancement
+            <URL> denoise              → download + noise reduction
         """
         import re as _re
 
         audio_formats = {'flac', 'mp3', 'opus', 'wav', 'm4a', 'aac'}
         resolution_names = {'4k', '2k', 'hd', 'sd'}
         resolution_pattern = _re.compile(r'^(\d{3,4})p?$')
+        upscale_factor_pattern = _re.compile(r'^(\d)x$')
 
         parts = raw_input.strip().split()
         url = None
@@ -898,7 +929,7 @@ class EnhancedCLI:
                 url = part
                 continue
 
-            # Audio format keyword (before or after URL)
+            # Audio format keyword
             if lower in audio_formats:
                 options['audio_only'] = True
                 options['audio_format'] = lower
@@ -912,15 +943,38 @@ class EnhancedCLI:
                 options['audio_quality'] = 'best'
                 continue
 
-            # Resolution number (e.g., "1080", "720p", "480")
+            # Resolution number (e.g., "1080", "720p")
             m = resolution_pattern.match(lower)
             if m:
                 options['resolution'] = m.group(1)
                 continue
 
-            # Named resolution (4k, hd, etc.)
+            # Named resolution
             if lower in resolution_names:
                 options['resolution'] = lower
+                continue
+
+            # Upscale keyword
+            if lower == 'upscale':
+                options['upscale_video'] = True
+                options.setdefault('upscale_factor', 2)
+                options.setdefault('upscale_method', 'lanczos')
+                continue
+
+            # Upscale factor (e.g., "2x", "4x")
+            m = upscale_factor_pattern.match(lower)
+            if m:
+                options['upscale_video'] = True
+                options['upscale_factor'] = int(m.group(1))
+                continue
+
+            # Audio enhancement keywords
+            if lower == 'enhance':
+                options['enhance_audio'] = True
+                continue
+
+            if lower == 'denoise':
+                options['denoise'] = True
                 continue
 
         return url, options
@@ -933,12 +987,19 @@ class EnhancedCLI:
             console_obj.print(PROVIDE_URL_MSG)
             return
 
-        # Show a summary of what we're about to do
+        # Show a concise summary of what we're about to do
         mode_parts = []
         if options.get('audio_only'):
-            mode_parts.append(f"audio ({options.get('audio_format', 'mp3')})")
+            mode_parts.append(f"audio/{options.get('audio_format', 'mp3')}")
         if options.get('resolution'):
             mode_parts.append(f"{options['resolution']}p")
+        if options.get('upscale_video'):
+            factor = options.get('upscale_factor', 2)
+            mode_parts.append(f"upscale {factor}x")
+        if options.get('enhance_audio'):
+            mode_parts.append("audio enhance")
+        if options.get('denoise'):
+            mode_parts.append("denoise")
         mode = ", ".join(mode_parts) if mode_parts else "best quality"
         console_obj.print(f"[cyan]Downloading:[/] {url}  [dim]({mode})[/]")
 
